@@ -10,7 +10,13 @@
 
 ## 在 Omni 中添加
 
-在「插件设置 → 在线模块」中填写仓库地址：
+在「插件设置 → 在线模块」中填写清单地址（推荐用 raw 地址，避免 GitHub API 限流）：
+
+```
+https://raw.githubusercontent.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/main/TreeHouseModules.json
+```
+
+也可以填仓库主页地址（国内可能因 GitHub API 限流而失败）：
 
 ```
 https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu
