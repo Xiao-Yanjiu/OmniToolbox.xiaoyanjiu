@@ -13,7 +13,7 @@
 在「插件设置 → 在线模块」中填写仓库地址：
 
 ```
-https://github.com/lishoupeng19951120-rgb/OmniToolbox.xiaoyanjiu
+https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu
 ```
 
 首次安装后模块默认关闭，在「树树妙妙屋 → 在线」中手动启用。
