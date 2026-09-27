@@ -1,0 +1,3 @@
+# 防止 Git 转换换行符导致 SHA256 校验失败
+Modules/*.cs -text
+TreeHouseModules.json -text
