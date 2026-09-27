@@ -1,0 +1,35 @@
+{
+  "SchemaVersion": 1,
+  "Modules": [
+    {
+      "InternalName": "GameWebBrowser",
+      "Name": "游戏内浏览器",
+      "Author": "小烟酒",
+      "Description": "在游戏窗口内打开一个或多个网页浏览器（Edge/Chrome 带标签页窗口），用于 Discord、鱼糕等网站。",
+      "Version": "1.0.0",
+      "MinimumOmniVersion": "1.1.3.0",
+      "File": "Modules/GameWebBrowser.cs",
+      "Sha256": "ff621dce1199a179fd8cd1b5637d383bb297178beede861e4cb53552477c7f03"
+    },
+    {
+      "InternalName": "ChatToQQ",
+      "Name": "游戏聊天同步 QQ",
+      "Author": "小烟酒",
+      "Description": "把游戏聊天镜像同步到 QQ 群；收到私聊、组队邀请、交易请求或被人选中时在群里 @你。",
+      "Version": "1.0.0",
+      "MinimumOmniVersion": "1.1.3.0",
+      "File": "Modules/ChatToQQ.cs",
+      "Sha256": "57e5a45b551b28039691f1f72ce247e30e425258fa1f0c14051382b972704666"
+    },
+    {
+      "InternalName": "AutoDiscardJunk",
+      "Name": "自动丢垃圾",
+      "Author": "小烟酒",
+      "Description": "三栏管理背包物品：黑名单中的物品会在启动后自动丢弃。",
+      "Version": "1.0.0",
+      "MinimumOmniVersion": "1.1.3.0",
+      "File": "Modules/AutoDiscardJunk.cs",
+      "Sha256": "d7ca0aead57f15fbebb8a149c1a2002adc4c7421026696b178eb461a7abb3e9c"
+    }
+  ]
+}
