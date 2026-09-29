@@ -129,6 +129,20 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     private string? activeLaunchKey;
     private CancellationTokenSource? watchCts;
 
+    // ---- 启动串行化 ----
+    // 同时只让一个浏览器实例处于「启动中」。原因：Chromium 启动慢、窗口出现晚，
+    // 若两个网页几乎同时启动，后启动的那个会把两个窗口都认领成自己的
+    //（窗口本身分不出属于哪个页面），于是「打开一个 → 再打开第二个」就会互相牵连。
+    private sealed class PendingLaunch
+    {
+        public string    Key  = "";
+        public PageEntry Page = new PageEntry();
+    }
+
+    private readonly object launchGate = new();
+    private readonly Queue<PendingLaunch> pendingLaunches = new();
+    private volatile bool anyLaunching;
+
     private RECT  lastGameRect;
     private bool  hasLastGameRect;
     private string statusMessage = "";
@@ -154,6 +168,9 @@ public sealed unsafe class GameWebBrowser : ModuleBase
             statusMessage = "命令服务获取成功";
 
         SyncCommands();
+
+        // 重载模块后清掉上一轮遗留的启动状态
+        lock (launchGate) { anyLaunching = false; pendingLaunches.Clear(); }
 
         watchCts = new CancellationTokenSource();
         _ = Task.Run(() => WatchLoop(watchCts.Token));
@@ -267,6 +284,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                                   .Select(kv => kv.Key).ToList();
                 foreach (var k in dead) windows.Remove(k);
 
+                // 1) 捕获当前页面启动后新出现的浏览器窗口
                 if (activeLaunchKey != null && windows.TryGetValue(activeLaunchKey, out var launching) &&
                     launching.Launching && launching.Hwnds.Count == 0)
                 {
@@ -276,13 +294,34 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                         foreach (var hwnd in newWins) AttachBrowser(launching, hwnd);
                         launching.Launching = false;
                         activeLaunchKey = null;
+                        anyLaunching = false;
                         statusMessage = "";
                     }
                     else if (Environment.TickCount64 - launching.LaunchStartMs > 30_000)
                     {
                         launching.Launching = false;
                         activeLaunchKey = null;
+                        anyLaunching = false;
                         statusMessage = "未捕获到浏览器窗口（30 秒超时）";
+                    }
+                }
+
+                // 2) 没有正在启动的页面时，取出排队中的下一个网页继续启动（严格串行，见 LaunchPage）
+                if (!anyLaunching)
+                {
+                    PendingLaunch? next;
+                    lock (launchGate)
+                    {
+                        next = pendingLaunches.Count > 0 ? pendingLaunches.Dequeue() : null;
+                    }
+                    if (next != null && config.Pages.Contains(next.Page))
+                    {
+                        if (!windows.TryGetValue(next.Key, out var nextWin))
+                        {
+                            nextWin = new BrowserWin();
+                            windows[next.Key] = nextWin;
+                        }
+                        LaunchPage(next.Page, next.Key, nextWin);
                     }
                 }
 
@@ -331,6 +370,17 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
     private void AttachBrowser(BrowserWin win, IntPtr hwnd)
     {
+        // 双保险：同一个窗口绝不能被两个网页同时持有，否则隐藏/关闭会互相牵连
+        try
+        {
+            foreach (var other in windows.Values)
+            {
+                if (!ReferenceEquals(other, win) && other.Hwnds.Contains(hwnd)) return;
+            }
+            if (win.Hwnds.Contains(hwnd)) return;
+        }
+        catch { /* 后台线程正在改集合时忽略本次校验 */ }
+
         win.Hwnds.Add(hwnd);
         win.Visible = true;
 
@@ -386,18 +436,40 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
     private List<IntPtr> FindNewBrowserWindows()
     {
+        // 「已属于其它页面的窗口 / 浏览器进程」一律不算新窗口。
+        // 只靠「启动前的可见窗口快照」是不够的：被隐藏的浏览器不在快照里，
+        // 那样启动第二个网页时会把第一个的窗口误认成自己的，之后两个就互相牵连。
+        var ownedHwnds = new HashSet<IntPtr>();
+        var ownedPids  = new HashSet<uint>();
+        try
+        {
+            foreach (var w in windows.Values)
+            {
+                foreach (var h in w.Hwnds)
+                {
+                    ownedHwnds.Add(h);
+                    if (h == IntPtr.Zero || !IsWindow(h)) continue;
+                    GetWindowThreadProcessId(h, out var p);
+                    if (p != 0) ownedPids.Add(p);
+                }
+            }
+        }
+        catch { /* 后台线程正在改集合时退化为只靠快照过滤 */ }
+
         var list = new List<IntPtr>();
         EnumWindows((hWnd, _) =>
         {
             try
             {
                 if (windowSnapshot.Contains(hWnd)) return true;
+                if (ownedHwnds.Contains(hWnd)) return true;
                 var cls = new StringBuilder(256);
                 GetClassName(hWnd, cls, 256);
                 if (cls.ToString() != "Chrome_WidgetWin_1") return true;
                 if (!IsWindowVisible(hWnd)) return true;
                 GetWindowThreadProcessId(hWnd, out var pid);
                 if (pid == 0) return true;
+                if (ownedPids.Contains(pid)) return true;    // ★ 属于其它页面已跟踪的浏览器实例
                 string name;
                 try { name = Process.GetProcessById((int)pid).ProcessName; }
                 catch { return true; }
@@ -479,13 +551,24 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
     private void HideBrowser(BrowserWin win)
     {
+        // 先记下本组窗口所属的浏览器进程：同一个浏览器实例（同一 user-data-dir）的
+        // 顶层窗口都属于同一个进程，用 PID 才能把「本页面的窗口」和「别的页面的窗口」区分开。
+        var pids = new HashSet<uint>();
+        foreach (var h in win.Hwnds)
+        {
+            if (h == IntPtr.Zero || !IsWindow(h)) continue;
+            try { GetWindowThreadProcessId(h, out var p); if (p != 0) pids.Add(p); } catch { /* 忽略 */ }
+        }
+
         foreach (var h in win.Hwnds)
         {
             try { ShowWindow(h, SW_HIDE); } catch { /* 忽略 */ }
         }
 
-        var game = FindGameHwnd();
-        if (game == IntPtr.Zero) return;
+        // 扫尾：Chromium 除了主窗口还会产生附属顶层小窗，只隐藏主窗会留下残影。
+        // ★ 判据必须是「同一个浏览器进程」，绝不能是「归属游戏窗口」——
+        //   因为所有页面的窗口都被设成了归属游戏窗口，那样隐藏一个会把别的也一起隐藏。
+        if (pids.Count == 0) return;
         EnumWindows((h, _) =>
         {
             try
@@ -494,7 +577,8 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                 var cls = new StringBuilder(256);
                 GetClassName(h, cls, 256);
                 if (cls.ToString() != "Chrome_WidgetWin_1") return true;
-                if (GetWindowLongPtr(h, GWL_HWNDPARENT) != game) return true;
+                GetWindowThreadProcessId(h, out var pid);
+                if (pid == 0 || !pids.Contains(pid)) return true;
                 if (win.Hwnds.Contains(h)) return true;
                 ShowWindow(h, SW_HIDE);
             }
@@ -523,6 +607,21 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         }
         if (!url.StartsWith("http://") && !url.StartsWith("https://"))
             url = "https://" + url;
+
+        // ★ 串行启动：Chromium 启动慢、窗口出现晚。若两个网页几乎同时启动，
+        //   后启动的那个会把两个窗口都认领成自己的（窗口本身分不出属于哪个页面），
+        //   于是「打开一个 → 再打开第二个」就会出现两个窗口一起隐藏 / 一起消失。
+        //   这里改成排队：一次只启动一个，等上一个拿到窗口后再启动下一个。
+        lock (launchGate)
+        {
+            if (anyLaunching)
+            {
+                pendingLaunches.Enqueue(new PendingLaunch { Key = key, Page = page });
+                statusMessage = $"「{page.Name}」已排队，等上一个网页启动完成后自动打开";
+                return;
+            }
+            anyLaunching = true;
+        }
 
         var proxy = (page.Proxy ?? "").Trim();
 
@@ -567,6 +666,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         catch (Exception e)
         {
             statusMessage = $"浏览器启动失败: {e.Message}";
+            lock (launchGate) { anyLaunching = false; }   // 别把排队卡死
         }
     }
 
