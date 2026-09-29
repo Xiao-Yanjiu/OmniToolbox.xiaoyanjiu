@@ -97,10 +97,15 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
     // ------------------------------ 常量 ------------------------------
 
+    // 窗口默认大小 / 位置（可在设置界面里改，这里只是默认值）
     private const int DefaultWinWidth  = 1100;
     private const int DefaultWinHeight = 720;
     private const int DefaultOffsetX   = 120;
     private const int DefaultOffsetY   = 100;
+
+    // 生效值：配置里为 0（或旧配置没这两个字段）时回落到默认常量
+    private int WinW => config.WinWidth  > 0 ? config.WinWidth  : DefaultWinWidth;
+    private int WinH => config.WinHeight > 0 ? config.WinHeight : DefaultWinHeight;
 
     private static string ConfigFilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -339,13 +344,42 @@ public sealed unsafe class GameWebBrowser : ModuleBase
             if (GetWindowRect(game, out var gameRect))
             {
                 SetWindowPos(hwnd, IntPtr.Zero,
-                    gameRect.Left + DefaultOffsetX,
-                    gameRect.Top  + DefaultOffsetY,
-                    DefaultWinWidth, DefaultWinHeight,
+                    gameRect.Left + config.OffsetX,
+                    gameRect.Top  + config.OffsetY,
+                    WinW, WinH,
                     SWP_NOZORDER | SWP_NOACTIVATE);
             }
         }
         catch (Exception e) { statusMessage = $"窗口绑定异常: {e.Message}"; }
+    }
+
+    /// <summary>把当前「窗口位置与大小」设置立刻套用到所有已打开的浏览器窗口。</summary>
+    private void ApplyWindowGeometryToOpen()
+    {
+        var game = FindGameHwnd();
+        if (game == IntPtr.Zero) { statusMessage = "未找到游戏窗口"; return; }
+        if (!GetWindowRect(game, out var gameRect)) { statusMessage = "读取游戏窗口位置失败"; return; }
+
+        List<IntPtr> hwnds;
+        try { hwnds = windows.Values.SelectMany(w => w.Hwnds).ToList(); }
+        catch { hwnds = new List<IntPtr>(); }   // 后台线程正在改集合时退化为空快照
+
+        var n = 0;
+        foreach (var h in hwnds)
+        {
+            if (h == IntPtr.Zero || !IsWindow(h)) continue;
+            try
+            {
+                SetWindowPos(h, IntPtr.Zero,
+                    gameRect.Left + config.OffsetX,
+                    gameRect.Top  + config.OffsetY,
+                    WinW, WinH,
+                    SWP_NOZORDER | SWP_NOACTIVATE);
+                n++;
+            }
+            catch { /* 单个窗口失败忽略 */ }
+        }
+        statusMessage = n > 0 ? $"已应用窗口位置与大小（{n} 个窗口）" : "当前没有已打开的窗口";
     }
 
     private static IntPtr FindGameHwnd() => FindWindowW("FFXIVGAME", null);
@@ -511,8 +545,8 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         }
         if (proxy.Length > 0)
             args.Append("--proxy-server=\"").Append(proxy).Append("\" ");
-        args.Append("--window-size=").Append(DefaultWinWidth)
-            .Append(',').Append(DefaultWinHeight).Append(' ');
+        args.Append("--window-size=").Append(WinW)
+            .Append(',').Append(WinH).Append(' ');
         args.Append("--user-data-dir=\"").Append(profileDir).Append("\" ");
         args.Append("--no-first-run --no-default-browser-check --disable-session-crashed-bubble");
 
@@ -706,6 +740,59 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         ImGui.Spacing();
         ImGui.Separator();
 
+        // ---- 窗口位置与大小（全局）----
+        ImGui.TextUnformatted("窗口位置与大小（所有网页窗口共用）:");
+        ImGui.Spacing();
+
+        ImGui.TextDisabled("宽度");
+        ImGui.SetNextItemWidth(120f);
+        var winW = config.WinWidth > 0 ? config.WinWidth : DefaultWinWidth;
+        if (ImGui.InputInt("##WinW", ref winW))
+        {
+            config.WinWidth = Math.Max(320, Math.Min(winW, 7680));
+            changed = true;
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled("高度");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(120f);
+        var winH = config.WinHeight > 0 ? config.WinHeight : DefaultWinHeight;
+        if (ImGui.InputInt("##WinH", ref winH))
+        {
+            config.WinHeight = Math.Max(240, Math.Min(winH, 4320));
+            changed = true;
+        }
+
+        ImGui.TextDisabled("左边距（相对游戏窗口，可为负）");
+        ImGui.SetNextItemWidth(120f);
+        var offX = config.OffsetX;
+        if (ImGui.InputInt("##OffX", ref offX)) { config.OffsetX = offX; changed = true; }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled("上边距");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(120f);
+        var offY = config.OffsetY;
+        if (ImGui.InputInt("##OffY", ref offY)) { config.OffsetY = offY; changed = true; }
+
+        if (ImGui.Button("恢复默认窗口 (1100×720，偏移 120,100)"))
+        {
+            config.WinWidth  = DefaultWinWidth;
+            config.WinHeight = DefaultWinHeight;
+            config.OffsetX   = DefaultOffsetX;
+            config.OffsetY   = DefaultOffsetY;
+            changed = true;
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("应用到已打开的窗口"))
+            ApplyWindowGeometryToOpen();
+
+        ImGui.TextWrapped("位置是相对游戏窗口左上角的偏移，浏览器窗口会跟随游戏窗口一起移动。改完想立刻见效：点「应用到已打开的窗口」，或把窗口关掉重开。");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+
         // ---- 浏览器路径 ----
         ImGui.TextWrapped("浏览器路径 (留空自动搜索 Edge / Chrome):");
         ImGui.SetNextItemWidth(-1f);
@@ -741,5 +828,12 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         public List<PageEntry> Pages { get; set; } = new List<PageEntry>();
 
         public string BrowserPath { get; set; } = "";
+
+        // ---- 窗口位置与大小（全局，所有网页窗口共用）----
+        // 位置为「相对游戏窗口左上角的偏移」，浏览器窗口会跟随游戏窗口一起移动。
+        public int WinWidth  { get; set; } = DefaultWinWidth;
+        public int WinHeight { get; set; } = DefaultWinHeight;
+        public int OffsetX   { get; set; } = DefaultOffsetX;
+        public int OffsetY   { get; set; } = DefaultOffsetY;
     }
 }

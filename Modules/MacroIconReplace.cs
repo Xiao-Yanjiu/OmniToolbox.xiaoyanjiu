@@ -50,7 +50,7 @@ public sealed class MacroIconReplace : ModuleBase
         Title = "宏图标替换",
         Description = "把宏的图标换成自定义图片（本地图片或网站图标），不用时可一键还原",
         Category = ModuleCategory.Interface,
-        Author = "Omni 本地模块",
+        Author = "小烟酒",
         Commands = new[]
         {
             new ModuleCommand("/omni MacroIconReplace 打开/关闭窗口", "/omni MacroIconReplace"),

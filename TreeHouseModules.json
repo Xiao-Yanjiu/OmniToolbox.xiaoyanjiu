@@ -19,7 +19,7 @@
       "Version": "1.0.0",
       "MinimumOmniVersion": "1.1.3.0",
       "File": "Modules/GameWebBrowser.cs",
-      "Sha256": "ff621dce1199a179fd8cd1b5637d383bb297178beede861e4cb53552477c7f03"
+      "Sha256": "5a44583282c67762bf234deaf517130924aaee6e4161b14468355fe90f87fa33"
     },
     {
       "InternalName": "ChatToQQ",
@@ -42,16 +42,6 @@
       "Sha256": "d7ca0aead57f15fbebb8a149c1a2002adc4c7421026696b178eb461a7abb3e9c"
     },
     {
-      "InternalName": "HotbarPlus",
-      "Name": "自定义热键栏 Plus",
-      "Author": "小烟酒",
-      "Description": "在屏幕上放置可自定义的技能栏：真实图标/冷却/资源消耗/连击高亮/距离判定全部由游戏原生计算，支持多页翻页、每格自定义键位、自定义图标与本地图片、一键导入游戏原生热键栏。原生热键栏可在游戏「系统设置 → 界面设置 → HUD」里自行隐藏。",
-      "Version": "1.0.1",
-      "MinimumOmniVersion": "1.1.3.0",
-      "File": "Modules/HotbarPlus.cs",
-      "Sha256": "946df6f087350ec337cd6a4762ef55d4353b6ea76402af3534551f393aca79cb"
-    },
-    {
       "InternalName": "MacroIconReplace",
       "Name": "宏图标替换",
       "Author": "小烟酒",
@@ -59,7 +49,7 @@
       "Version": "1.0.0",
       "MinimumOmniVersion": "1.1.3.0",
       "File": "Modules/MacroIconReplace.cs",
-      "Sha256": "cc7e498938105d50b14e07bb5e03fef7cc4a4e8fe489f2a6885333b360c527a3"
+      "Sha256": "249a5e4c9d81c091548903e59c1efe0ef2843d9a0704f0ac4ac852211ce89de4"
     }
   ]
 }
