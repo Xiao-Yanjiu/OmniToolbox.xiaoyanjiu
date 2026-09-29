@@ -21,6 +21,14 @@ using OmniToolbox.UI.Theme;
 using OmenTools.Interop.Game.Lumina;
 using OmenTools.OmenService;
 using RaptureHotbarModule = FFXIVClientStructs.FFXIV.Client.UI.Misc.RaptureHotbarModule;
+using UIGlobals = FFXIVClientStructs.FFXIV.Client.UI.UIGlobals;
+using AtkStage = FFXIVClientStructs.FFXIV.Component.GUI.AtkStage;
+using AtkDragDropManager = FFXIVClientStructs.FFXIV.Component.GUI.AtkDragDropManager;
+using AtkDragDropInterface = FFXIVClientStructs.FFXIV.Component.GUI.AtkDragDropInterface;
+using DragDropType = FFXIVClientStructs.FFXIV.Component.GUI.DragDropType;
+using ActionManager = FFXIVClientStructs.FFXIV.Client.Game.ActionManager;
+using ActionType = FFXIVClientStructs.FFXIV.Client.Game.ActionType;
+using UseActionMode = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.UseActionMode;
 using LuminaAction = Lumina.Excel.Sheets.Action;
 using LuminaCraftAction = Lumina.Excel.Sheets.CraftAction;
 using LuminaEmote = Lumina.Excel.Sheets.Emote;
@@ -71,6 +79,15 @@ public sealed class HotbarPlus : ModuleBase
     [Serializable]
     public sealed class HotbarPlusConfig
     {
+        /// <summary>配置结构版本；升级默认样式时用 NormalizeConfig 做一次性迁移。</summary>
+        public int ConfigVersion { get; set; }
+
+        /// <summary>拖拽 / 点击 / 执行的诊断日志（排查问题时开着，日志带 [HotbarPlus] 前缀）。</summary>
+        public bool DebugLog { get; set; } = true;
+
+        /// <summary>是否允许把游戏内正在拖拽的技能 / 物品放到自定义格子上。</summary>
+        public bool EnableDragDrop { get; set; } = true;
+
         /// <summary>所有自定义热键栏。</summary>
         public List<HotbarBarConfig> Bars { get; set; } = new();
 
@@ -111,19 +128,19 @@ public sealed class HotbarPlus : ModuleBase
         public float Scale { get; set; } = 1f;
 
         /// <summary>整栏背景不透明度（0 = 完全透明，只留格子底）。</summary>
-        public float BackgroundOpacity { get; set; } = 0.35f;
+        public float BackgroundOpacity { get; set; } = 0.55f;
 
         public int Columns { get; set; } = 12;
         public int Rows { get; set; } = 1;
 
         public float SlotSize { get; set; } = 44f;
-        public float SlotSpacing { get; set; } = 4f;
+        public float SlotSpacing { get; set; } = 0f;
 
         /// <summary>是否响应鼠标左键点击释放技能。</summary>
         public bool EnableClicking { get; set; } = true;
 
-        /// <summary>是否显示翻页条（上一页 / 页码 / 下一页）。</summary>
-        public bool ShowPageControls { get; set; } = true;
+        /// <summary>是否显示翻页条（上一页 / 页码 / 下一页）。原生热键栏没有常驻翻页条，默认关。</summary>
+        public bool ShowPageControls { get; set; } = false;
 
         /// <summary>总页数。</summary>
         public int PageCount { get; set; } = 3;
@@ -199,6 +216,23 @@ public sealed class HotbarPlus : ModuleBase
 
     /// <summary>设置面板里当前选中的热键栏。</summary>
     private int selectedBar;
+
+    // ---- 游戏内拖拽（AtkDragDropManager 轮询）----
+    /// <summary>上一帧游戏是否处于拖拽中。</summary>
+    private bool ddWasDragging;
+
+    /// <summary>最近一次捕获的拖拽 payload：DragDropType 原始值 / Int2（通常是动作或物品 ID）/ ReferenceIndex。</summary>
+    private int ddLastType = -1;
+    private int ddLastInt2;
+    private int ddLastRef;
+
+    /// <summary>拖拽中鼠标悬停的自定义格子（-1 = 无）。</summary>
+    private int ddHoverBar = -1;
+    private int ddHoverPage = -1;
+    private int ddHoverSlot = -1;
+
+    /// <summary>本帧游戏是否处于拖拽中（绘制格子时用来画高亮框）。</summary>
+    private bool ddDragging;
 
     /// <summary>悬浮窗整体是否可见（由全局开关控制）。</summary>
     private bool overlayVisible = true;
@@ -426,11 +460,21 @@ public sealed class HotbarPlus : ModuleBase
         overlayVisible = config.OverlayEnabled;
 
         ProcessGlobalHotkey();
+        CaptureDragPayload();
 
         if (!overlayVisible) return;
         if (!DalamudServices.PlayerState.IsLoaded) return;
 
         ProcessKeybinds();
+
+        // 只在拖拽中的帧重置悬停记录（由格子绘制回填）；
+        // 松手那一帧 ddDragging 已变 false，保留上一帧的悬停位置才能正确落格
+        if (ddDragging)
+        {
+            ddHoverBar = -1;
+            ddHoverPage = -1;
+            ddHoverSlot = -1;
+        }
 
         for (var i = 0; i < config.Bars.Count; i++)
         {
@@ -438,6 +482,8 @@ public sealed class HotbarPlus : ModuleBase
             if (!bar.Visible) continue;
             DrawBar(bar, i);
         }
+
+        TryAcceptDrop();
     }
 
     private unsafe void DrawBar(HotbarBarConfig bar, int barIndex)
@@ -450,20 +496,20 @@ public sealed class HotbarPlus : ModuleBase
         var spacing = Math.Max(0f, bar.SlotSpacing) * scale;
         var columns = Math.Max(1, bar.Columns);
         var rows = Math.Max(1, bar.Rows);
-        var pad = 6f * scale;
+        var pad = 3f * scale;
 
         var gridW = columns * slotSize + (columns - 1) * spacing;
         var gridH = rows * slotSize + (rows - 1) * spacing;
-        var pagerH = bar.ShowPageControls ? Math.Max(14f, slotSize * 0.42f) : 0f;
+        // 翻页区高度常驻占位（避免窗口随 hover 跳动），内容只在悬停时绘制
+        var pagerH = bar.ShowPageControls && bar.PageCount > 1 ? 14f * scale : 0f;
         var windowW = gridW + pad * 2f;
-        var windowH = gridH + pagerH + (pagerH > 0f ? 2f : 0f) + pad * 2f;
+        var windowH = gridH + (pagerH > 0f ? pagerH + 1f : 0f) + pad * 2f;
 
         ImGui.SetNextWindowPos(new Vector2(bar.PositionX, bar.PositionY), ImGuiCond.FirstUseEver);
 
         var flags = ImGuiWindowFlags.NoSavedSettings |
                     ImGuiWindowFlags.NoTitleBar |
                     ImGuiWindowFlags.NoScrollbar |
-                    ImGuiWindowFlags.NoScrollWithMouse |
                     ImGuiWindowFlags.NoResize |
                     ImGuiWindowFlags.AlwaysAutoResize |
                     ImGuiWindowFlags.NoDocking |
@@ -478,19 +524,28 @@ public sealed class HotbarPlus : ModuleBase
         style.Push(ImGuiStyleVar.WindowBorderSize, 0f);
 
         var bgAlpha = Math.Clamp(bar.BackgroundOpacity, 0f, 1f);
-        var bgColor = ImGui.ColorConvertFloat4ToU32(new Vector4(0.04f, 0.045f, 0.055f, bgAlpha));
+        // 原生热键栏底：纯黑半透明，无边框
+        var bgColor = ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, bgAlpha));
 
         var windowName = $"###OmniHotbarPlus{barIndex}";
         if (ImGui.Begin(windowName, flags))
         {
             var dl = ImGui.GetWindowDrawList();
             var origin = ImGui.GetCursorScreenPos();
+            var winHovered = ImGui.IsWindowHovered();
 
             if (bgAlpha > 0.005f)
             {
-                dl.AddRectFilled(origin - new Vector2(pad, pad),
-                    origin + new Vector2(gridW, gridH) + new Vector2(pad, pad + pagerH + 2f),
-                    bgColor, 6f * scale);
+                var panelMin = origin - new Vector2(pad, pad);
+                var panelMax = origin + new Vector2(gridW, gridH) + new Vector2(pad, pad + (pagerH > 0f ? pagerH + 1f : 0f));
+                dl.AddRectFilled(panelMin, panelMax, bgColor, 3f * scale);
+            }
+
+            // 滚轮翻页（原生热键栏同款交互：悬停滚动即翻页）
+            if (winHovered && bar.PageCount > 1)
+            {
+                var wheel = ImGui.GetIO().MouseWheel;
+                if (wheel != 0) ChangePage(bar, bar.CurrentPage + (wheel < 0 ? 1 : -1));
             }
 
             for (var row = 0; row < rows; row++)
@@ -505,18 +560,28 @@ public sealed class HotbarPlus : ModuleBase
 
                     ImGui.SetCursorScreenPos(pos);
                     ImGui.PushID((IntPtr)slotIndex);
-                    var clicked = ImGui.InvisibleButton($"##hpSlot{barIndex}_{slotIndex}", new Vector2(slotSize, slotSize));
+                    ImGui.InvisibleButton($"##hpSlot{barIndex}_{slotIndex}", new Vector2(slotSize, slotSize));
                     var hovered = ImGui.IsItemHovered();
+                    // 原生手感：按下瞬间就执行。InvisibleButton 的返回值是“按下+抬起”完整点击，
+                    // 用户按住稍一移动就丢 —— 观感就是“点了没反应”。
+                    var pressed = hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
                     ImGui.PopID();
 
-                    if (clicked && bar.EnableClicking && cfg.Type > 0)
+                    if (pressed && bar.EnableClicking && cfg.Type > 0)
                     {
                         ExecuteSlotRuntime(barIndex, bar.CurrentPage, slotIndex);
                     }
 
+                    if (ddDragging && hovered)
+                    {
+                        ddHoverBar = barIndex;
+                        ddHoverPage = bar.CurrentPage;
+                        ddHoverSlot = slotIndex;
+                    }
+
                     DrawSlotVisual(dl, bar, barIndex, bar.CurrentPage, slotIndex, cfg, pos, slotSize, hovered);
 
-                    if (hovered)
+                    if (hovered && !ddDragging)
                     {
                         if (config.ShowTooltips) DrawSlotTooltip(cfg, barIndex, bar.CurrentPage, slotIndex);
                         ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
@@ -524,10 +589,10 @@ public sealed class HotbarPlus : ModuleBase
                 }
             }
 
-            // ---- 翻页条 ----
-            if (bar.ShowPageControls)
+            // ---- 翻页条（悬停本栏时才出现，平时完全隐形，观感与原生一致） ----
+            if (pagerH > 0f && winHovered)
             {
-                ImGui.SetCursorScreenPos(origin + new Vector2(0f, gridH + 2f));
+                ImGui.SetCursorScreenPos(origin + new Vector2(0f, gridH + 1f));
                 DrawPager(dl, bar, barIndex, origin, gridW, gridH, pagerH, slotSize);
             }
 
@@ -547,31 +612,33 @@ public sealed class HotbarPlus : ModuleBase
             : $"{bar.CurrentPage + 1}/{bar.PageCount}";
         var labelSize = ImGui.CalcTextSize(label);
 
-        var btnW = Math.Max(14f, pagerH * 1.15f);
-        var gap = 6f;
+        var btnW = 14f * bar.EffectiveScale;
+        var btnH = pagerH;
+        var gap = 4f;
         var totalW = btnW * 2f + gap * 2f + labelSize.X;
         var startX = origin.X + MathF.Max(0f, (gridW - totalW) * 0.5f);
+        var pagerY = origin.Y + gridH + 1f;
 
         // 上一页
-        ImGui.SetCursorScreenPos(new Vector2(startX, origin.Y + gridH + 2f));
+        ImGui.SetCursorScreenPos(new Vector2(startX, pagerY));
         ImGui.PushID((IntPtr)(barIndex * 1000 + 900));
-        var prevClicked = ImGui.InvisibleButton("##hpPrev", new Vector2(btnW, pagerH));
+        var prevClicked = ImGui.InvisibleButton("##hpPrev", new Vector2(btnW, btnH));
         var prevHovered = ImGui.IsItemHovered();
         ImGui.PopID();
-        DrawArrow(dl, new Vector2(startX, origin.Y + gridH + 2f), new Vector2(btnW, pagerH), false, prevHovered);
+        DrawArrow(dl, new Vector2(startX, pagerY), new Vector2(btnW, btnH), false, prevHovered);
 
         // 页码
-        var labelPos = new Vector2(startX + btnW + gap, origin.Y + gridH + 2f);
-        dl.AddText(new Vector2(labelPos.X, labelPos.Y + (pagerH - labelSize.Y) * 0.5f), 0xFFD8D8D8, label);
+        var labelPos = new Vector2(startX + btnW + gap, pagerY);
+        dl.AddText(new Vector2(labelPos.X, labelPos.Y + (pagerH - labelSize.Y) * 0.5f), 0xB4E8E8E8u, label);
 
         // 下一页
         var nextX = labelPos.X + labelSize.X + gap;
-        ImGui.SetCursorScreenPos(new Vector2(nextX, origin.Y + gridH + 2f));
+        ImGui.SetCursorScreenPos(new Vector2(nextX, pagerY));
         ImGui.PushID((IntPtr)(barIndex * 1000 + 901));
-        var nextClicked = ImGui.InvisibleButton("##hpNext", new Vector2(btnW, pagerH));
+        var nextClicked = ImGui.InvisibleButton("##hpNext", new Vector2(btnW, btnH));
         var nextHovered = ImGui.IsItemHovered();
         ImGui.PopID();
-        DrawArrow(dl, new Vector2(nextX, origin.Y + gridH + 2f), new Vector2(btnW, pagerH), true, nextHovered);
+        DrawArrow(dl, new Vector2(nextX, pagerY), new Vector2(btnW, btnH), true, nextHovered);
 
         if (prevClicked) ChangePage(bar, bar.CurrentPage - 1);
         if (nextClicked) ChangePage(bar, bar.CurrentPage + 1);
@@ -579,13 +646,12 @@ public sealed class HotbarPlus : ModuleBase
 
     private static void DrawArrow(ImDrawListPtr dl, Vector2 pos, Vector2 size, bool right, bool hovered)
     {
-        var bg = hovered ? 0x66FFFFFFu : 0x33000000u;
-        dl.AddRectFilled(pos, pos + size, bg, 3f);
+        if (hovered) dl.AddRectFilled(pos, pos + size, 0x28FFFFFFu);
 
         var c = pos + size * 0.5f;
-        var h = size.Y * 0.28f;
-        var w = size.X * 0.18f;
-        var col = hovered ? 0xFFFFFFFFu : 0xFFC8C8C8u;
+        var h = size.Y * 0.26f;
+        var w = size.X * 0.16f;
+        var col = hovered ? 0xFFFFFFFFu : 0x96FFFFFFu;
 
         if (right)
         {
@@ -607,10 +673,9 @@ public sealed class HotbarPlus : ModuleBase
         int slotIndex, HotbarSlotConfig cfg, Vector2 p0, float size, bool hovered)
     {
         var p1 = p0 + new Vector2(size);
-        var rounding = size * 0.10f;
 
-        // 格子底
-        dl.AddRectFilled(p0, p1, hovered ? 0x77000000u : 0x55000000u, rounding);
+        // 原生热键栏的格子本身几乎透明：平时不画底，悬停才点亮一个白罩
+        if (hovered) dl.AddRectFilled(p0, p1, 0x34FFFFFFu);
 
         var hasSlot = cfg.Type > 0;
         var iconId = 0u;
@@ -662,16 +727,17 @@ public sealed class HotbarPlus : ModuleBase
             }
         }
 
-        // ---- 图标 ----
+        // ---- 图标（原生图标四周留 ~5% 内边距，不顶满格子） ----
         if (cfg.CustomIconId > 0) iconId = cfg.CustomIconId;
         var texture = ResolveSlotTexture(cfg, iconId);
         if (IsTexValid(texture))
         {
-            dl.AddImage(texture!.Handle, p0, p1);
+            var inset = MathF.Max(1f, size * 0.05f);
+            dl.AddImage(texture!.Handle, p0 + new Vector2(inset), p1 - new Vector2(inset));
         }
         else if (hasSlot)
         {
-            dl.AddRectFilled(p0, p1, 0x33000000u, rounding);
+            dl.AddRectFilled(p0, p1, 0x33000000u);
         }
 
         // ---- 越界红斜线 ----
@@ -690,7 +756,7 @@ public sealed class HotbarPlus : ModuleBase
         // ---- 变灰 ----
         if (greyed)
         {
-            dl.AddRectFilled(p0, p1, 0x8C12141C, rounding);
+            dl.AddRectFilled(p0, p1, 0x90000000);
         }
 
         // ---- 连击高亮（流动虚线边框） ----
@@ -730,14 +796,19 @@ public sealed class HotbarPlus : ModuleBase
             dl.AddText(new Vector2(p1.X - sz.X - 2f, p1.Y - sz.Y - 1f), 0xFF60E0FFu, text);
         }
 
-        // ---- 键位角标 ----
+        // ---- 键位角标（原生样式：左上角白字 + 黑描边） ----
         if (config.ShowKeybinds && cfg.KeyCode != 0 && size >= 26f)
         {
             var text = FormatKeybind(cfg.KeyCode, cfg.KeyMods);
-            var sz = ImGui.CalcTextSize(text);
-            var pos = new Vector2(p1.X - sz.X - 3f, p0.Y + 1f);
-            dl.AddRectFilled(pos - new Vector2(2f, 1f), pos + sz + new Vector2(2f, 1f), 0x66000000u, 2f);
-            dl.AddText(pos, 0xFFF0F0F0u, text);
+            var pos = new Vector2(p0.X + 2f, p0.Y + 1f);
+            dl.AddText(pos + new Vector2(1f, 1f), 0xFF000000u, text);
+            dl.AddText(pos, 0xFFFFFFFFu, text);
+        }
+
+        // ---- 拖拽悬停高亮（原生放置框风格） ----
+        if (ddDragging && hovered)
+        {
+            dl.AddRect(p0 + new Vector2(1f), p1 - new Vector2(1f), 0xFF00D7FFu, 0f, 2f);
         }
 
         // ---- 角标文字 ----
@@ -746,10 +817,10 @@ public sealed class HotbarPlus : ModuleBase
             DrawCenteredText(dl, p0, new Vector2(size), cfg.Label, 0xFFFFD060u, size * 0.30f);
         }
 
-        // ---- 空槽位（有键位却未设置内容）提示 ----
-        if (!hasSlot && cfg.KeyCode != 0)
+        // ---- 空槽位提示：悬停时淡淡画个内框，提示这里可以拖入 ----
+        if (!hasSlot && hovered)
         {
-            dl.AddRect(p0, p1, 0x44AAAAAAu, rounding, 1f);
+            dl.AddRect(p0 + new Vector2(2f), p1 - new Vector2(2f), 0x30AAAAAAu, 0f, 1f);
         }
     }
 
@@ -947,8 +1018,12 @@ public sealed class HotbarPlus : ModuleBase
         return rt;
     }
 
-    /// <summary>把配置写入私有 HotbarSlot 副本（内容变化时才写）。</summary>
-    private static void EnsureSlotContent(SlotRuntime rt, HotbarSlotConfig cfg)
+    /// <summary>
+    /// 把配置写入私有 HotbarSlot 副本（内容变化时才写）。
+    /// 注意：<c>HotbarUIIntermediate.Ctor()</c> 的真实签名是 <c>HotbarUIIntermediate* Ctor()</c>（返回指针），
+    /// 因此本方法必须是 <c>unsafe</c>，否则编译期报 CS0214。
+    /// </summary>
+    private static unsafe void EnsureSlotContent(SlotRuntime rt, HotbarSlotConfig cfg)
     {
         if (rt.AppliedType == cfg.Type && rt.AppliedId == cfg.Id) return;
         rt.AppliedType = cfg.Type;
@@ -989,16 +1064,268 @@ public sealed class HotbarPlus : ModuleBase
     {
         var rt = GetRuntime(barIndex, pageIndex, slotIndex);
         var module = RaptureHotbarModule.Instance();
-        if (module == null) return;
+        if (module == null || rt == null) return;
+        byte ret;
         fixed (RaptureHotbarModule.HotbarSlot* pData = &rt.Data)
         {
-            module->ExecuteSlot(pData);
+            ret = module->ExecuteSlot(pData);
         }
+
+        if (ret == 0)
+        {
+            // ExecuteSlot 没吃下去（返回 0）→ 对动作类槽位直接走 ActionManager 直发，保证“点了一定有反应”
+            if (config.DebugLog)
+            {
+                try
+                {
+                    DalamudServices.PluginLog.Debug(
+                        $"[HotbarPlus] ExecuteSlot 返回 0（{DescribeSlotRaw((int)rt.Data.CommandType, rt.Data.CommandId)}），改用 ActionManager 直发");
+                }
+                catch { }
+            }
+            TryFallbackAction((int)rt.Data.CommandType, rt.Data.CommandId);
+        }
+        else if (config.DebugLog)
+        {
+            try
+            {
+                DalamudServices.PluginLog.Debug(
+                    $"[HotbarPlus] ExecuteSlot 已执行（ret={ret}）：{DescribeSlotRaw((int)rt.Data.CommandType, rt.Data.CommandId)}");
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>ExecuteSlot 失败时的直发兜底（只覆盖动作类槽位；HotbarSlotType → ActionType 数值不同，须显式映射）。</summary>
+    private static unsafe void TryFallbackAction(int slotType, uint id)
+    {
+        if (id == 0) return;
+        var at = slotType switch
+        {
+            1 => ActionType.Action,
+            9 => ActionType.CraftAction,
+            10 => ActionType.GeneralAction,
+            11 => ActionType.BuddyAction,
+            12 => ActionType.MainCommand,
+            13 => ActionType.Companion,
+            16 => ActionType.PetAction,
+            17 => ActionType.Mount,
+            _ => ActionType.None,
+        };
+        if (at == ActionType.None) return;
+        try
+        {
+            var am = ActionManager.Instance();
+            if (am == null) return;
+            // 0xE0000000 = self ObjectID；其余参数取绑定默认值
+            am->UseAction(at, id, 0xE0000000ul, 0, UseActionMode.None, 0, null);
+        }
+        catch { }
     }
 
     private unsafe void ExecutePageSlot(HotbarBarConfig bar, int barIndex, int slotIndex)
     {
         ExecuteSlotRuntime(barIndex, bar.CurrentPage, slotIndex);
+    }
+
+    // ==================================================================
+    //  游戏内拖拽支持（把技能 / 物品从游戏界面拖到自定义格子上）
+    //
+    //  原理：AtkStage.Instance()->DragDropManager 是游戏的全局拖拽管理器。
+    //  拖拽期间（IsDragging = true），活动的 AtkDragDropInterface 上有
+    //  DragDropType（载荷类型）与 GetPayloadContainer()->Int2（动作/物品 ID），
+    //  与 KTK DragDropNode 的 DragDropPayload.FromDragDropInterface 取法一致。
+    //  松开鼠标的那一帧 IsDragging 变 false，此时若光标悬停在我们的格子上就写入。
+    // ==================================================================
+
+    /// <summary>每帧调用：记录游戏拖拽状态与当前 payload（拖拽中 payload 不变，松手后会被游戏清掉，所以必须边拖边记）。</summary>
+    private unsafe void CaptureDragPayload()
+    {
+        ddDragging = false;
+        try
+        {
+            var stage = AtkStage.Instance();
+            if (stage == null)
+            {
+                ddWasDragging = false;
+                return;
+            }
+
+            var mgr = &stage->DragDropManager;
+            if (mgr == null || !mgr->IsDragging)
+            {
+                ddWasDragging = false;
+                return;
+            }
+
+            ddDragging = true;
+            var isStart = !ddWasDragging;   // 读的是上一帧的值：这一帧刚开始拖
+            ddWasDragging = true;
+
+            // payload 优先读管理器自带的内嵌容器（值字段，最可靠）；
+            // DragDropType / ReferenceIndex 只在接口上，接口拿不到就沿用上次的
+            var mpc = &mgr->PayloadContainer;
+            var ddi = GetActiveDragInterface(mgr);
+
+            var int2 = mpc->Int2;
+            if (int2 == 0 && ddi != null)
+            {
+                var pc2 = ddi->GetPayloadContainer();
+                if (pc2 != null) int2 = pc2->Int2;
+            }
+
+            if (isStart && config.DebugLog)
+            {
+                try
+                {
+                    var t = ddi != null ? (int)ddi->DragDropType : -1;
+                    DalamudServices.PluginLog.Info(
+                        $"[HotbarPlus] 捕获拖拽：DragDropType={t}, 容器 Int1={mpc->Int1}, Int2={mpc->Int2}, Int2(接口)={int2}, RefIndex={(ddi != null ? ddi->DragDropReferenceIndex : -1)}");
+                }
+                catch { }
+            }
+
+            if (ddi != null) ddLastType = (int)ddi->DragDropType;
+            if (ddi != null) ddLastRef = ddi->DragDropReferenceIndex;
+            if (int2 != 0) ddLastInt2 = int2;
+            else if (mpc->Int1 != 0) ddLastInt2 = mpc->Int1;
+        }
+        catch
+        {
+            ddDragging = false;
+        }
+    }
+
+    /// <summary>
+    /// 在 DragDrop1 / DragDrop2 两个候选里找当前活动的拖拽接口。
+    /// 注意：<c>AtkDragDropManager.DragDropS</c> 的类型是 <c>AtkComponentDragDrop*</c>，
+    /// 与 <c>AtkDragDropInterface*</c> 不是同一类型（无 IsActive / DragDropType），不可混用。
+    /// </summary>
+    private static unsafe AtkDragDropInterface* GetActiveDragInterface(AtkDragDropManager* mgr)
+    {
+        if (mgr == null) return null;
+
+        var p1 = mgr->DragDrop1;
+        var p2 = mgr->DragDrop2;
+
+        if (p1 != null && p1->IsActive) return p1;
+        if (p2 != null && p2->IsActive) return p2;
+
+        if (p1 != null && (int)p1->DragDropType != 0) return p1;
+        if (p2 != null && (int)p2->DragDropType != 0) return p2;
+
+        if (p1 != null) return p1;
+        return p2;
+    }
+
+    /// <summary>松手落格：把最近捕获的 payload 写进悬停的格子。</summary>
+    private unsafe void TryAcceptDrop()
+    {
+        if (!config.EnableDragDrop) return;
+        if (ddWasDragging) return;          // 还在拖拽中，等松手
+        if (ddLastType < 0) return;         // 没有捕获过 payload
+        if (ddHoverBar < 0 || ddHoverPage < 0 || ddHoverSlot < 0) return;
+
+        var barOk = ddHoverBar < config.Bars.Count;
+        var bar = barOk ? config.Bars[ddHoverBar] : null;
+        var page = bar != null ? GetPage(bar, ddHoverPage) : null;
+        if (page == null || ddHoverSlot >= page.Slots.Count) { ddLastType = -1; return; }
+
+        var (slotType, id) = ResolveDragPayload(ddLastType, ddLastInt2, ddLastRef);
+        var rawType = ddLastType;
+        var rawInt2 = ddLastInt2;
+        var rawRef = ddLastRef;
+        ddLastType = -1;
+
+        if (slotType <= 0 || id <= 0)
+        {
+            try
+            {
+                DalamudServices.PluginLog.Debug(
+                    $"[HotbarPlus] 拖拽载荷无法解析：DragDropType={rawType}, Int2={rawInt2}, RefIndex={rawRef}");
+            }
+            catch { }
+            return;
+        }
+
+        var cfg = page.Slots[ddHoverSlot];
+        cfg.Type = slotType;
+        cfg.Id = id;
+
+        // 丢弃该格的运行时缓存，下一帧强制重写原生槽位数据
+        runtimes.Remove(RuntimeKey(ddHoverBar, ddHoverPage, ddHoverSlot));
+
+        try
+        {
+            DalamudServices.PluginLog.Info(
+                $"[HotbarPlus] 已把拖拽内容放进 {bar.Name} 第 {ddHoverSlot + 1} 格：{DescribeSlotRaw(slotType, id)}");
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// 把 DragDropType + Int2 解析成 (HotbarSlotType 数值, ID)。
+    /// 一般载荷：Int2 就是动作 / 物品等 ID。
+    /// DragDropType.ActionBar（从原生热键栏拖出）：Int2 的编码无权威资料，
+    /// 先按「槽位全局索引」的几种常见编码试探读取原生槽位，都不中再按动作 ID 兜底；
+    /// 同时写调试日志，实机一次即可校准。
+    /// </summary>
+    private static unsafe (int Type, uint Id) ResolveDragPayload(int dragType, int int2, int refIndex)
+    {
+        var ddt = (DragDropType)dragType;
+
+        if (ddt != DragDropType.ActionBar)
+        {
+            var slotType = (int)UIGlobals.GetHotbarSlotTypeFromDragDropType(ddt);
+            return slotType <= 0 ? (0, 0) : (slotType, (uint)Math.Max(0, int2));
+        }
+
+        // ---- 从原生热键栏拖出的情况 ----
+        var module = RaptureHotbarModule.Instance();
+        if (module != null && int2 > 0)
+        {
+            // 候选编码：(hotbar, slot) 均按 GetSlotById 的 0 基约定
+            var candidates = new (int hb, int sl)[4]
+            {
+                (int2 / 12, int2 % 12),             // 10 栏 × 12 格，0 基
+                (int2 / 10, int2 % 10),             // 10 栏 × 10 格
+                ((int2 - 1) / 12, (int2 - 1) % 12), // 1 基
+                ((int2 - 1) / 10, (int2 - 1) % 10), // 1 基 × 10
+            };
+
+            foreach (var (hb, sl) in candidates)
+            {
+                if (hb < 0 || hb >= 10 || sl < 0 || sl >= 12) continue;
+                try
+                {
+                    var pSlot = module->GetSlotById((uint)hb, (uint)sl);
+                    if (pSlot == null) continue;
+                    var t = (int)pSlot->CommandType;
+                    var id = pSlot->CommandId;
+                    if (t > 0 && id > 0)
+                    {
+                        try
+                        {
+                            DalamudServices.PluginLog.Debug(
+                                $"[HotbarPlus] ActionBar 载荷按槽位索引解码命中：Int2={int2} → 栏{hb + 1} 格{sl + 1}");
+                        }
+                        catch { }
+                        return (t, id);
+                    }
+                }
+                catch { }
+            }
+        }
+
+        // 兜底：按映射表直接当动作处理
+        var fallback = (int)UIGlobals.GetHotbarSlotTypeFromDragDropType(ddt);
+        try
+        {
+            DalamudServices.PluginLog.Debug(
+                $"[HotbarPlus] ActionBar 载荷未按槽位索引命中，按映射兜底：Int2={int2}, RefIndex={refIndex}, 映射类型={fallback}");
+        }
+        catch { }
+        return fallback <= 0 ? (0, 0) : (fallback, (uint)Math.Max(0, int2));
     }
 
     /// <summary>从游戏原生热键栏读取一格（热键栏 1-10 对应 id 0-9）。</summary>
@@ -1347,6 +1674,25 @@ public sealed class HotbarPlus : ModuleBase
         {
             config.ShowTooltips = showTips;
             changed = true;
+        }
+        ImGui.SameLine();
+        var allowDrag = config.EnableDragDrop;
+        if (ImGui.Checkbox("允许从游戏内拖入技能##hpAllowDrag", ref allowDrag))
+        {
+            config.EnableDragDrop = allowDrag;
+            changed = true;
+        }
+
+        ImGui.SameLine();
+        var dbg = config.DebugLog;
+        if (ImGui.Checkbox("诊断日志##hpDebugLog", ref dbg))
+        {
+            config.DebugLog = dbg;
+            changed = true;
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("开启后，拖拽捕获与技能执行都会写日志（带 [HotbarPlus] 前缀）。\n排查问题时开着，正常用可以关。");
         }
 
         DrawKeybindRow("全局开关快捷键", "hpGlobalKey", config.ToggleAllKey, config.ToggleAllMods,
@@ -2179,6 +2525,33 @@ public sealed class HotbarPlus : ModuleBase
 
         const float defaultSnap = 1f;
         if (config.SnapStep < 0f) config.SnapStep = defaultSnap;
+
+        // 样式迁移 v2：对齐原生热键栏观感（44px / 间距 2 / 深色底）。只跑一次。
+        if (config.ConfigVersion < 2)
+        {
+            foreach (var b in config.Bars)
+            {
+                b.SlotSize = 44f;
+                b.SlotSpacing = 2f;
+                b.Scale = 1f;
+                b.BackgroundOpacity = 0.78f;
+            }
+            config.ConfigVersion = 2;
+        }
+
+        // 样式迁移 v3：完全对齐原生（间距 0 / 半透明黑底 / 无常驻翻页条）。只跑一次。
+        if (config.ConfigVersion < 3)
+        {
+            foreach (var b in config.Bars)
+            {
+                b.SlotSize = 44f;
+                b.SlotSpacing = 0f;
+                b.Scale = 1f;
+                b.BackgroundOpacity = 0.55f;
+                b.ShowPageControls = false;
+            }
+            config.ConfigVersion = 3;
+        }
     }
 
     private void ImportNativeBarIntoPage(HotbarBarConfig bar, int pageIndex, int nativeHotbarNumber)
