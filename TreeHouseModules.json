@@ -50,6 +50,16 @@
       "MinimumOmniVersion": "1.1.3.0",
       "File": "Modules/HotbarPlus.cs",
       "Sha256": "946df6f087350ec337cd6a4762ef55d4353b6ea76402af3534551f393aca79cb"
+    },
+    {
+      "InternalName": "MacroIconReplace",
+      "Name": "宏图标替换",
+      "Author": "小烟酒",
+      "Description": "把游戏宏的图标替换成自定义图片：支持本地图片与网址图标（favicon），设置会自动保存、重启或重载后自动重放，可一键还原成游戏原生图标。",
+      "Version": "1.0.0",
+      "MinimumOmniVersion": "1.1.3.0",
+      "File": "Modules/MacroIconReplace.cs",
+      "Sha256": "cc7e498938105d50b14e07bb5e03fef7cc4a4e8fe489f2a6885333b360c527a3"
     }
   ]
 }
