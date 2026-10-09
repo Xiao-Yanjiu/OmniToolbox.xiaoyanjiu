@@ -83,6 +83,10 @@ public sealed class ChatToQQ : ModuleBase
         public string TriggerPrefix   { get; set; } = "#";
         public string GameChannel     { get; set; } = "/p";
         public string BotQQ           { get; set; } = "";
+
+        // ---- Omni 国服频道 (世界聊天) ----
+        public bool   SyncWorldChat { get; set; } = true;
+        public string WorldChatTag  { get; set; } = "国服";
     }
 
     // ------------------------------- 状态 ------------------------------------
@@ -130,6 +134,13 @@ public sealed class ChatToQQ : ModuleBase
     private readonly HashSet<long> seenMsgIDs = [];
     private bool firstPollDone = false;
 
+    // Omni 国服频道 (世界聊天)
+    private object?    worldChatClient;
+    private EventInfo? worldChatEvent;
+    private Delegate?  worldChatHandler;
+    private long       worldChatRetryAt;
+    private string     worldChatStatus = "未连接";
+
     private volatile string statusText = "运行中";
 
     // 输入缓冲 (仅 UI 线程)
@@ -140,6 +151,7 @@ public sealed class ChatToQQ : ModuleBase
     private string atQQInput    = "";
     private string botQQInput   = "";
     private string triggerInput = "#";
+    private string worldTagInput = "国服";
 
     private ICommandManager? commandManager;
     private readonly HashSet<string> registeredCommands = [];
@@ -201,12 +213,15 @@ public sealed class ChatToQQ : ModuleBase
         atQQInput    = config.DefaultAtQQ;
         botQQInput   = config.BotQQ;
         triggerInput = config.TriggerPrefix;
+        worldTagInput = config.WorldChatTag;
 
         AttachChat();
 
         commandManager = DalamudServices.CommandManager ??
                          GetService<ICommandManager>("Dalamud.Game.Command.CommandManager");
         RegisterCommands();
+
+        AttachWorldChat();
 
         // 独立面板窗口绘制
         if (DalamudServices.PluginInterface != null)
@@ -220,6 +235,7 @@ public sealed class ChatToQQ : ModuleBase
 
     protected override void OnDisable()
     {
+        DetachWorldChat();
         try { if (chatGui != null) chatGui.ChatMessage -= OnChatMessage; } catch { }
         try { addonLifecycle?.UnregisterListener(AddonEvent.PostSetup, "SelectYesno", OnSelectYesnoPopup); } catch { }
         try { if (framework != null) framework.Update -= OnFrameworkUpdate; } catch { }
@@ -374,6 +390,13 @@ public sealed class ChatToQQ : ModuleBase
     private void OnFrameworkUpdate(IFramework fw)
     {
         var now = Environment.TickCount64;
+
+        if (config.SyncWorldChat && worldChatClient == null && now - worldChatRetryAt > 5_000)
+        {
+            worldChatRetryAt = now;
+            AttachWorldChat();
+        }
+
         if (now - lastTargetScanAt < 500) return;
         lastTargetScanAt = now;
         ScanTargeting();
@@ -892,6 +915,24 @@ public sealed class ChatToQQ : ModuleBase
         var mirror = config.MirrorEnabled;
         if (ImGui.Checkbox("同步全部聊天到群里", ref mirror)) { config.MirrorEnabled = mirror; SaveOwnConfig(); }
 
+        var world = config.SyncWorldChat;
+        if (ImGui.Checkbox("同步 Omni 国服频道到群里", ref world))
+        {
+            config.SyncWorldChat = world;
+            SaveOwnConfig();
+            if (world) { DetachWorldChat(); AttachWorldChat(); }
+        }
+
+        ImGui.Indent();
+        ImGui.TextDisabled($"国服频道: {worldChatStatus}");
+        ImGui.SetNextItemWidth(-1f);
+        if (ImGui.InputText("###WorldTag", ref worldTagInput, 16))
+        {
+            config.WorldChatTag = worldTagInput.Trim();
+            SaveOwnConfig();
+        }
+        ImGui.Unindent();
+
         ImGui.Separator();
         ImGui.TextUnformatted("什么消息需要 @我 (自行勾选):");
 
@@ -989,6 +1030,216 @@ public sealed class ChatToQQ : ModuleBase
 
         ImGui.Spacing();
         ImGui.TextWrapped("前提: 本机运行 NapCat/Lagrange 并登录 QQ, OneBot 地址形如 http://127.0.0.1:3000");
+    }
+
+    // ------------------------------ Omni 国服频道 (世界聊天) ------------------------------
+
+    private void AttachWorldChat()
+    {
+        if (worldChatClient != null) return;
+        try
+        {
+            var client = FindOmniWorldChatClient();
+            if (client == null) { worldChatStatus = "等待 Omni 模块"; return; }
+
+            var type    = client.GetType();
+            var evt     = type.GetEvent("MessageReceived", BindingFlags.Public | BindingFlags.Instance);
+            var msgType = type.GetNestedType("ChannelMessage", BindingFlags.Public | BindingFlags.NonPublic);
+            if (evt == null || msgType == null)
+            {
+                worldChatStatus = "接口不匹配";
+                LogDebug($"国服频道: 事件={(evt != null)} 消息类型={(msgType != null)}");
+                return;
+            }
+
+            var hook = typeof(ChatToQQ).GetMethod(nameof(HookWorldChatEvent), BindingFlags.NonPublic | BindingFlags.Instance);
+            if (hook == null) { worldChatStatus = "挂接方法缺失"; return; }
+
+            worldChatHandler = (Delegate?)hook.MakeGenericMethod(msgType).Invoke(this, new object[] { client, evt });
+            worldChatEvent   = evt;
+            worldChatClient  = client;
+            worldChatStatus  = "已连接";
+
+            var connected = ReadValue(type, client, "Connected")?.ToString() ?? "?";
+            var members   = (ReadValue(type, client, "Members") as System.Collections.ICollection)?.Count;
+            LogDebug($"国服频道: 已挂接 OmniWorldChatClient.MessageReceived (Connected={connected}, Members={members?.ToString() ?? "?"})");
+
+            if (connected == "False")
+            {
+                try
+                {
+                    var join = type.GetMethod("Join", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                    if (join != null) { join.Invoke(client, null); LogDebug("国服频道: 已调用 Join()"); }
+                }
+                catch (Exception e) { LogDebug($"国服频道: Join() 失败 {e.Message}"); }
+            }
+        }
+        catch (Exception e)
+        {
+            worldChatStatus = "挂接失败";
+            LogDebug($"国服频道挂接异常: {e}");
+        }
+    }
+
+    private void DetachWorldChat()
+    {
+        try
+        {
+            if (worldChatClient != null && worldChatEvent != null && worldChatHandler != null)
+                worldChatEvent.RemoveEventHandler(worldChatClient, worldChatHandler);
+        }
+        catch { }
+
+        worldChatClient  = null;
+        worldChatEvent   = null;
+        worldChatHandler = null;
+        worldChatStatus  = "未连接";
+    }
+
+    private Delegate HookWorldChatEvent<T>(object client, EventInfo evt)
+    {
+        Action<T> handler = message => OnWorldChatMessage(message);
+        evt.AddEventHandler(client, handler);
+        return handler;
+    }
+
+    private void OnWorldChatMessage(object? message)
+    {
+        try
+        {
+            if (message == null || !config.SyncWorldChat) return;
+
+            var type = message.GetType();
+            var text = ReadMember(type, message, "Text");
+            if (text.Length == 0) return;
+
+            var name  = ReadMember(type, message, "DisplayName");
+            var world = ReadMember(type, message, "HomeWorldName");
+            var sender = name.Length == 0 ? "" : (name.Contains('@') || world.Length == 0 ? name : name + "@" + world);
+
+            var tag = (config.WorldChatTag ?? "").Trim();
+            if (tag.Length == 0) tag = "国服";
+
+            Enqueue(null, $"[{tag}] {(sender.Length > 0 ? sender + ": " : "")}{text}");
+        }
+        catch (Exception e) { LogDebug($"国服频道消息处理异常: {e.Message}"); }
+    }
+
+    private static string ReadMember(Type type, object instance, string property)
+    {
+        return (ReadValue(type, instance, property) as string ?? "").Trim();
+    }
+
+    private static object? ReadValue(Type type, object instance, string property)
+    {
+        try { return type.GetProperty(property, BindingFlags.Public | BindingFlags.Instance)?.GetValue(instance); }
+        catch { return null; }
+    }
+
+    private object? FindOmniWorldChatClient()
+    {
+        var manager = FindOmniTreeHouseManager();
+        if (manager == null) return null;
+
+        try
+        {
+            var modules = manager.GetType().GetProperty("Modules", BindingFlags.Public | BindingFlags.Instance)?.GetValue(manager) as System.Collections.IEnumerable;
+            if (modules == null) return null;
+
+            foreach (var module in modules)
+            {
+                if (module == null || module.GetType().Name != "ChatFrameOptimization") continue;
+                var client = FirstFieldOfType(module, "OmniWorldChatClient");
+                if (client != null) return client;
+            }
+        }
+        catch (Exception e) { LogDebug($"国服频道: 读取 Omni 模块列表失败: {e.Message}"); }
+
+        return null;
+    }
+
+    private object? FindOmniTreeHouseManager()
+    {
+        try
+        {
+            var commands = DalamudServices.CommandManager?.Commands;
+            if (commands != null)
+            {
+                foreach (var entry in commands)
+                {
+                    object? target = null;
+                    try { target = entry.Value?.Handler?.Target; } catch { }
+                    if (target == null) continue;
+
+                    var router = target.GetType().Name == "OmniCommandRouter" ? target : FirstFieldOfType(target, "OmniCommandRouter");
+                    if (router == null) continue;
+
+                    var manager = FirstFieldOfType(router, "TreeHouseManager");
+                    if (manager != null) return manager;
+                }
+            }
+        }
+        catch (Exception e) { LogDebug($"国服频道: 指令表探测失败: {e.Message}"); }
+
+        try
+        {
+            var pluginInterface = DalamudServices.PluginInterface;
+            var localPlugin     = pluginInterface == null ? null : FirstFieldOfType(pluginInterface, "LocalPlugin");
+            var plugin          = localPlugin == null ? null : FirstFieldOfType(localPlugin, "IDalamudPlugin");
+            if (plugin != null) return FindFieldValueOfType(plugin, "TreeHouseManager", 3);
+        }
+        catch (Exception e) { LogDebug($"国服频道: 插件实例探测失败: {e.Message}"); }
+
+        return null;
+    }
+
+    private static object? FirstFieldOfType(object owner, string typeName)
+    {
+        try
+        {
+            foreach (var field in owner.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
+            {
+                if (field.FieldType.Name != typeName) continue;
+                var value = field.GetValue(owner);
+                if (value != null) return value;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private static object? FindFieldValueOfType(object root, string typeName, int depth)
+    {
+        var seen  = new HashSet<object>(ReferenceEqualityComparer.Instance) { root };
+        var level = new List<object> { root };
+
+        for (var d = 0; d < depth && level.Count > 0; d++)
+        {
+            var next = new List<object>();
+            foreach (var node in level)
+            {
+                FieldInfo[] fields;
+                try { fields = node.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public); }
+                catch { continue; }
+
+                foreach (var field in fields)
+                {
+                    object? value;
+                    try { value = field.GetValue(node); } catch { continue; }
+                    if (value == null || value is string) continue;
+
+                    var type = value.GetType();
+                    if (type.IsPrimitive) continue;
+                    if (type.Name == typeName) return value;
+
+                    var name = type.Assembly.GetName().Name ?? "";
+                    if (name.StartsWith("OmniToolbox") && seen.Add(value) && next.Count < 256) next.Add(value);
+                }
+            }
+            level = next;
+        }
+
+        return null;
     }
 
     // ------------------------------ 反射辅助 ------------------------------
