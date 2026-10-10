@@ -12,27 +12,16 @@
 
 ## 在 Omni 中添加
 
-在「插件设置 → 在线模块」中填写清单地址。**国内推荐用镜像地址**（`raw.githubusercontent.com`
-在部分网络环境下会被阻断，直连 GitHub API 也容易限流）：
+在「插件设置 → 在线模块」中填写清单地址，第一栏填写：
 
 ```
-https://gh-proxy.com/https://raw.githubusercontent.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/main/TreeHouseModules.json
-```
-
-备选地址（按稳定性排序，任选其一）：
-
-```
-https://ghproxy.net/https://raw.githubusercontent.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/main/TreeHouseModules.json
-https://raw.githubusercontent.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/main/TreeHouseModules.json
 https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu
 ```
 
+第二栏填写：
+
+```
+https://raw.githubusercontent.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/main/TreeHouseModules.json
+```
+
 首次安装后模块默认关闭，在「树树妙妙屋 → 在线」中手动启用。
-
-## 关于运行环境
-
-**所有模块都是单一 `.cs` 文件，不需要任何额外运行库或前置插件。**
-
-音乐播放器的「我喜欢 / 取消收藏」写操作虽然要走 QQ音乐 `musics.fcg` 加密通道，但加解密与请求签名
-（AES-128-GCM + 固定密钥循环异或 + `zzc` 签名）已经全部在模块内用 .NET 原生密码学实现，
-**不需要 Node.js，也不会下载任何东西**。
