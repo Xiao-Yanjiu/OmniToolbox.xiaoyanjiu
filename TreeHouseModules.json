@@ -46,10 +46,10 @@
       "Name": "更好的图标管理",
       "Author": "小烟酒",
       "Description": "网站图标（favicon）与本地图片入库后，可给游戏宏当图标（宏面板与热键栏原生显示），也可按编号把界面上任意图标换成图库图或别的游戏图标，支持一键还原。",
-      "Version": "1.0.0",
+      "Version": "1.1.0",
       "MinimumOmniVersion": "1.1.3.0",
       "File": "Modules/ToolbarIconPlus.cs",
-      "Sha256": "dea85727e14ea91955f16b0768837959ad0859379859d3b9cd0af2cf838ad086"
+      "Sha256": "541e40b858cd2d43a59e83d8440ae13e764ee8e9d0c4b51668588e6a1f06598d"
     }
   ]
 }
