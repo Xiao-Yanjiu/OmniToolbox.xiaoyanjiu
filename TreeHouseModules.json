@@ -50,6 +50,16 @@
       "MinimumOmniVersion": "1.1.3.0",
       "File": "Modules/ToolbarIconPlus.cs",
       "Sha256": "8b5532fdce0ac1c9607998d235a5ca02445c8ca0ce6482516fecf38a215d3811"
+    },
+    {
+      "InternalName": "IChingModule",
+      "Name": "IChing",
+      "Author": "小烟酒（基于 IChing 原作者源码）",
+      "Description": "",
+      "Version": "0.2.0",
+      "MinimumOmniVersion": "1.1.6.5",
+      "File": "Modules/IChingModule.cs",
+      "Sha256": "f54f40f7936a65f6ef20c808656f26c22195407554a0e8bb347c818a6db49455"
     }
   ]
 }
