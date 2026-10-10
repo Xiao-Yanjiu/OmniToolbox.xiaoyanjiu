@@ -12,13 +12,15 @@
 
 ## 在 Omni 中添加
 
-在「插件设置 → 在线模块」中填写清单地址，第一栏填写：
+在「插件设置 → 在线模块」中填写清单地址。
+
+直连：
 
 ```
 https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu
 ```
 
-第二栏填写：
+国内加速链：
 
 ```
 https://raw.githubusercontent.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/main/TreeHouseModules.json
