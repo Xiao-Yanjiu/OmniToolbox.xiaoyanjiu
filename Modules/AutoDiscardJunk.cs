@@ -1,15 +1,3 @@
-// ============================================================================
-// AutoDiscardJunk.Omni.cs —— Omni 妙妙屋 本地模块（TreeHouse）「自动丢垃圾」 v1
-//
-//   - 三栏界面管理背包物品：左 = 黑名单 / 中 = 背包物品 / 右 = 白名单
-//   - 黑名单 + 白名单 + 背包 = 游戏内背包全部物品（三栏互不重叠）
-//   - HQ 物品与普通物品分开显示、分开记录（HQ 带金色标记）
-//   - 勾选「启动」后，背包中出现黑名单物品时自动丢弃（确认弹窗自动点"是"）
-//
-// 导入方法：
-//   Omni 妙妙屋 → 本地模块 → 填入本文件绝对路径
-// ⚠ 启动前请务必确认黑名单内容，被丢弃的物品无法找回！
-// ============================================================================
 
 using System;
 using System.Collections.Generic;
@@ -41,16 +29,11 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
     public override ModuleInfo Info { get; } = new()
     {
         Title       = "自动丢垃圾",
-        Description = "三栏管理背包物品：黑名单中的物品会在启动后自动丢弃。\n" +
-                      "黑名单 + 白名单 + 背包 = 游戏内背包物品。HQ 物品与普通物品分开管理。\n" +
-                      "宏命令：/discard 开关面板，/discardrun 开关自动丢弃。",
+        Description = "",
         Category    = ModuleCategory.Item,
         Author      = "小烟酒",
     };
 
-    // ------------------------------ 常量 ------------------------------
-
-    /// <summary>玩家随身背包 (4 个背包格)</summary>
     private static readonly InventoryType[] PlayerBagTypes =
     [
         InventoryType.Inventory1,
@@ -59,7 +42,6 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         InventoryType.Inventory4,
     ];
 
-    // 主题令牌：运行时跟随 Omni 当前主题（线条 绿意 / 桃夭 / 鸢尾 / 石墨 等）
     private static Vector4 BlacklistColor => OmniTheme.Tokens.Error;
     private static Vector4 InventoryColor => OmniTheme.ControlAccent;
     private static Vector4 WhitelistColor => OmniTheme.Tokens.Success;
@@ -72,22 +54,17 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "XIVLauncherCN", "pluginConfigs", "OmniAutoDiscardJunk.json");
 
-    // ------------------------------ 状态 ------------------------------
-
     private Config config = new();
     private bool   isRunning;
     private bool   windowOpen;
     private string searchInput = string.Empty;
     private string lastAction  = string.Empty;
 
-    // 丢弃动作队列：每次框架 tick 执行一个（丢弃 → 下一帧点"是"），与官方节奏一致
     private readonly Queue<System.Action> discardQueue = new();
     private long nextScanAt;
 
     private ICommandManager? commandManager;
     private readonly HashSet<string> registeredCommands = new();
-
-    // ------------------------------ 生命周期 ------------------------------
 
     public AutoDiscardJunk()
     {
@@ -96,22 +73,18 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
 
     protected override void OnEnable()
     {
-        // 命令服务（优先走宿主静态服务，失败则反射兜底）
         commandManager = DalamudServices.CommandManager ?? GetService<ICommandManager>("Dalamud.Game.Command.CommandManager");
         RegisterCommands();
 
-        // 独立窗口绘制（宿主插件 UiBuilder 的 Draw 事件，与内置模块同一套机制）
         if (DalamudServices.PluginInterface != null)
             DalamudServices.PluginInterface.UiBuilder.Draw += DrawPanel;
 
-        // 丢弃循环（框架 Update，主线程）
         if (DalamudServices.Framework != null)
             DalamudServices.Framework.Update += OnFrameworkUpdate;
     }
 
     protected override void OnDisable()
     {
-        // 停止丢弃
         isRunning = false;
         discardQueue.Clear();
 
@@ -127,12 +100,9 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
 
     protected override void OnDispose()
     {
-        // 双保险：确保事件已解绑、丢弃已停止
         isRunning = false;
         discardQueue.Clear();
     }
-
-    // ------------------------------ 配置自持久化 ------------------------------
 
     private void LoadOwnConfig()
     {
@@ -146,7 +116,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
                 if (loaded != null) config = loaded;
             }
         }
-        catch { /* 损坏则用默认配置 */ }
+        catch {   }
     }
 
     private void SaveOwnConfig()
@@ -161,10 +131,8 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
                 DefaultIgnoreCondition = JsonIgnoreCondition.Never,
             }));
         }
-        catch { /* 保存失败静默 */ }
+        catch {   }
     }
-
-    // ------------------------------ 宏命令 ------------------------------
 
     private void RegisterCommands()
     {
@@ -191,7 +159,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         if (commandManager == null) return;
         foreach (var cmd in registeredCommands.ToList())
         {
-            try { commandManager.RemoveHandler(cmd); } catch { /* 忽略 */ }
+            try { commandManager.RemoveHandler(cmd); } catch {   }
         }
         registeredCommands.Clear();
     }
@@ -202,14 +170,11 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         lastAction = windowOpen ? "已打开面板" : "已关闭面板";
     }
 
-    // ------------------------------ 丢弃循环 ------------------------------
-
     private void OnFrameworkUpdate(IFramework framework)
     {
-        // 每帧执行一个丢弃动作（丢弃 → 下一帧点"是"），避免确认弹窗尚未出现
         if (discardQueue.Count > 0)
         {
-            try { discardQueue.Dequeue()(); } catch { /* 忽略 */ }
+            try { discardQueue.Dequeue()(); } catch {   }
             return;
         }
 
@@ -219,9 +184,9 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         if (now < nextScanAt) return;
 
         var willDiscard = false;
-        try { willDiscard = ScanAndDiscardOnce(); } catch { /* 单轮扫描异常静默跳过 */ }
+        try { willDiscard = ScanAndDiscardOnce(); } catch {   }
 
-        nextScanAt = now + (willDiscard ? 100 : 500);
+        nextScanAt = now + (willDiscard ? 200 : 500);
     }
 
     private void SetRunning(bool value)
@@ -236,20 +201,13 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
             return;
         }
 
-        nextScanAt = Environment.TickCount64 + 200; // 启动后短延时再首扫
+        nextScanAt = Environment.TickCount64 + 200;
     }
 
-    /// <summary>
-    /// 扫描一轮随身背包，将本轮找到的全部黑名单物品堆叠一次性入队丢弃。
-    /// 按完整物品 ID (含 HQ 标记) 精确匹配：普通/HQ 分别只丢对应版本。
-    /// </summary>
     private bool ScanAndDiscardOnce()
     {
         var manager = InventoryManager.Instance();
         if (manager == null) return false;
-
-        var enqueuedCount = 0;
-        var lastDiscardName = string.Empty;
 
         foreach (var type in PlayerBagTypes)
         {
@@ -265,7 +223,6 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
                 var (_, _, fullID) = ResolveItem(item);
                 if (!config.Blacklist.Contains(fullID)) continue;
 
-                // 捕获槽位快照，入队后逐帧执行
                 var capturedItem = item;
                 var capturedType = item->Container;
                 var capturedSlot = item->Slot;
@@ -275,34 +232,25 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
                     ->DiscardItem(capturedItem, capturedType, capturedSlot, capturedAddonId));
                 discardQueue.Enqueue(() => AddonSelectYesnoEvent.ClickYes());
 
-                enqueuedCount++;
-                lastDiscardName = GetDisplayName(fullID);
+                lastAction = $"正在丢弃: {GetDisplayName(fullID)}";
+                return true;
             }
         }
 
-        if (enqueuedCount > 0)
-            lastAction = enqueuedCount == 1
-                ? $"正在丢弃: {lastDiscardName}"
-                : $"正在批量丢弃 {enqueuedCount} 组, 最后: {lastDiscardName}";
-
-        return enqueuedCount > 0;
+        return false;
     }
-
-    // ------------------------------ 独立面板 UI ------------------------------
 
     private void DrawPanel()
     {
         if (!windowOpen) return;
 
-        // Omni UI 字体（失败则退回默认字体，不影响功能）
         IDisposable? fontHandle = null;
-        try { fontHandle = OmniFonts.GetUIFont().Push(); } catch { /* 字体不可用 */ }
+        try { fontHandle = OmniFonts.GetUIFont().Push(); } catch {   }
 
         try
         {
             ImGui.SetNextWindowSize(OmniTheme.Scale(new Vector2(760f, 480f)), ImGuiCond.FirstUseEver);
 
-            // 整窗套用 Omni 当前主题：配色/圆角/间距全部跟随（绿意/桃夭/鸢尾/石墨等）
             using var theme = new ComicStyleScope();
 
             if (!ImGui.Begin("自动丢垃圾###OmniAutoDiscardJunk", ref windowOpen))
@@ -329,7 +277,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
                 ImGui.End();
             }
         }
-        catch { /* 渲染异常静默，避免影响游戏 */ }
+        catch {   }
         finally
         {
             fontHandle?.Dispose();
@@ -342,8 +290,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
     {
         var changed = false;
 
-        ImGui.TextUnformatted($"命令服务: {(commandManager != null ? "正常" : "失败")}   ·   状态: {(isRunning ? "运行中" : "已停止")}");
-        ImGui.TextWrapped("本模块的面板是独立浮动窗口，用宏命令 /discard 打开或关闭；/discardrun 启动或停止自动丢弃。");
+        ImGui.TextWrapped("宏命令：/discard 开关面板，/discardrun 开关自动丢弃。");
 
         ImGui.Spacing();
 
@@ -352,18 +299,11 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
             TogglePanel();
         }
 
-        ImGui.SameLine();
-        if (ImGui.Button(isRunning ? "停止自动丢弃" : "启动自动丢弃"))
-        {
-            SetRunning(!isRunning);
-        }
-
         return changed;
     }
 
     private void DrawControlBar()
     {
-        // Omni 自绘复选框，跟随主题
         var state = isRunning;
         if (OmniControls.Checkbox("###OmniDiscardToggle", ref state))
             SetRunning(state);
@@ -568,13 +508,6 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         }
     }
 
-    // ------------------------------ 数据获取 ------------------------------
-
-    /// <summary>
-    /// 获取随身背包 (Inventory1-4) 中可显示的物品及总堆叠数量。
-    /// 以完整物品 ID (含 HQ 标记) 为键，HQ 物品与普通物品分开显示。
-    /// 已排除黑名单与白名单中的物品。
-    /// </summary>
     private Dictionary<uint, uint> GetInventoryDisplay()
     {
         var result = new Dictionary<uint, uint>();
@@ -607,14 +540,6 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         return result;
     }
 
-    // ------------------------------ 物品 ID 工具 ------------------------------
-
-    /// <summary>
-    /// 从背包槽位解析物品 ID 与 HQ 标记。
-    /// 不使用 GetItemId()：当前游戏版本 HQ 物品的原始 ItemId 字段已含 +500000 偏移，
-    /// GetItemId() 会再叠加一次 500000，得到翻倍 ID 导致查表失败。
-    /// 改用 Flags 位判定 HQ，并防御性剥离原始 ID 中可能存在的 +500000 偏移。
-    /// </summary>
     private static (uint BaseID, bool IsHQ, uint FullID) ResolveItem(InventoryItem* item)
     {
         var raw    = item->ItemId;
@@ -623,7 +548,6 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         return (baseID, isHQ, baseID + (isHQ ? 500_000u : 0));
     }
 
-    /// <summary>HQ 物品的完整 ID = 基础 ID + 500000</summary>
     private static bool IsHQ(uint itemID) => itemID >= 500_000u;
 
     private static uint ToBaseID(uint itemID) => IsHQ(itemID) ? itemID - 500_000u : itemID;
@@ -645,8 +569,6 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
     private string GetDisplayName(uint itemID) =>
         GetItemName(itemID) + (IsHQ(itemID) ? " (HQ)" : string.Empty);
 
-    // ------------------------------ 反射 ------------------------------
-
     private static T? GetService<T>(string implTypeFullName) where T : class
     {
         try
@@ -664,13 +586,11 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         catch { return null; }
     }
 
-    // ------------------------------ 配置模型 ------------------------------
-
     [Serializable]
     private sealed class Config
     {
-        // 存储完整物品 ID: 普通物品 = 游戏物品 ID, HQ 物品 = 游戏物品 ID + 500000
         public HashSet<uint> Blacklist { get; set; } = new();
         public HashSet<uint> Whitelist { get; set; } = new();
     }
 }
+
