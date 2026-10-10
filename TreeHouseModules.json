@@ -26,10 +26,10 @@
       "Name": "游戏聊天同步 QQ",
       "Author": "小烟酒",
       "Description": "把游戏聊天镜像同步到 QQ 群；可同时同步 Omni「国服频道」（跨服世界聊天）；收到私聊、组队邀请、交易请求或被人选中时在群里 @你。",
-      "Version": "1.1.0",
+      "Version": "1.2.0",
       "MinimumOmniVersion": "1.1.3.0",
       "File": "Modules/ChatToQQ.cs",
-      "Sha256": "476dd158af6d66c5aac986c699b0f55fc83daf82d0766601e5828a23dff10c57"
+      "Sha256": "933f320295cb8b9e2aa1a785ac3befb4861faf98274e5fec413fca4f34e0425f"
     },
     {
       "InternalName": "AutoDiscardJunk",

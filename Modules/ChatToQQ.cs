@@ -1,14 +1,3 @@
-// ============================================================================
-// ChatToQQ.Omni.cs —— Omni 妙妙屋 本地模块（TreeHouse）「游戏聊天同步 QQ」 v1
-//
-// 前提：
-//   本机运行 OneBot v11 HTTP 服务 (推荐 NapCatQQ Desktop)，并已登录 QQ。
-//   模块通过 http://127.0.0.1:端口/send_group_msg 发送消息。
-//   游戏内无需登录 QQ —— QQ 由本机的机器人框架登录。
-//
-// 导入方法：
-//   Omni 妙妙屋 → 本地模块 → 填入本文件绝对路径
-// ============================================================================
 
 using System;
 using System.Collections.Concurrent;
@@ -49,47 +38,43 @@ public sealed class ChatToQQ : ModuleBase
     public override ModuleInfo Info { get; } = new()
     {
         Title       = "游戏聊天同步 QQ",
-        Description = "把游戏聊天镜像同步到 QQ 群；收到私聊、组队邀请、交易请求或被人选中时在群里 @你。\n" +
-                      "支持 QQ → 游戏双向同步（群消息以触发符号开头即送进游戏）。\n" +
-                      "需要本机运行 NapCatQQ Desktop  登录QQ后手动添加HTTP服务器，并填写游戏中需要的参数",
+        Description = "",
         Category    = ModuleCategory.Automation,
         Author      = "小烟酒",
     };
-
-    // ------------------------------ 配置 ------------------------------
 
     [Serializable]
     private sealed class Config
     {
         public string OneBotURL   { get; set; } = "http://127.0.0.1:3000";
         public string AccessToken { get; set; } = "";
-        public string GroupIDs    { get; set; } = "";      // 逗号分隔, 可多个群
+        public string GroupIDs    { get; set; } = "";
 
-        // @ 规则: 每行一条 "角色名=QQ号"; 私聊者名字匹配到就 @ 对应 QQ
         public string AtRules     { get; set; } = "";
-        public string DefaultAtQQ { get; set; } = "";      // 匹配不到时 @ 这个 QQ (可留空)
+        public string DefaultAtQQ { get; set; } = "";
 
-        public bool MirrorEnabled { get; set; } = true;    // 全部聊天镜像
-        public bool AtOnTell      { get; set; } = true;    // 私聊到达时 @
-        public bool AtOnTargeted  { get; set; } = true;    // 被人选中时 @
+        public bool MirrorEnabled { get; set; } = true;
+        public bool AtOnTell      { get; set; } = true;
+        public bool AtOnTargeted  { get; set; } = true;
 
-        // ---- @ 提醒分类开关 ----
-        public bool AtOnPartyInvite { get; set; } = true;  // 被邀请组队时 @
-        public bool AtOnTrade       { get; set; } = true;  // 被请求交易时 @
-        public bool AtOnFriendReq   { get; set; } = true;  // 被请求加好友时 @
+        public HashSet<string> MirrorChannels { get; set; } = new()
+        {
+            "悄悄话", "说话", "小队", "团队", "呼喊", "喊话",
+            "部队", "新人", "表情", "通讯贝1-8", "跨服贝1-8"
+        };
 
-        // ---- QQ → 游戏同步 ----
+        public bool AtOnPartyInvite { get; set; } = true;
+        public bool AtOnTrade       { get; set; } = true;
+        public bool AtOnFriendReq   { get; set; } = true;
+
         public bool   QQToGameEnabled { get; set; } = false;
         public string TriggerPrefix   { get; set; } = "#";
         public string GameChannel     { get; set; } = "/p";
         public string BotQQ           { get; set; } = "";
 
-        // ---- Omni 国服频道 (世界聊天) ----
         public bool   SyncWorldChat { get; set; } = true;
         public string WorldChatTag  { get; set; } = "国服";
     }
-
-    // ------------------------------- 状态 ------------------------------------
 
     private Config config = new();
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(8) };
@@ -100,7 +85,6 @@ public sealed class ChatToQQ : ModuleBase
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "XIVLauncherCN", "pluginConfigs", "OmniChatToQQ.json");
 
-    /// <summary>调试日志文件 (插件配置目录下, 超 256KB 自动清空)</summary>
     private static readonly string DebugLogPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "XIVLauncherCN", "pluginConfigs", "ChatToQQ.debug.log");
@@ -120,21 +104,18 @@ public sealed class ChatToQQ : ModuleBase
     private CancellationTokenSource? senderCts;
     private IChatGui? chatGui;
     private IAddonLifecycle? addonLifecycle;
-    private IFramework? framework;     // QQ→游戏消息需派发主线程 + 被选中检测轮询
-    private IObjectTable? objectTable; // 取本地玩家归属服务器 + 被选中检测
+    private IFramework? framework;
+    private IObjectTable? objectTable;
 
     private bool windowOpen;
 
-    // 被选中检测: 上轮目标者名单 (同一人取消选中后再选中会重新提醒)
     private readonly HashSet<string> lastTargetingNames = [];
     private long lastTargetScanAt;
 
-    // QQ → 游戏同步: 轮询 OneBot 群消息历史
     private CancellationTokenSource? pollCts;
     private readonly HashSet<long> seenMsgIDs = [];
     private bool firstPollDone = false;
 
-    // Omni 国服频道 (世界聊天)
     private object?    worldChatClient;
     private EventInfo? worldChatEvent;
     private Delegate?  worldChatHandler;
@@ -143,39 +124,46 @@ public sealed class ChatToQQ : ModuleBase
 
     private volatile string statusText = "运行中";
 
-    // 输入缓冲 (仅 UI 线程)
     private string urlInput     = "";
     private string tokenInput   = "";
     private string groupsInput  = "";
-    private string atRulesInput = "";
     private string atQQInput    = "";
     private string botQQInput   = "";
     private string triggerInput = "#";
-    private string worldTagInput = "国服";
 
     private ICommandManager? commandManager;
     private readonly HashSet<string> registeredCommands = [];
 
-    // 镜像的聊天频道
-    private static readonly HashSet<XivChatType> MirrorTypes =
+    private static readonly string[] MirrorChannelKeys =
     [
-        XivChatType.Say,
-        XivChatType.Shout,
-        XivChatType.Yell,
-        XivChatType.Party,
-        XivChatType.Alliance,
-        XivChatType.TellIncoming,
-        XivChatType.TellOutgoing,
-        XivChatType.FreeCompany,
-        XivChatType.CustomEmote,
-        XivChatType.StandardEmote,
-        XivChatType.NoviceNetwork,
-        XivChatType.Ls1,  XivChatType.Ls2,  XivChatType.Ls3,  XivChatType.Ls4,
-        XivChatType.Ls5,  XivChatType.Ls6,  XivChatType.Ls7,  XivChatType.Ls8,
-        XivChatType.CrossLinkShell1, XivChatType.CrossLinkShell2, XivChatType.CrossLinkShell3,
-        XivChatType.CrossLinkShell4, XivChatType.CrossLinkShell5, XivChatType.CrossLinkShell6,
-        XivChatType.CrossLinkShell7, XivChatType.CrossLinkShell8
+        "悄悄话", "说话", "小队", "团队", "呼喊", "喊话",
+        "部队", "新人", "表情", "通讯贝1-8", "跨服贝1-8"
     ];
+
+    private static readonly string[] LegacyMirrorKeys =
+    [
+        "喊话(区域)", "密语发送", "新人频道", "队伍", "联盟", "LS1-8"
+    ];
+
+    private static string? MirrorChannelKey(XivChatType t) => t switch
+    {
+        XivChatType.Say             => "说话",
+        XivChatType.Shout           => "喊话",
+        XivChatType.Yell            => "呼喊",
+        XivChatType.Party           => "小队",
+        XivChatType.Alliance        => "团队",
+        XivChatType.FreeCompany     => "部队",
+        XivChatType.CustomEmote     => "表情",
+        XivChatType.StandardEmote   => "表情",
+        XivChatType.NoviceNetwork   => "新人",
+        XivChatType.TellOutgoing    => "悄悄话",
+        XivChatType.Ls1 or XivChatType.Ls2 or XivChatType.Ls3 or XivChatType.Ls4 or
+        XivChatType.Ls5 or XivChatType.Ls6 or XivChatType.Ls7 or XivChatType.Ls8 => "通讯贝1-8",
+        XivChatType.CrossLinkShell1 or XivChatType.CrossLinkShell2 or XivChatType.CrossLinkShell3 or
+        XivChatType.CrossLinkShell4 or XivChatType.CrossLinkShell5 or XivChatType.CrossLinkShell6 or
+        XivChatType.CrossLinkShell7 or XivChatType.CrossLinkShell8 => "跨服贝1-8",
+        _                           => null
+    };
 
     private static readonly string[] PartyInviteKeywords = ["发来的入队邀请", "入队邀请", "邀请你加入", "希望加入你的队伍", "希望加入你的部队", "希望加入你的小队"];
     private static readonly string[] TradeKeywords       = ["希望与你交易", "希望与你进行交易", "请求与你交易", "发来的交易请求", "交易请求", "交易申请"];
@@ -197,8 +185,6 @@ public sealed class ChatToQQ : ModuleBase
     private static bool IsTradeReq(string s)    => TradeKeywords.Any(s.Contains);
     private static bool IsFriendReq(string s)   => FriendKeywords.Any(s.Contains);
 
-    // ------------------------------- 生命周期 --------------------------------
-
     public ChatToQQ()
     {
         LoadOwnConfig();
@@ -209,11 +195,9 @@ public sealed class ChatToQQ : ModuleBase
         urlInput     = config.OneBotURL;
         tokenInput   = config.AccessToken;
         groupsInput  = config.GroupIDs;
-        atRulesInput = config.AtRules;
         atQQInput    = config.DefaultAtQQ;
         botQQInput   = config.BotQQ;
         triggerInput = config.TriggerPrefix;
-        worldTagInput = config.WorldChatTag;
 
         AttachChat();
 
@@ -223,7 +207,6 @@ public sealed class ChatToQQ : ModuleBase
 
         AttachWorldChat();
 
-        // 独立面板窗口绘制
         if (DalamudServices.PluginInterface != null)
             DalamudServices.PluginInterface.UiBuilder.Draw += DrawPanel;
 
@@ -256,8 +239,6 @@ public sealed class ChatToQQ : ModuleBase
         sendQueue.Clear();
     }
 
-    // ------------------------------ 配置自持久化 ------------------------------
-
     private void LoadOwnConfig()
     {
         try
@@ -268,6 +249,9 @@ public sealed class ChatToQQ : ModuleBase
                 var json   = File.ReadAllText(path);
                 var loaded = JsonSerializer.Deserialize<Config>(json);
                 if (loaded != null) config = loaded;
+
+                if (LegacyMirrorKeys.Any(k => config.MirrorChannels.Contains(k)))
+                    config.MirrorChannels = new HashSet<string>(MirrorChannelKeys);
             }
         }
         catch { }
@@ -283,8 +267,6 @@ public sealed class ChatToQQ : ModuleBase
         }
         catch { }
     }
-
-    // ------------------------------ 宏命令 ------------------------------
 
     private void RegisterCommands()
     {
@@ -318,11 +300,8 @@ public sealed class ChatToQQ : ModuleBase
         statusText = windowOpen ? "面板已打开" : "面板已关闭";
     }
 
-    // ------------------------------ 挂接 ------------------------------
-
     private void AttachChat()
     {
-        // ---- 聊天事件 (反射拿内部 ChatGui, 转 IChatGui 接口) ----
         try
         {
             var dalamudAsm = AppDomain.CurrentDomain.GetAssemblies()
@@ -343,7 +322,6 @@ public sealed class ChatToQQ : ModuleBase
         }
         catch (Exception e) { statusText = $"挂接聊天事件失败: {e.Message}"; }
 
-        // ---- 确认弹窗监听 (组队邀请/交易/好友请求走 SelectYesno) ----
         try
         {
             addonLifecycle = GetService<IAddonLifecycle>("Dalamud.Plugin.Services.IAddonLifecycle");
@@ -351,7 +329,6 @@ public sealed class ChatToQQ : ModuleBase
         }
         catch { }
 
-        // ---- Framework (主线程派发 + 被选中检测轮询) ----
         try
         {
             framework = GetService<IFramework>("Dalamud.Game.Framework");
@@ -360,7 +337,6 @@ public sealed class ChatToQQ : ModuleBase
         }
         catch (Exception e) { LogDebug($"Framework 服务获取异常: {e}"); }
 
-        // ---- ObjectTable (归属服务器 + 被选中检测) ----
         try
         {
             objectTable = GetService<IObjectTable>("Dalamud.Game.ClientState.Objects.ObjectTable");
@@ -368,7 +344,6 @@ public sealed class ChatToQQ : ModuleBase
         }
         catch (Exception e) { LogDebug($"ObjectTable 服务获取异常: {e}"); }
 
-        // ---- QQ → 游戏消息轮询 ----
         pollCts = new CancellationTokenSource();
         _ = Task.Run(() => PollQQMessages(pollCts.Token));
     }
@@ -385,8 +360,6 @@ public sealed class ChatToQQ : ModuleBase
         catch (Exception e) { LogDebug($"发送动作执行失败: {e}"); }
     }
 
-    // ------------------------------ 被选中检测 --------------------------------
-
     private void OnFrameworkUpdate(IFramework fw)
     {
         var now = Environment.TickCount64;
@@ -402,11 +375,6 @@ public sealed class ChatToQQ : ModuleBase
         ScanTargeting();
     }
 
-    /// <summary>
-    /// 轮询扫描 ObjectTable：找出「目标指向本地玩家」的玩家角色并 @提醒。
-    /// 与 DR 版 PlayersManager.ReceivePlayersTargetingMe 事件等价，
-    /// 只是改成每 500ms 主动扫描 (Omni 无该事件)。
-    /// </summary>
     private void ScanTargeting()
     {
         try
@@ -440,8 +408,6 @@ public sealed class ChatToQQ : ModuleBase
         catch { }
     }
 
-    // ------------------------------ 确认弹窗 ------------------------------
-
     private unsafe void OnSelectYesnoPopup(AddonEvent type, AddonArgs args)
     {
         try
@@ -466,8 +432,6 @@ public sealed class ChatToQQ : ModuleBase
         }
         catch { }
     }
-
-    // ------------------------------ 聊天事件 ------------------------------
 
     private void OnChatMessage(IHandleableChatMessage message)
     {
@@ -508,13 +472,15 @@ public sealed class ChatToQQ : ModuleBase
                 }
             }
 
-            if (config.MirrorEnabled && MirrorTypes.Contains(kind))
-                Enqueue(null, $"[{ChannelLabel(kind)}] {(sender.Length > 0 ? DecorateSender(sender) + ": " : "")}{content}");
+            if (config.MirrorEnabled)
+            {
+                var key = MirrorChannelKey(kind);
+                if (key != null && config.MirrorChannels.Contains(key))
+                    Enqueue(null, $"[{ChannelLabel(kind)}] {(sender.Length > 0 ? DecorateSender(sender) + ": " : "")}{content}");
+            }
         }
         catch { }
     }
-
-    // ------------------------------ 发送者名 @服务器 ------------------------------
 
     private string homeWorldName  = "";
     private long   homeWorldTicks = 0;
@@ -538,8 +504,6 @@ public sealed class ChatToQQ : ModuleBase
         var w = GetHomeWorldName();
         return w.Length > 0 ? $"{sender}@{w}" : sender;
     }
-
-    // ------------------------------ @ 规则 ------------------------------
 
     private string? ResolveAt(string senderName)
     {
@@ -571,35 +535,33 @@ public sealed class ChatToQQ : ModuleBase
     {
         XivChatType.Say             => "说话",
         XivChatType.Shout           => "喊话",
-        XivChatType.Yell            => "喊话(区域)",
-        XivChatType.Party           => "队伍",
-        XivChatType.Alliance        => "联盟",
+        XivChatType.Yell            => "呼喊",
+        XivChatType.Party           => "小队",
+        XivChatType.Alliance        => "团队",
         XivChatType.TellIncoming    => "私聊",
-        XivChatType.TellOutgoing    => "私聊发",
+        XivChatType.TellOutgoing    => "悄悄话",
         XivChatType.FreeCompany     => "部队",
         XivChatType.CustomEmote     => "表情",
         XivChatType.StandardEmote   => "表情",
         XivChatType.NoviceNetwork   => "新人",
-        XivChatType.Ls1             => "LS1",
-        XivChatType.Ls2             => "LS2",
-        XivChatType.Ls3             => "LS3",
-        XivChatType.Ls4             => "LS4",
-        XivChatType.Ls5             => "LS5",
-        XivChatType.Ls6             => "LS6",
-        XivChatType.Ls7             => "LS7",
-        XivChatType.Ls8             => "LS8",
-        XivChatType.CrossLinkShell1 => "CWL1",
-        XivChatType.CrossLinkShell2 => "CWL2",
-        XivChatType.CrossLinkShell3 => "CWL3",
-        XivChatType.CrossLinkShell4 => "CWL4",
-        XivChatType.CrossLinkShell5 => "CWL5",
-        XivChatType.CrossLinkShell6 => "CWL6",
-        XivChatType.CrossLinkShell7 => "CWL7",
-        XivChatType.CrossLinkShell8 => "CWL8",
+        XivChatType.Ls1             => "通讯贝1",
+        XivChatType.Ls2             => "通讯贝2",
+        XivChatType.Ls3             => "通讯贝3",
+        XivChatType.Ls4             => "通讯贝4",
+        XivChatType.Ls5             => "通讯贝5",
+        XivChatType.Ls6             => "通讯贝6",
+        XivChatType.Ls7             => "通讯贝7",
+        XivChatType.Ls8             => "通讯贝8",
+        XivChatType.CrossLinkShell1 => "跨服贝1",
+        XivChatType.CrossLinkShell2 => "跨服贝2",
+        XivChatType.CrossLinkShell3 => "跨服贝3",
+        XivChatType.CrossLinkShell4 => "跨服贝4",
+        XivChatType.CrossLinkShell5 => "跨服贝5",
+        XivChatType.CrossLinkShell6 => "跨服贝6",
+        XivChatType.CrossLinkShell7 => "跨服贝7",
+        XivChatType.CrossLinkShell8 => "跨服贝8",
         _                           => type.ToString()
     };
-
-    // ------------------------------ QQ → 游戏同步 ------------------------------
 
     private static readonly (string Kw, string Cmd)[] ChannelKeywords =
     [
@@ -708,6 +670,15 @@ public sealed class ChatToQQ : ModuleBase
                                         cmd  = "/cwl" + (cwl.Groups[1].Success ? cwl.Groups[1].Value : "1");
                                         text = string.Join(' ', parts.Skip(1));
                                     }
+                                    else
+                                    {
+                                        var ls = Regex.Match(kw, @"^通讯贝([1-8])?$");
+                                        if (ls.Success)
+                                        {
+                                            cmd  = "/ls" + (ls.Groups[1].Success ? ls.Groups[1].Value : "1");
+                                            text = string.Join(' ', parts.Skip(1));
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -766,8 +737,6 @@ public sealed class ChatToQQ : ModuleBase
 
         return "";
     }
-
-    // ------------------------------ 发送队列 ------------------------------
 
     private void Enqueue(string? atQQ, string text)
     {
@@ -842,22 +811,12 @@ public sealed class ChatToQQ : ModuleBase
         }
     }
 
-    // ------------------------------ 界面绘制 ------------------------------
-
     public override bool HasSettings => true;
 
     public override bool DrawSettings()
     {
-        ImGui.TextUnformatted($"状态: {statusText}");
-        ImGui.TextWrapped("本模块的面板是独立浮动窗口，用宏命令 /chattoqq 打开或关闭。");
-
-        ImGui.Spacing();
         if (ImGui.Button(windowOpen ? "关闭独立面板" : "打开独立面板"))
             TogglePanel();
-
-        ImGui.SameLine();
-        if (ImGui.Button("发送测试消息"))
-            Enqueue(null, "✅ 测试消息: 游戏聊天同步模块工作正常");
 
         return false;
     }
@@ -906,14 +865,19 @@ public sealed class ChatToQQ : ModuleBase
 
         var changed = false;
 
-        changed |= ImGui.InputText("OneBot 地址", ref urlInput, 200);
-        changed |= ImGui.InputText("Access Token", ref tokenInput, 200);
-        changed |= ImGui.InputText("QQ 群号 (多个用英文逗号分隔)", ref groupsInput, 300);
-
-        ImGui.Spacing();
-
         var mirror = config.MirrorEnabled;
         if (ImGui.Checkbox("同步全部聊天到群里", ref mirror)) { config.MirrorEnabled = mirror; SaveOwnConfig(); }
+
+        if (config.MirrorEnabled)
+        {
+            ImGui.Indent();
+            ImGui.TextDisabled("筛选发送到 QQ 的频道:");
+            DrawMirrorChannelToggles();
+            ImGui.Unindent();
+        }
+
+        var qqToGame = config.QQToGameEnabled;
+        if (ImGui.Checkbox("把 QQ 群消息同步进游戏 (双向)", ref qqToGame)) { config.QQToGameEnabled = qqToGame; SaveOwnConfig(); }
 
         var world = config.SyncWorldChat;
         if (ImGui.Checkbox("同步 Omni 国服频道到群里", ref world))
@@ -923,15 +887,8 @@ public sealed class ChatToQQ : ModuleBase
             if (world) { DetachWorldChat(); AttachWorldChat(); }
         }
 
-        ImGui.Indent();
+        ImGui.SameLine();
         ImGui.TextDisabled($"国服频道: {worldChatStatus}");
-        ImGui.SetNextItemWidth(-1f);
-        if (ImGui.InputText("###WorldTag", ref worldTagInput, 16))
-        {
-            config.WorldChatTag = worldTagInput.Trim();
-            SaveOwnConfig();
-        }
-        ImGui.Unindent();
 
         ImGui.Separator();
         ImGui.TextUnformatted("什么消息需要 @我 (自行勾选):");
@@ -954,33 +911,34 @@ public sealed class ChatToQQ : ModuleBase
         ImGui.Separator();
         ImGui.Spacing();
 
-        var qqToGame = config.QQToGameEnabled;
-        if (ImGui.Checkbox("把 QQ 群消息同步进游戏 (双向)", ref qqToGame)) { config.QQToGameEnabled = qqToGame; SaveOwnConfig(); }
+        ImGui.SetNextItemWidth(-130f);
+        changed |= ImGui.InputText("OneBot 地址", ref urlInput, 200);
+        ImGui.SetNextItemWidth(-130f);
+        changed |= ImGui.InputText("Access Token", ref tokenInput, 200);
+        ImGui.SetNextItemWidth(-130f);
+        changed |= ImGui.InputText("QQ 群号 (多个用英文逗号分隔)", ref groupsInput, 300);
 
-        ImGui.Indent();
         if (config.QQToGameEnabled)
         {
-            ImGui.TextUnformatted("机器人 QQ 号 (防回环, 填 Bot 实例的 QQ, 建议填):");
-            ImGui.SetNextItemWidth(-1f);
-            if (ImGui.InputText("###BotQQ", ref botQQInput, 32))
+            ImGui.SetNextItemWidth(-130f);
+            if (ImGui.InputText("机器人 QQ号", ref botQQInput, 32))
             {
                 config.BotQQ = botQQInput.Trim();
                 SaveOwnConfig();
             }
 
-            ImGui.TextUnformatted("触发符号 (群消息以此开头才进游戏, 可自定义, 如 # ! $):");
-            ImGui.SetNextItemWidth(120f);
-            if (ImGui.InputText("###Trigger", ref triggerInput, 8))
+            ImGui.SetNextItemWidth(-130f);
+            if (ImGui.InputText("触发符号", ref triggerInput, 8))
             {
                 config.TriggerPrefix = triggerInput;
                 SaveOwnConfig();
             }
 
-            ImGui.TextUnformatted("默认发送频道 (不写频道词时使用):");
-            var channels = new[] { ("小队 (/p)", "/p"), ("说话 (/s)", "/s"), ("团队 (/a)", "/a"), ("呼喊 (/y)", "/y"), ("喊话 (/sh)", "/sh"), ("部队 (/fc)", "/fc"), ("新人 (/n)", "/n"), ("跨服贝1 (/cwl1)", "/cwl1") };
+            ImGui.SetNextItemWidth(-130f);
+            var channels = new[] { ("小队 (/p)", "/p"), ("说话 (/s)", "/s"), ("团队 (/a)", "/a"), ("呼喊 (/y)", "/y"), ("喊话 (/sh)", "/sh"), ("部队 (/fc)", "/fc"), ("新人 (/n)", "/n"), ("通讯贝 (/ls1)", "/ls1"), ("跨服贝1 (/cwl1)", "/cwl1") };
             var chIdx    = Array.FindIndex(channels, c => c.Item2 == (config.GameChannel ?? "/p"));
             if (chIdx < 0) chIdx = 0;
-            if (ImGui.BeginCombo("###Channel", channels[chIdx].Item1))
+            if (ImGui.BeginCombo("默认频道", channels[chIdx].Item1))
             {
                 for (var i = 0; i < channels.Length; i++)
                 {
@@ -992,36 +950,10 @@ public sealed class ChatToQQ : ModuleBase
                 }
                 ImGui.EndCombo();
             }
-
-            ImGui.TextWrapped("群里发消息以触发符号开头才会进游戏, 如 \"# 说话 123\" (假设触发符号是 #)");
-            ImGui.TextWrapped("频道词: 说话 / 小队 / 团队 / 呼喊 / 喊话 / 部队 / 新人 / 跨服贝1~8, 不写则用上方默认频道");
-            ImGui.TextWrapped("悄悄话格式: # 悄悄话 名字@服务器 内容 (镜像消息里的名字已带@服务器, 复制即可; 同服可省略)");
         }
-        else
-        {
-            ImGui.TextDisabled("先勾选上面的开关, 才能配置双向同步");
-        }
-        ImGui.Unindent();
 
-        ImGui.Spacing();
-        ImGui.TextUnformatted("固定 @ 的 QQ 号 (匹配不到角色名时用):");
-        ImGui.SetNextItemWidth(-1f);
-        if (ImGui.InputText("###AtQQ", ref atQQInput, 64)) changed = true;
-
-        ImGui.TextUnformatted("@规则 (每行一条: 角色名=QQ号, 支持模糊):");
-        ImGui.SetNextItemWidth(-1f);
-        if (ImGui.InputTextMultiline("###AtRules", ref atRulesInput, 2000, new Vector2(-1f, 80f))) changed = true;
-
-        if (changed)
-        {
-            config.OneBotURL   = urlInput;
-            config.AccessToken = tokenInput;
-            config.GroupIDs    = groupsInput;
-            config.AtRules     = atRulesInput;
-            config.DefaultAtQQ = atQQInput;
-            SaveOwnConfig();
-            statusText = $"运行中 (群: {(ParseGroups().Count > 0 ? "已配置" : "未配置")})";
-        }
+        ImGui.SetNextItemWidth(-130f);
+        if (ImGui.InputText("固定@ QQ号", ref atQQInput, 64)) changed = true;
 
         ImGui.Spacing();
 
@@ -1029,10 +961,35 @@ public sealed class ChatToQQ : ModuleBase
             Enqueue(null, "✅ 测试消息: 游戏聊天同步模块工作正常");
 
         ImGui.Spacing();
-        ImGui.TextWrapped("前提: 本机运行 NapCat/Lagrange 并登录 QQ, OneBot 地址形如 http://127.0.0.1:3000");
+        ImGui.TextWrapped("前提: 本机运行 NapCatQQ Desktop 并登录 QQ, OneBot 地址形如 http://127.0.0.1:3000");
+
+        if (changed)
+        {
+            config.OneBotURL   = urlInput;
+            config.AccessToken = tokenInput;
+            config.GroupIDs    = groupsInput;
+            config.DefaultAtQQ = atQQInput;
+            SaveOwnConfig();
+            statusText = $"运行中 (群: {(ParseGroups().Count > 0 ? "已配置" : "未配置")})";
+        }
     }
 
-    // ------------------------------ Omni 国服频道 (世界聊天) ------------------------------
+    private void DrawMirrorChannelToggles()
+    {
+        ImGui.Columns(3, "###MirrorChannels", false);
+        foreach (var key in MirrorChannelKeys)
+        {
+            var on = config.MirrorChannels.Contains(key);
+            if (ImGui.Checkbox(key, ref on))
+            {
+                if (on) config.MirrorChannels.Add(key);
+                else config.MirrorChannels.Remove(key);
+                SaveOwnConfig();
+            }
+            ImGui.NextColumn();
+        }
+        ImGui.Columns(1);
+    }
 
     private void AttachWorldChat()
     {
@@ -1242,8 +1199,6 @@ public sealed class ChatToQQ : ModuleBase
         return null;
     }
 
-    // ------------------------------ 反射辅助 ------------------------------
-
     private static T? GetService<T>(string implTypeFullName) where T : class
     {
         try
@@ -1260,3 +1215,4 @@ public sealed class ChatToQQ : ModuleBase
         catch { return null; }
     }
 }
+
