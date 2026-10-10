@@ -22,6 +22,8 @@ using Dalamud.Plugin.Services;
 using OmniToolbox.Common.Module.Abstractions;
 using OmniToolbox.Common.Module.Enums;
 using OmniToolbox.Host;
+using OmniToolbox.UI;
+using OmniToolbox.UI.Theme;
 using AgentMacro = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentMacro;
 using AddonMacro = FFXIVClientStructs.FFXIV.Client.UI.AddonMacro;
 using AtkComponentBase = FFXIVClientStructs.FFXIV.Component.GUI.AtkComponentBase;
@@ -79,6 +81,9 @@ public sealed class ToolbarIconPlus : ModuleBase
     private string statusLine = "";
     private bool statusIsError;
 
+    private bool panelOpen;
+    private bool panelCommandRegistered;
+
     private bool deepProbe;
 
     private static object? managerCache;
@@ -120,6 +125,7 @@ public sealed class ToolbarIconPlus : ModuleBase
 
     private const string MacroIconCommand = "/图库图标";
     private const string MacroIconCommandAlias = "/ticon";
+    private const string CommandTogglePanel = "/图标管理";
     private const int MacroIconKernelSize = 80;
     private const int MacroIconWalkDepth = 24;
     private const int MacroIconNodeBudget = 8192;
@@ -280,11 +286,14 @@ public sealed class ToolbarIconPlus : ModuleBase
             moduleActive = true;
             InstallDetours();
             RegisterMacroIconCommand();
+            RegisterPanelCommand();
             InstallMacroIconHook();
             InstallMacroTextureHook();
             InstallMacroExecHook();
             EnsureBrowserInjection(true);
             EnsureFrameworkTick();
+            if (DalamudServices.PluginInterface != null)
+                DalamudServices.PluginInterface.UiBuilder.Draw += DrawPanel;
             Log("模块已启用");
         }
         catch (Exception e)
@@ -300,7 +309,11 @@ public sealed class ToolbarIconPlus : ModuleBase
             moduleActive = false;
             pendingFetch = null;
             busy = false;
+            panelOpen = false;
             SaveOwnConfig();
+            if (DalamudServices.PluginInterface != null)
+                DalamudServices.PluginInterface.UiBuilder.Draw -= DrawPanel;
+            UnregisterPanelCommand();
             UnhookFrameworkTick();
             UninstallBrowserInjection();
             UninstallMacroTextureHook();
@@ -320,6 +333,9 @@ public sealed class ToolbarIconPlus : ModuleBase
             moduleActive = false;
             pendingFetch = null;
             busy = false;
+            panelOpen = false;
+            if (DalamudServices.PluginInterface != null)
+                DalamudServices.PluginInterface.UiBuilder.Draw -= DrawPanel;
             UnhookFrameworkTick();
             UninstallBrowserInjection();
             UninstallMacroTextureHook();
@@ -401,31 +417,45 @@ public sealed class ToolbarIconPlus : ModuleBase
 
     private bool DrawSettingsCore()
     {
-        var changed = false;
+        ImGui.TextWrapped("宏命令：/图标管理 开关独立面板，/图库图标 应用图库图标到选中的宏。");
 
-        var fetched = pendingFetch;
-        if (fetched != null)
+        ImGui.Spacing();
+
+        if (ImGui.Button(panelOpen ? "关闭独立面板" : "打开独立面板"))
+            TogglePanel();
+
+        return false;
+    }
+
+    private void TogglePanel()
+    {
+        panelOpen = !panelOpen;
+        if (panelOpen)
         {
-            pendingFetch = null;
-            busy = false;
-            if (fetched.Ok)
+            try { EnsureBrowserInjection(true); } catch {   }
+        }
+        Chat(panelOpen ? "独立面板已打开" : "独立面板已关闭");
+    }
+
+    private void ProcessPendingFetch()
+    {
+        var fetched = pendingFetch;
+        if (fetched == null) return;
+        pendingFetch = null;
+        busy = false;
+        if (fetched.Ok)
+        {
+            if (uint.TryParse(fetched.Key, out var fid))
             {
-                if (uint.TryParse(fetched.Key, out var fid))
+                var entry = config.BrowserImages.FirstOrDefault(x => x.Id == fid);
+                if (entry != null)
                 {
-                    var entry = config.BrowserImages.FirstOrDefault(x => x.Id == fid);
-                    if (entry != null)
-                    {
-                        entry.Path = fetched.Path;
-                        if (entry.Name.Length == 0) entry.Name = fetched.SourceUrl;
-                        InvalidateIconCaches(entry.Id);
-                        SaveOwnConfig();
-                        EnsureBrowserInjection(true);
-                        SetStatus("favicon 已入库：" + fetched.Path, false);
-                    }
-                    else
-                    {
-                        AddBrowserImage(fetched.Path, fetched.SourceUrl, fetched.SourceUrl);
-                    }
+                    entry.Path = fetched.Path;
+                    if (entry.Name.Length == 0) entry.Name = fetched.SourceUrl;
+                    InvalidateIconCaches(entry.Id);
+                    SaveOwnConfig();
+                    EnsureBrowserInjection(true);
+                    SetStatus("favicon 已入库：" + fetched.Path, false);
                 }
                 else
                 {
@@ -434,19 +464,72 @@ public sealed class ToolbarIconPlus : ModuleBase
             }
             else
             {
-                SetStatus("favicon 抓取失败：" + fetched.Message, true);
+                AddBrowserImage(fetched.Path, fetched.SourceUrl, fetched.SourceUrl);
             }
         }
+        else
+        {
+            SetStatus("favicon 抓取失败：" + fetched.Message, true);
+        }
+    }
 
-        EnsureBrowserInjection(false);
+    private void DrawPanel()
+    {
+        try { ProcessPendingFetch(); } catch {   }
+        try { EnsureBrowserInjection(false); } catch {   }
 
-        if (busy)
-            ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f), "处理中：" + busyLabel);
-        else if (statusLine.Length > 0)
-            ImGui.TextColored(statusIsError ? new Vector4(1f, 0.45f, 0.45f, 1f) : new Vector4(0.5f, 0.95f, 0.6f, 1f), statusLine);
+        if (!panelOpen) return;
 
-        ImGui.Spacing();
-        ImGui.Separator();
+        IDisposable? fontHandle = null;
+        try { fontHandle = OmniFonts.GetUIFont().Push(); } catch {   }
+
+        try
+        {
+            ImGui.SetNextWindowSize(OmniTheme.Scale(new Vector2(760f, 520f)), ImGuiCond.FirstUseEver);
+            using var scope = new ComicStyleScope();
+
+            if (!ImGui.Begin("更好的图标管理###OmniToolbarIconPlus", ref panelOpen))
+            {
+                ImGui.End();
+                return;
+            }
+
+            try
+            {
+                if (busy)
+                    ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f), "处理中：" + busyLabel);
+                else if (statusLine.Length > 0)
+                    ImGui.TextColored(statusIsError ? new Vector4(1f, 0.45f, 0.45f, 1f) : new Vector4(0.5f, 0.95f, 0.6f, 1f), statusLine);
+
+                if (ImGui.BeginTabBar("##tipTabs"))
+                {
+                    var t0 = ImGui.BeginTabItem("图库");
+                    try { if (t0) DrawLibraryPage(); } finally { if (t0) ImGui.EndTabItem(); }
+
+                    var t1 = ImGui.BeginTabItem("图标替换");
+                    try { if (t1) { var ch = false; DrawIconReplaceSection(ref ch); } } finally { if (t1) ImGui.EndTabItem(); }
+
+                    var t2 = ImGui.BeginTabItem("设置");
+                    try { if (t2) DrawProxyPage(); } finally { if (t2) ImGui.EndTabItem(); }
+
+                    ImGui.EndTabBar();
+                }
+            }
+            finally
+            {
+                ImGui.End();
+            }
+        }
+        catch {   }
+        finally
+        {
+            fontHandle?.Dispose();
+        }
+    }
+
+    private bool DrawLibraryPage()
+    {
+        var changed = false;
 
         ImGui.Spacing();
         var newBuf = newInput;
@@ -559,8 +642,11 @@ public sealed class ToolbarIconPlus : ModuleBase
         if (ImGui.Button("重新载入##reloadall"))
             ApplyEverything(false);
 
-        DrawIconReplaceSection(ref changed);
+        return changed;
+    }
 
+    private void DrawProxyPage()
+    {
         ImGui.Spacing();
         ImGui.AlignTextToFramePadding();
         ImGui.TextUnformatted("代理");
@@ -570,10 +656,8 @@ public sealed class ToolbarIconPlus : ModuleBase
         if (ImGui.InputText("##proxyurl", ref proxyBuf, 256))
         {
             config.ProxyUrl = proxyBuf;
-            changed = true;
+            SaveOwnConfig();
         }
-
-        return changed;
     }
 
     private void SetStatus(string msg, bool isErr)
@@ -2718,6 +2802,57 @@ public sealed class ToolbarIconPlus : ModuleBase
         catch (Exception e)
         {
             Log("WriteDiagnostics 异常: " + e, true);
+        }
+    }
+
+    private void RegisterPanelCommand()
+    {
+        if (panelCommandRegistered) return;
+        try
+        {
+            var cm = DalamudServices.CommandManager;
+            if (cm == null)
+            {
+                Log("面板命令注册失败：CommandManager 为空", true);
+                return;
+            }
+
+            var ok = false;
+            try
+            {
+                ok = cm.AddHandler(CommandTogglePanel, new CommandInfo((command, arguments) => TogglePanel())
+                {
+                    HelpMessage = "更好的图标管理：开关独立面板",
+                    ShowInHelp = true,
+                    AllowedInMacros = false,
+                });
+            }
+            catch {   }
+
+            panelCommandRegistered = ok;
+            Log("面板命令注册：" + (ok ? CommandTogglePanel : "失败"), !ok);
+        }
+        catch (Exception e)
+        {
+            Log("面板命令注册异常: " + e, true);
+        }
+    }
+
+    private void UnregisterPanelCommand()
+    {
+        if (!panelCommandRegistered) return;
+        try
+        {
+            var cm = DalamudServices.CommandManager;
+            if (cm != null)
+            {
+                try { cm.RemoveHandler(CommandTogglePanel); } catch {   }
+            }
+        }
+        catch {   }
+        finally
+        {
+            panelCommandRegistered = false;
         }
     }
 
@@ -5065,8 +5200,6 @@ public sealed class ToolbarIconPlus : ModuleBase
     {
         try
         {
-            ImGui.Separator();
-
             var on = config.MacroIconSwap;
             if (ImGui.Checkbox("启用图标替换##macroswap", ref on))
             {
