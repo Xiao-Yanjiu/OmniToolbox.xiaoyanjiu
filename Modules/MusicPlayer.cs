@@ -33,11 +33,7 @@ public sealed class MusicPlayer : ModuleBase
         Title = "游戏内音乐播放器",
         Description = "",
         Category = ModuleCategory.Interface,
-        Author = "小烟酒",
-        Commands = new[]
-        {
-            new ModuleCommand("/omni MusicPlayer 打开/关闭悬浮窗", "/omni MusicPlayer")
-        }
+        Author = "小烟酒"
     };
 
     [Serializable]
@@ -313,11 +309,14 @@ public sealed class MusicPlayer : ModuleBase
 
         ConsumePending();
 
-        var visible = config.WindowVisible;
-        if (ImGui.Checkbox("显示悬浮窗", ref visible))
+        ImGui.TextWrapped("宏命令：/omni MusicPlayer 打开/关闭悬浮窗。");
+
+        ImGui.Spacing();
+
+        if (ImGui.Button(config.WindowVisible ? "关闭悬浮窗" : "显示悬浮窗"))
         {
-            config.WindowVisible = visible;
-            if (visible) { overlaySuspended = false; drawErrorStreak = 0; }
+            config.WindowVisible = !config.WindowVisible;
+            if (config.WindowVisible) { overlaySuspended = false; drawErrorStreak = 0; }
             changed = true;
         }
 

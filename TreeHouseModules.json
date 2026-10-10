@@ -6,10 +6,10 @@
       "Name": "游戏内音乐播放器",
       "Author": "小烟酒",
       "Description": "QQ音乐播放器：真实播放（不需要装 QQ音乐客户端）、搜索、LRC 歌词滚动、扫码登录、我喜欢/收藏歌单读写、跟随歌曲变色的圆角悬浮窗（可固定在角色头顶）。无需 Node 或任何额外运行库。",
-      "Version": "1.1.0",
+      "Version": "1.2.0",
       "MinimumOmniVersion": "1.1.3.0",
       "File": "Modules/MusicPlayer.cs",
-      "Sha256": "4e8c3ce7d855e0d0ed5938863cb9517a3fa1c8f25e12cf2aae266728cf55dff0"
+      "Sha256": "c71b7e15c589fbc97c91746c6e2dfdb6e896bddfa0f9f1e14eff3a0c9e96f300"
     },
     {
       "InternalName": "GameWebBrowser",
