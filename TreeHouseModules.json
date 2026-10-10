@@ -16,10 +16,10 @@
       "Name": "游戏内浏览器",
       "Author": "小烟酒",
       "Description": "在游戏窗口内打开一个或多个网页浏览器（Edge/Chrome 带标签页窗口），用于 Discord、鱼糕等网站。",
-      "Version": "1.0.1",
+      "Version": "1.1.0",
       "MinimumOmniVersion": "1.1.3.0",
       "File": "Modules/GameWebBrowser.cs",
-      "Sha256": "80462a47ea62973b8ad7f616c6fceba1d2b19c23f693bec1ba780571a40aa780"
+      "Sha256": "f4411ec182f81a778ce40f2d658d7f2404d4c92ed77ddd6d400140e523660cc8"
     },
     {
       "InternalName": "ChatToQQ",

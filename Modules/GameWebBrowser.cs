@@ -1,10 +1,3 @@
-// ============================================================================
-// GameWebBrowser.Omni.cs —— Omni 妙妙屋 本地模块（TreeHouse）「游戏内浏览器」 v1
-//
-// 导入方法：
-//   Omni 妙妙屋 → 本地模块 → 填入本文件绝对路径
-// ============================================================================
-
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -31,13 +24,10 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     public override ModuleInfo Info { get; } = new()
     {
         Title       = "游戏内浏览器",
-        Description = "在游戏窗口内打开一个或多个网页浏览器（Edge/Chrome 带标签页窗口），用于 Discord、鱼糕等网站。\n" +
-                      "每个网页可单独设置网址、宏命令和网络代理（留空直连），点击对应命令即可打开 / 最小化。网页内点链接在窗口内开新标签页。",
+        Description = "",
         Category    = ModuleCategory.Interface,
         Author      = "小烟酒",
     };
-
-    // ------------------------------ Win32 ------------------------------
 
     private const int  GWL_HWNDPARENT = -8;
     private const int  SW_HIDE        = 0;
@@ -95,15 +85,14 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     [DllImport("user32.dll")]
     private static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
-    // ------------------------------ 常量 ------------------------------
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
 
-    // 窗口默认大小 / 位置（可在设置界面里改，这里只是默认值）
     private const int DefaultWinWidth  = 1100;
     private const int DefaultWinHeight = 720;
     private const int DefaultOffsetX   = 120;
     private const int DefaultOffsetY   = 100;
 
-    // 生效值：配置里为 0（或旧配置没这两个字段）时回落到默认常量
     private int WinW => config.WinWidth  > 0 ? config.WinWidth  : DefaultWinWidth;
     private int WinH => config.WinHeight > 0 ? config.WinHeight : DefaultWinHeight;
 
@@ -111,13 +100,10 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "XIVLauncherCN", "pluginConfigs", "OmniGameWebBrowser.json");
 
-    // ------------------------------ 状态 ------------------------------
-
     private Config config = new();
 
     private class BrowserWin
     {
-        // Chromium 可能产生多个顶层窗口（主窗口 + 附属小窗），全部跟踪才能隐藏干净
         public HashSet<IntPtr> Hwnds = new();
         public bool Visible;
         public bool Launching;
@@ -129,10 +115,6 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     private string? activeLaunchKey;
     private CancellationTokenSource? watchCts;
 
-    // ---- 启动串行化 ----
-    // 同时只让一个浏览器实例处于「启动中」。原因：Chromium 启动慢、窗口出现晚，
-    // 若两个网页几乎同时启动，后启动的那个会把两个窗口都认领成自己的
-    //（窗口本身分不出属于哪个页面），于是「打开一个 → 再打开第二个」就会互相牵连。
     private sealed class PendingLaunch
     {
         public string    Key  = "";
@@ -152,7 +134,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
     private string browserPathInput = "";
 
-    // ------------------------------ 生命周期 ------------------------------
+    private long focusGameUntilMs;
 
     public GameWebBrowser()
     {
@@ -165,11 +147,10 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         if (commandManager == null)
             statusMessage = "命令服务获取失败，宏命令无法使用";
         else
-            statusMessage = "命令服务获取成功";
+            statusMessage = "";
 
         SyncCommands();
 
-        // 重载模块后清掉上一轮遗留的启动状态
         lock (launchGate) { anyLaunching = false; pendingLaunches.Clear(); }
 
         watchCts = new CancellationTokenSource();
@@ -182,7 +163,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         {
             foreach (var cmd in registeredCommands.ToList())
             {
-                try { commandManager.RemoveHandler(cmd); } catch { /* 忽略 */ }
+                try { commandManager.RemoveHandler(cmd); } catch {   }
             }
         }
         registeredCommands.Clear();
@@ -191,10 +172,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         watchCts?.Cancel();
         watchCts?.Dispose();
         watchCts = null;
-        // 浏览器是独立进程，停用模块不关闭它们
     }
-
-    // ------------------------------ 配置自持久化 ------------------------------
 
     private void LoadOwnConfig()
     {
@@ -208,8 +186,14 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                 if (loaded != null) config = loaded;
             }
         }
-        catch { /* 损坏则用默认配置 */ }
+        catch {   }
         browserPathInput = config.BrowserPath;
+
+        if ((config.Proxy ?? "").Length == 0)
+            foreach (var p in config.Pages)
+                if ((p.Proxy ?? "").Trim().Length > 0) { config.Proxy = p.Proxy.Trim(); break; }
+        foreach (var p in config.Pages)
+            if ((p.Proxy ?? "").Trim().Length > 0) { p.UseProxy = true; p.Proxy = ""; }
     }
 
     private void SaveOwnConfig()
@@ -224,10 +208,8 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                 DefaultIgnoreCondition = JsonIgnoreCondition.Never,
             }));
         }
-        catch { /* 保存失败静默 */ }
+        catch {   }
     }
-
-    // ------------------------------ 命令 ------------------------------
 
     private static string NormalizeCommand(string cmd)
     {
@@ -251,7 +233,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         foreach (var cmd in registeredCommands.ToList())
         {
             if (wanted.Contains(cmd)) continue;
-            try { commandManager.RemoveHandler(cmd); } catch { /* 忽略 */ }
+            try { commandManager.RemoveHandler(cmd); } catch {   }
             registeredCommands.Remove(cmd);
         }
 
@@ -272,8 +254,6 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         }
     }
 
-    // ------------------------------ 主循环（后台线程） ------------------------------
-
     private void WatchLoop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -284,7 +264,6 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                                   .Select(kv => kv.Key).ToList();
                 foreach (var k in dead) windows.Remove(k);
 
-                // 1) 捕获当前页面启动后新出现的浏览器窗口
                 if (activeLaunchKey != null && windows.TryGetValue(activeLaunchKey, out var launching) &&
                     launching.Launching && launching.Hwnds.Count == 0)
                 {
@@ -306,7 +285,6 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                     }
                 }
 
-                // 2) 没有正在启动的页面时，取出排队中的下一个网页继续启动（严格串行，见 LaunchPage）
                 if (!anyLaunching)
                 {
                     PendingLaunch? next;
@@ -326,8 +304,10 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                 }
 
                 FollowGameWindow();
+
+                if (Environment.TickCount64 < focusGameUntilMs) FocusGame();
             }
-            catch { /* 后台线程异常静默 */ }
+            catch {   }
 
             Thread.Sleep(200);
         }
@@ -370,7 +350,6 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
     private void AttachBrowser(BrowserWin win, IntPtr hwnd)
     {
-        // 双保险：同一个窗口绝不能被两个网页同时持有，否则隐藏/关闭会互相牵连
         try
         {
             foreach (var other in windows.Values)
@@ -379,7 +358,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
             }
             if (win.Hwnds.Contains(hwnd)) return;
         }
-        catch { /* 后台线程正在改集合时忽略本次校验 */ }
+        catch {   }
 
         win.Hwnds.Add(hwnd);
         win.Visible = true;
@@ -389,7 +368,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
         try
         {
-            SetWindowLongPtr(hwnd, GWL_HWNDPARENT, game);   // 归属游戏窗口，不是 SetParent
+            SetWindowLongPtr(hwnd, GWL_HWNDPARENT, game);
 
             if (GetWindowRect(game, out var gameRect))
             {
@@ -403,7 +382,6 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         catch (Exception e) { statusMessage = $"窗口绑定异常: {e.Message}"; }
     }
 
-    /// <summary>把当前「窗口位置与大小」设置立刻套用到所有已打开的浏览器窗口。</summary>
     private void ApplyWindowGeometryToOpen()
     {
         var game = FindGameHwnd();
@@ -412,7 +390,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
         List<IntPtr> hwnds;
         try { hwnds = windows.Values.SelectMany(w => w.Hwnds).ToList(); }
-        catch { hwnds = new List<IntPtr>(); }   // 后台线程正在改集合时退化为空快照
+        catch { hwnds = new List<IntPtr>(); }
 
         var n = 0;
         foreach (var h in hwnds)
@@ -427,18 +405,33 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                     SWP_NOZORDER | SWP_NOACTIVATE);
                 n++;
             }
-            catch { /* 单个窗口失败忽略 */ }
+            catch {   }
         }
         statusMessage = n > 0 ? $"已应用窗口位置与大小（{n} 个窗口）" : "当前没有已打开的窗口";
     }
 
     private static IntPtr FindGameHwnd() => FindWindowW("FFXIVGAME", null);
 
+    private static void FocusGame()
+    {
+        var g = FindGameHwnd();
+        if (g != IntPtr.Zero)
+            try { SetForegroundWindow(g); } catch {   }
+    }
+
+    private static void DrawPlaceholder(string hint)
+    {
+        var mn = ImGui.GetItemRectMin();
+        var mx = ImGui.GetItemRectMax();
+        var fs = ImGui.GetFontSize();
+        var ty = mn.Y + (mx.Y - mn.Y - fs) * 0.5f;
+        ImGui.GetWindowDrawList().AddText(
+            new System.Numerics.Vector2(mn.X + ImGui.GetStyle().FramePadding.X, ty),
+            ImGui.GetColorU32(ImGuiCol.TextDisabled), hint);
+    }
+
     private List<IntPtr> FindNewBrowserWindows()
     {
-        // 「已属于其它页面的窗口 / 浏览器进程」一律不算新窗口。
-        // 只靠「启动前的可见窗口快照」是不够的：被隐藏的浏览器不在快照里，
-        // 那样启动第二个网页时会把第一个的窗口误认成自己的，之后两个就互相牵连。
         var ownedHwnds = new HashSet<IntPtr>();
         var ownedPids  = new HashSet<uint>();
         try
@@ -454,7 +447,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                 }
             }
         }
-        catch { /* 后台线程正在改集合时退化为只靠快照过滤 */ }
+        catch {   }
 
         var list = new List<IntPtr>();
         EnumWindows((hWnd, _) =>
@@ -469,13 +462,13 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                 if (!IsWindowVisible(hWnd)) return true;
                 GetWindowThreadProcessId(hWnd, out var pid);
                 if (pid == 0) return true;
-                if (ownedPids.Contains(pid)) return true;    // ★ 属于其它页面已跟踪的浏览器实例
+                if (ownedPids.Contains(pid)) return true;
                 string name;
                 try { name = Process.GetProcessById((int)pid).ProcessName; }
                 catch { return true; }
                 if (name is "msedge" or "chrome") list.Add(hWnd);
             }
-            catch { /* 忽略 */ }
+            catch {   }
             return true;
         }, IntPtr.Zero);
         return list;
@@ -499,13 +492,11 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                 catch { return true; }
                 if (name is "msedge" or "chrome") set.Add(hWnd);
             }
-            catch { /* 忽略 */ }
+            catch {   }
             return true;
         }, IntPtr.Zero);
         return set;
     }
-
-    // ------------------------------ 打开 / 关闭 ------------------------------
 
     private bool WinOpen(BrowserWin win)
     {
@@ -551,23 +542,18 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
     private void HideBrowser(BrowserWin win)
     {
-        // 先记下本组窗口所属的浏览器进程：同一个浏览器实例（同一 user-data-dir）的
-        // 顶层窗口都属于同一个进程，用 PID 才能把「本页面的窗口」和「别的页面的窗口」区分开。
         var pids = new HashSet<uint>();
         foreach (var h in win.Hwnds)
         {
             if (h == IntPtr.Zero || !IsWindow(h)) continue;
-            try { GetWindowThreadProcessId(h, out var p); if (p != 0) pids.Add(p); } catch { /* 忽略 */ }
+            try { GetWindowThreadProcessId(h, out var p); if (p != 0) pids.Add(p); } catch {   }
         }
 
         foreach (var h in win.Hwnds)
         {
-            try { ShowWindow(h, SW_HIDE); } catch { /* 忽略 */ }
+            try { ShowWindow(h, SW_HIDE); } catch {   }
         }
 
-        // 扫尾：Chromium 除了主窗口还会产生附属顶层小窗，只隐藏主窗会留下残影。
-        // ★ 判据必须是「同一个浏览器进程」，绝不能是「归属游戏窗口」——
-        //   因为所有页面的窗口都被设成了归属游戏窗口，那样隐藏一个会把别的也一起隐藏。
         if (pids.Count == 0) return;
         EnumWindows((h, _) =>
         {
@@ -582,7 +568,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                 if (win.Hwnds.Contains(h)) return true;
                 ShowWindow(h, SW_HIDE);
             }
-            catch { /* 忽略 */ }
+            catch {   }
             return true;
         }, IntPtr.Zero);
     }
@@ -608,10 +594,6 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         if (!url.StartsWith("http://") && !url.StartsWith("https://"))
             url = "https://" + url;
 
-        // ★ 串行启动：Chromium 启动慢、窗口出现晚。若两个网页几乎同时启动，
-        //   后启动的那个会把两个窗口都认领成自己的（窗口本身分不出属于哪个页面），
-        //   于是「打开一个 → 再打开第二个」就会出现两个窗口一起隐藏 / 一起消失。
-        //   这里改成排队：一次只启动一个，等上一个拿到窗口后再启动下一个。
         lock (launchGate)
         {
             if (anyLaunching)
@@ -623,23 +605,20 @@ public sealed unsafe class GameWebBrowser : ModuleBase
             anyLaunching = true;
         }
 
-        var proxy = (page.Proxy ?? "").Trim();
+        var proxy = (page.UseProxy ? config.Proxy : "").Trim();
 
-        // 每个网页独立 profile 目录，登录态隔离
         var profileDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "FFXIVGameBrowser", "profiles", SanitizeKey(key));
-        try { Directory.CreateDirectory(profileDir); } catch { /* 忽略 */ }
+        try { Directory.CreateDirectory(profileDir); } catch {   }
 
         var args = new StringBuilder();
         if (page.UseAppMode)
         {
-            // 无边框 app 模式：点链接/target=_blank 会被甩给系统默认浏览器
             args.Append("--app=\"").Append(url).Append("\" ");
         }
         else
         {
-            // 普通窗口模式（带标签页）：网页内点链接在窗口内开新标签页
             args.Append("--new-window \"").Append(url).Append("\" ");
         }
         if (proxy.Length > 0)
@@ -666,7 +645,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         catch (Exception e)
         {
             statusMessage = $"浏览器启动失败: {e.Message}";
-            lock (launchGate) { anyLaunching = false; }   // 别把排队卡死
+            lock (launchGate) { anyLaunching = false; }
         }
     }
 
@@ -679,7 +658,11 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         try
         {
             if (WinOpen(win))
+            {
+                FocusGame();
                 foreach (var h in win.Hwnds) PostMessageW(h, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                focusGameUntilMs = Environment.TickCount64 + 1500;
+            }
             windows.Remove(key);
         }
         catch (Exception e) { statusMessage = $"关闭失败: {e.Message}"; }
@@ -711,8 +694,6 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         return candidates.FirstOrDefault(File.Exists);
     }
 
-    // ------------------------------ 反射 ------------------------------
-
     private static T? GetService<T>(string implTypeFullName) where T : class
     {
         try
@@ -730,74 +711,79 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         catch { return null; }
     }
 
-    // ------------------------------ UI ------------------------------
-
     public override bool HasSettings => true;
 
     public override bool DrawSettings()
     {
         var changed = false;
 
-        // ---- 状态 ----
-        var openCount = windows.Values.Count(w => w.Hwnds.Any(IsWindow));
-        ImGui.TextUnformatted($"命令服务: {(commandManager != null ? "正常" : "失败")}   ·   已打开窗口: {openCount}");
-        if (statusMessage.Length > 0)
-            ImGui.TextColored(new System.Numerics.Vector4(1f, 0.75f, 0.4f, 1f), statusMessage);
-        ImGui.Separator();
-
-        // ---- 网页列表 ----
-        ImGui.TextUnformatted("网页列表（每个网页一个宏命令）:");
-        ImGui.Spacing();
-
         int removeIndex = -1;
+
+        if (config.Pages.Count > 0)
+        {
+            var wRight = ImGui.GetWindowWidth();
+            ImGui.TextDisabled("名字");
+            ImGui.SameLine(108f);      ImGui.TextDisabled("宏命令");
+            ImGui.SameLine(206f);      ImGui.TextDisabled("网址");
+            ImGui.SameLine(wRight - 305f); ImGui.TextDisabled("代理");
+            ImGui.SameLine(wRight - 248f); ImGui.TextDisabled("无边框");
+            ImGui.SameLine(wRight - 176f); ImGui.TextDisabled("开关");
+            ImGui.SameLine(wRight - 120f); ImGui.TextDisabled("删除");
+        }
+
         for (var i = 0; i < config.Pages.Count; i++)
         {
             var page = config.Pages[i];
+            var key  = NormalizeCommand(page.Command);
+            var open = windows.TryGetValue(key, out var w) && w.Hwnds.Any(IsWindow);
 
             ImGui.PushID(i);
-            ImGui.Separator();
 
-            var name  = page.Name;
-            var url   = page.Url;
-            var cmd   = page.Command;
-            var proxy = page.Proxy;
+            var name = page.Name;
+            ImGui.SetNextItemWidth(100f);
+            var nameEdited = ImGui.InputText("##Name", ref name, 64);
+            if (name.Length == 0)
+                DrawPlaceholder("如: 百度");
+            if (nameEdited) { page.Name = name; changed = true; }
 
-            ImGui.TextUnformatted($"#{i + 1}  命令: {NormalizeCommand(cmd)}");
-            var state = windows.TryGetValue(NormalizeCommand(cmd), out var w) && w.Hwnds.Any(IsWindow)
-                ? (w.Visible ? "显示中" : "已最小化")
-                : "未打开";
             ImGui.SameLine();
-            ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.85f, 0.5f, 1f), state);
-
-            ImGui.TextDisabled("名字");
-            ImGui.SetNextItemWidth(-1f);
-            if (ImGui.InputText("##Name", ref name, 64)) { page.Name = name; changed = true; }
-
-            ImGui.TextDisabled("网址");
-            ImGui.SetNextItemWidth(-1f);
-            if (ImGui.InputText("##Url", ref url, 512)) { page.Url = url; changed = true; }
-
-            ImGui.TextDisabled("宏命令 (以 / 开头)");
-            ImGui.SetNextItemWidth(-1f);
-            if (ImGui.InputText("##Cmd", ref cmd, 64))
+            var cmd = page.Command;
+            ImGui.SetNextItemWidth(90f);
+            var cmdEdited = ImGui.InputText("##Cmd", ref cmd, 64);
+            if (cmd.Length == 0)
+                DrawPlaceholder("如: /baidu");
+            if (cmdEdited)
             {
                 page.Command = cmd;
                 changed = true;
                 SyncCommands();
             }
 
-            ImGui.TextDisabled("网络代理 (留空直连)");
-            ImGui.SetNextItemWidth(-1f);
-            if (ImGui.InputText("##Proxy", ref proxy, 256)) { page.Proxy = proxy; changed = true; }
+            ImGui.SameLine();
+            var url = page.Url;
+            ImGui.SetNextItemWidth(-336f);
+            var urlEdited = ImGui.InputText("##Url", ref url, 512);
+            if (url.Length == 0)
+                DrawPlaceholder("如: https://www.baidu.com");
+            if (urlEdited) { page.Url = url; changed = true; }
 
+            ImGui.SameLine();
+            var useProxy = page.UseProxy;
+            if (ImGui.Checkbox("代理", ref useProxy)) { page.UseProxy = useProxy; changed = true; }
+
+            ImGui.SameLine();
             var useApp = page.UseAppMode;
-            if (ImGui.Checkbox("无边框 app 模式", ref useApp)) { page.UseAppMode = useApp; changed = true; }
+            if (ImGui.Checkbox("无边框", ref useApp)) { page.UseAppMode = useApp; changed = true; }
 
-            if (ImGui.Button("打开 / 最小化")) TogglePage(page);
             ImGui.SameLine();
-            if (ImGui.Button("关闭")) ClosePage(page);
+            if (ImGui.Button(open ? "关闭" : "打开", new System.Numerics.Vector2(56f, 0f)))
+            {
+                if (open) ClosePage(page);
+                else      TogglePage(page);
+            }
+
             ImGui.SameLine();
-            if (ImGui.Button("删除此网页")) removeIndex = i;
+            if (ImGui.Button("删除", new System.Numerics.Vector2(56f, 0f))) removeIndex = i;
 
             ImGui.PopID();
         }
@@ -814,10 +800,14 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                     registeredCommands.Remove(cmd);
                 }
             }
-            catch { /* 忽略 */ }
-            if (windows.TryGetValue(cmd, out var w) && w.Hwnds.Count > 0)
-                foreach (var h in w.Hwnds)
-                    try { PostMessageW(h, WM_CLOSE, IntPtr.Zero, IntPtr.Zero); } catch { /* 忽略 */ }
+            catch { }
+            if (windows.TryGetValue(cmd, out var rw) && rw.Hwnds.Count > 0)
+            {
+                FocusGame();
+                foreach (var h in rw.Hwnds)
+                    try { PostMessageW(h, WM_CLOSE, IntPtr.Zero, IntPtr.Zero); } catch { }
+                focusGameUntilMs = Environment.TickCount64 + 1500;
+            }
             windows.Remove(cmd);
             config.Pages.RemoveAt(removeIndex);
             changed = true;
@@ -828,91 +818,98 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         {
             config.Pages.Add(new PageEntry
             {
-                Name    = "新网页",
+                Name    = "",
                 Url     = "",
-                Command = "/new",
-                Proxy   = "",
+                Command = "",
             });
             changed = true;
             SyncCommands();
         }
 
         ImGui.Spacing();
-        ImGui.Separator();
-
-        // ---- 窗口位置与大小（全局）----
-        ImGui.TextUnformatted("窗口位置与大小（所有网页窗口共用）:");
-        ImGui.Spacing();
-
-        ImGui.TextDisabled("宽度");
-        ImGui.SetNextItemWidth(120f);
-        var winW = config.WinWidth > 0 ? config.WinWidth : DefaultWinWidth;
-        if (ImGui.InputInt("##WinW", ref winW))
+        if (ImGui.CollapsingHeader("设置"))
         {
-            config.WinWidth = Math.Max(320, Math.Min(winW, 7680));
-            changed = true;
+            ImGui.TextDisabled("窗口大小与位置");
+            ImGui.Spacing();
+
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextDisabled("宽度");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(60f);
+            var winW = config.WinWidth > 0 ? config.WinWidth : DefaultWinWidth;
+            if (ImGui.InputInt("##WinW", ref winW))
+            {
+                config.WinWidth = Math.Max(320, Math.Min(winW, 7680));
+                changed = true;
+            }
+
+            ImGui.SameLine();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextDisabled("高度");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(60f);
+            var winH = config.WinHeight > 0 ? config.WinHeight : DefaultWinHeight;
+            if (ImGui.InputInt("##WinH", ref winH))
+            {
+                config.WinHeight = Math.Max(240, Math.Min(winH, 4320));
+                changed = true;
+            }
+
+            ImGui.SameLine();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextDisabled("左边距");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(60f);
+            var offX = config.OffsetX;
+            if (ImGui.InputInt("##OffX", ref offX)) { config.OffsetX = offX; changed = true; }
+
+            ImGui.SameLine();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextDisabled("上边距");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(60f);
+            var offY = config.OffsetY;
+            if (ImGui.InputInt("##OffY", ref offY)) { config.OffsetY = offY; changed = true; }
+
+            ImGui.SameLine();
+            if (ImGui.Button("恢复默认窗口"))
+            {
+                config.WinWidth  = DefaultWinWidth;
+                config.WinHeight = DefaultWinHeight;
+                config.OffsetX   = DefaultOffsetX;
+                config.OffsetY   = DefaultOffsetY;
+                changed = true;
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("应用到已打开的窗口"))
+                ApplyWindowGeometryToOpen();
+
+            ImGui.Spacing();
+            ImGui.TextDisabled("浏览器路径");
+            ImGui.SetNextItemWidth(-1f);
+            if (ImGui.InputText("###BrowserPath", ref browserPathInput, 512))
+            {
+                config.BrowserPath = browserPathInput;
+                changed = true;
+            }
+
+            ImGui.Spacing();
+            ImGui.TextDisabled("网络代理");
+            ImGui.SetNextItemWidth(-1f);
+            var proxyInput = config.Proxy ?? "";
+            if (ImGui.InputText("###GlobalProxy", ref proxyInput, 256))
+            {
+                config.Proxy = proxyInput;
+                changed = true;
+            }
         }
 
-        ImGui.SameLine();
-        ImGui.TextDisabled("高度");
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(120f);
-        var winH = config.WinHeight > 0 ? config.WinHeight : DefaultWinHeight;
-        if (ImGui.InputInt("##WinH", ref winH))
-        {
-            config.WinHeight = Math.Max(240, Math.Min(winH, 4320));
-            changed = true;
-        }
-
-        ImGui.TextDisabled("左边距（相对游戏窗口，可为负）");
-        ImGui.SetNextItemWidth(120f);
-        var offX = config.OffsetX;
-        if (ImGui.InputInt("##OffX", ref offX)) { config.OffsetX = offX; changed = true; }
-
-        ImGui.SameLine();
-        ImGui.TextDisabled("上边距");
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(120f);
-        var offY = config.OffsetY;
-        if (ImGui.InputInt("##OffY", ref offY)) { config.OffsetY = offY; changed = true; }
-
-        if (ImGui.Button("恢复默认窗口 (1100×720，偏移 120,100)"))
-        {
-            config.WinWidth  = DefaultWinWidth;
-            config.WinHeight = DefaultWinHeight;
-            config.OffsetX   = DefaultOffsetX;
-            config.OffsetY   = DefaultOffsetY;
-            changed = true;
-        }
-        ImGui.SameLine();
-        if (ImGui.Button("应用到已打开的窗口"))
-            ApplyWindowGeometryToOpen();
-
-        ImGui.TextWrapped("位置是相对游戏窗口左上角的偏移，浏览器窗口会跟随游戏窗口一起移动。改完想立刻见效：点「应用到已打开的窗口」，或把窗口关掉重开。");
-
-        ImGui.Spacing();
-        ImGui.Separator();
-
-        // ---- 浏览器路径 ----
-        ImGui.TextWrapped("浏览器路径 (留空自动搜索 Edge / Chrome):");
-        ImGui.SetNextItemWidth(-1f);
-        if (ImGui.InputText("###BrowserPath", ref browserPathInput, 512))
-        {
-            config.BrowserPath = browserPathInput;
-            changed = true;
-        }
-
-        ImGui.Separator();
-
-        ImGui.TextWrapped("用法: 每个网页对应一个宏命令（如 /discord），游戏里新建用户宏填入该命令、右键图标选个图标拖到快捷栏即可像技能一样点击；也可直接在聊天框输入命令。");
-        ImGui.TextWrapped("宏图标: 只能用游戏内已有图标（宏界面右键选择），Discord / 鱼糕的 logo 无法作为宏图标。");
-        ImGui.TextWrapped("代理: Discord 需在其「网络代理」一栏填代理（如 socks5://127.0.0.1:10808），鱼糕等国内站留空直连。每个网页登录目录独立。");
+        if (statusMessage.Length > 0)
+            ImGui.TextColored(new System.Numerics.Vector4(1f, 0.75f, 0.4f, 1f), statusMessage);
 
         if (changed) SaveOwnConfig();
         return changed;
     }
-
-    // ------------------------------ 数据模型 ------------------------------
 
     private class PageEntry
     {
@@ -920,6 +917,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         public string Url     { get; set; } = "";
         public string Command { get; set; } = "";
         public string Proxy   { get; set; } = "";
+        public bool   UseProxy   { get; set; } = false;
         public bool   UseAppMode { get; set; } = false;
     }
 
@@ -929,11 +927,12 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
         public string BrowserPath { get; set; } = "";
 
-        // ---- 窗口位置与大小（全局，所有网页窗口共用）----
-        // 位置为「相对游戏窗口左上角的偏移」，浏览器窗口会跟随游戏窗口一起移动。
+        public string Proxy { get; set; } = "";
+
         public int WinWidth  { get; set; } = DefaultWinWidth;
         public int WinHeight { get; set; } = DefaultWinHeight;
         public int OffsetX   { get; set; } = DefaultOffsetX;
         public int OffsetY   { get; set; } = DefaultOffsetY;
     }
 }
+
