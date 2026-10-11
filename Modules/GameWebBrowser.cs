@@ -490,6 +490,8 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
         if (RepositoryMode)
         {
+            browserKeyboardCapture = false;
+            WgcForwardKeys(wgcKeyboardCore, false);
             repositoryBrowser = new RepositoryNativeBrowser();
             repositoryBrowser.Configure(JsonSerializer.Serialize(config));
             repositoryBrowser.Activate();
@@ -501,6 +503,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         {
             if (DalamudServices.PluginInterface != null)
                 DalamudServices.PluginInterface.UiBuilder.Draw += DrawChrome;
+            DalamudServices.Framework.Update += BlockBrowserGameKeys;
         }
         catch (Exception e) { statusMessage = "绘制钩子挂载失败：" + e.Message; }
 
@@ -520,6 +523,10 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
     protected override void OnDisable()
     {
+        browserKeyboardCapture = false;
+        try { DalamudServices.Framework.Update -= BlockBrowserGameKeys; } catch { }
+        WgcForwardKeys(wgcKeyboardCore, false);
+        wgcKbOwnerKey = "";
         wgcMouseOwnerKey = "";
         repositoryBrowser?.Deactivate();
         repositoryBrowser = null;
@@ -3131,17 +3138,21 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                 WgcUpdateKbOwner();
                 // 归属的窗口已经关了 ⇒ 立刻交还，别让游戏一直收不到键盘
                 if (wgcKbOwnerKey.Length > 0 && !windows.ContainsKey(wgcKbOwnerKey)) wgcKbOwnerKey = "";
-                var kbWin = config.TextureRender && wgcKbOwnerKey.Length > 0 && windows.TryGetValue(wgcKbOwnerKey, out var kw) && TextureModeActive(kw) ? kw : null;
+                var kbWin = config.TextureRender && !gameMinimized && !browserDialogActive && GetForegroundWindow() == FindGameHwnd() &&
+                    wgcKbOwnerKey.Length > 0 && windows.TryGetValue(wgcKbOwnerKey, out var kw) && kw.Visible && !kw.Closed && TextureModeActive(kw) ? kw : null;
+                browserKeyboardCapture = kbWin != null;
                 if (kbWin != null)
                 {
                     var kbIo = ImGui.GetIO();
                     kbIo.WantCaptureKeyboard = true;
+                    kbIo.WantTextInput = true;
                     ImGui.SetNextFrameWantCaptureKeyboard(true);
                 }
                 WgcForwardKeys(kbWin?.ActiveTabSafe()?.Wv2Core ?? IntPtr.Zero, kbWin != null);
             }
+            else { browserKeyboardCapture = false; WgcForwardKeys(wgcKeyboardCore, false); }
         }
-        catch (Exception e) { Wv2Log("DrawChrome 异常: " + e); }
+        catch (Exception e) { browserKeyboardCapture = false; Wv2Log("DrawChrome 异常: " + e); }
         DrawBrowserDialog();
 
         try { HandleDragRelease(); } catch {   }
@@ -4974,7 +4985,12 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
         // 点在「网页画面」矩形里 ⇒ 键盘归这个窗口（判据见 WgcForwardKeys；
         // 交还发生在用户点到浏览器之外时，见 WgcUpdateKbOwner）
-        if (clickL) wgcKbOwnerKey = win.Key;
+        if (clickL)
+        {
+            wgcKbOwnerKey = win.Key;
+            wgcImeAnchor = io.MousePos;
+            wgcImeNeedsFocus = true;
+        }
 
         var core   = win.ActiveTabSafe()?.Wv2Core ?? IntPtr.Zero;
         var mods   = CdpModifiers();
@@ -5013,6 +5029,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                 {
                     try
                     {
+                        if (mCl || mCr) CdpCall(mCore, "Emulation.setFocusEmulationEnabled", "{\"enabled\":true}");
                         if (moved) wgcLastCdpHr = CdpMouse(mCore, "mouseMoved", mCx, mCy, WgcMouseMoveButton(mMask), mMask, 0, mMods, 0);
                         if (mCl)   wgcLastCdpHr = CdpMouse(mCore, "mousePressed",  mCx, mCy, "left",  mMask | 1, mCc, mMods, 0);
                         if (mCr)   wgcLastCdpHr = CdpMouse(mCore, "mousePressed",  mCx, mCy, "right", mMask | 2, 1, mMods, 0);
@@ -5076,6 +5093,20 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     private static readonly bool[] wgcKeyDown = new bool[256];
     private static bool   wgcKeysOwned;          // 当前是否正在往网页转发按键
     private static string wgcKbOwnerKey = "";    // 键盘归属的窗口 Key（空 = 游戏）
+    private static volatile bool browserKeyboardCapture;
+    private static IntPtr wgcKeyboardCore;
+
+    private void BlockBrowserGameKeys(IFramework framework)
+    {
+        if (!browserKeyboardCapture || GetForegroundWindow() != FindGameHwnd()) return;
+        try
+        {
+            // FF14 polls its own key state; ImGui capture alone cannot suppress that path.
+            var state = DalamudServices.KeyState;
+            foreach (var key in state.GetValidVirtualKeys()) state[key] = false;
+        }
+        catch (Exception e) { Wv2Log("浏览器键盘屏蔽失败：" + e.Message); }
+    }
     private static bool   wgcPrevLBtn;
     private static volatile int wgcLastKeyHr = -1;
 
@@ -5159,10 +5190,81 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         if (rising && inputTopKey.Length == 0) wgcKbOwnerKey = "";
     }
 
+    private string wgcImeBuffer = "";
+    private Vector2 wgcImeAnchor;
+    private bool wgcImeNeedsFocus = true;
+    private bool wgcImeWasComposing;
+    private string wgcImeFrameText = "";
+    private long wgcImeDiagnosticAt;
+    private int WgcImeConsumeBuffer(ImGuiInputTextCallbackDataPtr data)
+    {
+        // Dalamud writes IMM compositions directly into InputTextState rather than
+        // InputQueueCharacters. Preserve that buffer until the composition is done.
+        if (data.BufTextLen == 0 || WgcImeComposing()) return 0;
+        var shortcutPaste = (GetAsyncKeyState(0x11) & 0x8000) != 0 &&
+            ((GetAsyncKeyState(0x56) & 0x8000) != 0 || (GetAsyncKeyState(0x5A) & 0x8000) != 0);
+        var shiftPaste = (GetAsyncKeyState(0x10) & 0x8000) != 0 && (GetAsyncKeyState(0x2D) & 0x8000) != 0;
+        // Clipboard shortcuts are dispatched to the webpage itself, once.
+        if (!shortcutPaste && !shiftPaste && (GetAsyncKeyState(0x1B) & 0x8000) == 0)
+            wgcImeFrameText += Encoding.UTF8.GetString(new ReadOnlySpan<byte>(data.Buf, data.BufTextLen));
+        data.DeleteChars(0, data.BufTextLen);
+        return 0;
+    }
+    [DllImport("imm32.dll")] private static extern IntPtr ImmGetContext(IntPtr hwnd);
+    [DllImport("imm32.dll")] private static extern bool ImmReleaseContext(IntPtr hwnd, IntPtr context);
+    [DllImport("imm32.dll", CharSet = CharSet.Unicode)]
+    private static extern int ImmGetCompositionStringW(IntPtr context, uint index, IntPtr buffer, uint length);
+
+    private static bool WgcImeComposing()
+    {
+        var hwnd = FindGameHwnd();
+        var context = ImmGetContext(hwnd);
+        if (context == IntPtr.Zero) return false;
+        try { return ImmGetCompositionStringW(context, 8 /* GCS_COMPSTR */, IntPtr.Zero, 0) > 0; }
+        finally { ImmReleaseContext(hwnd, context); }
+    }
+
+    private void WgcDrawImeInput()
+    {
+        // An active InputText is required for Dalamud's platform IME integration.
+        // Keep it transparent and mouse-pass-through, at the webpage click location
+        // so the candidate window appears next to the input instead of off-screen.
+        ImGui.SetNextWindowPos(wgcImeAnchor);
+        ImGui.SetNextWindowSize(new Vector2(80, 40));
+        ImGui.PushStyleVar(ImGuiStyleVar.Alpha, 0.001f);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
+        try
+        {
+            ImGui.Begin("###GameWebBrowserIme", ImGuiWindowFlags.NoDecoration |
+                ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoSavedSettings |
+                ImGuiWindowFlags.NoMouseInputs | ImGuiWindowFlags.NoMove |
+                ImGuiWindowFlags.NoBringToFrontOnFocus);
+            try
+            {
+                if (wgcImeNeedsFocus) ImGui.SetKeyboardFocusHere();
+                ImGui.SetNextItemWidth(64);
+                ImGui.InputText("###ImeInput", ref wgcImeBuffer, 4096,
+                    ImGuiInputTextFlags.CallbackAlways, WgcImeConsumeBuffer);
+                wgcImeNeedsFocus = !ImGui.IsItemActive();
+                // Keep keyboard/text capture active, but show the IME overlay only
+                // during composition. Otherwise Dalamud draws a language badge at
+                // every webpage click even when no text is being entered.
+                if (!WgcImeComposing())
+                    ImGui.GetCurrentContext().Handle->PlatformImeData.WantVisible = 0;
+            }
+            finally { ImGui.End(); }
+        }
+        finally { ImGui.PopStyleVar(2); }
+    }
+
     private void WgcForwardKeys(IntPtr core, bool owned)
     {
+        if (wgcKeysOwned && wgcKeyboardCore != core && owned) WgcForwardKeys(wgcKeyboardCore, false);
         if (!owned)
         {
+            wgcImeNeedsFocus = true;
+            wgcImeWasComposing = false;
+            wgcImeBuffer = "";
             // 交还键盘时把还按着的键补一串 keyUp，免得在页面里留一堆"卡住"的键
             if (wgcKeysOwned)
             {
@@ -5170,17 +5272,25 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                 var stuck = new List<int>();
                 for (var vk = 0; vk < 256; vk++)
                     if (wgcKeyDown[vk]) { wgcKeyDown[vk] = false; stuck.Add(vk); }
-                if (stuck.Count > 0 && ComObjectOk(core))
+                core = wgcKeyboardCore;
+                if (ComObjectOk(core))
                 {
                     var c = core; var list = stuck;
-                    Wv2Post(() => { try { foreach (var vk in list) CdpKey(c, vk, false, "", WgcDomKeyName(vk), 0); } catch {   } });
+                    Wv2Post(() => { try { foreach (var vk in list) CdpKey(c, vk, false, "", WgcDomKeyName(vk), 0); CdpCall(c, "Emulation.setFocusEmulationEnabled", "{\"enabled\":false}"); } catch {   } });
                 }
+                wgcKeyboardCore = IntPtr.Zero;
             }
             return;
         }
 
         if (!ComObjectOk(core)) return;
+        if (!wgcKeysOwned)
+        {
+            var focusCore = core;
+            Wv2Post(() => { try { CdpCall(focusCore, "Emulation.setFocusEmulationEnabled", "{\"enabled\":true}"); } catch { } });
+        }
         wgcKeysOwned = true;
+        wgcKeyboardCore = core;
 
         var st = new byte[256];
         try { GetKeyboardState(st); } catch {   }
@@ -5188,7 +5298,17 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         for (var vk = 0x08; vk <= 0xFE; vk++)
             st[vk] = (byte)((st[vk] & 1) | ((GetAsyncKeyState(vk) & 0x8000) != 0 ? 0x80 : 0));
         var modifiers = WgcKeyboardModifiers(st);
-
+        var composing = WgcImeComposing();
+        var imeOwnsKeys = composing || wgcImeWasComposing;
+        wgcImeWasComposing = composing;
+        wgcImeFrameText = "";
+        WgcDrawImeInput();
+        var committedText = wgcImeFrameText;
+        if (Environment.TickCount64 - wgcImeDiagnosticAt > 5000 || committedText.Length > 0)
+        {
+            wgcImeDiagnosticAt = Environment.TickCount64;
+            Wv2Log($"IME输入通道 active={!wgcImeNeedsFocus} composing={composing} committedChars={committedText.Length}");
+        }
         var ev = new List<(int Vk, bool Down, string Text, string Key)>();
 
         for (var vk = 0x08; vk <= 0xFE; vk++)
@@ -5199,26 +5319,26 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
             var key  = WgcDomKeyName(vk);
             var text = "";
-            if (isDown && (modifiers & 7) == 0)
-            {
-                var buf = new char[8];
-                int n;
-                try { n = ToUnicode((uint)vk, MapVirtualKey((uint)vk, 0), st, buf, buf.Length, 0); }
-                catch { n = 0; }
-                if (n == 1 && buf[0] >= ' ' && buf[0] != (char)0x7F) text = buf[0].ToString();
-            }
             // 既没有 DOM 名字、也打不出字符的键（媒体键、厂商键……）不转发
             if (key.Length == 0 && text.Length == 0 && !wgcKeyDown[vk]) continue;
 
             wgcKeyDown[vk] = isDown;
+            // Candidate selection (space, arrows, Enter, Backspace, digits) belongs
+            // to the IME. Do not submit forms or edit webpage text while composing.
+            if (imeOwnsKeys && isDown) continue;
             ev.Add((vk, isDown, text, key.Length > 0 ? key : text));
         }
 
-        if (ev.Count == 0) return;
+        if (ev.Count == 0 && committedText.Length == 0) return;
         var c2 = core; var list2 = ev; var m2 = modifiers;
         Wv2Post(() =>
         {
-            try { foreach (var e in list2) wgcLastKeyHr = CdpKey(c2, e.Vk, e.Down, e.Text, e.Key, m2); }
+            try
+            {
+                foreach (var e in list2) wgcLastKeyHr = CdpKey(c2, e.Vk, e.Down, e.Text, e.Key, m2);
+                if (committedText.Length > 0) wgcLastKeyHr = CdpCall(c2, "Input.insertText", JsonSerializer.Serialize(new { text = committedText }));
+                if (wgcLastKeyHr < 0) Wv2Log($"网页键盘转发失败 hr=0x{wgcLastKeyHr:X8}");
+            }
             catch {   }
         });
     }
