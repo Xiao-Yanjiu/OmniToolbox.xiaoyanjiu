@@ -36,10 +36,10 @@
       "Name": "自动丢垃圾",
       "Author": "小烟酒",
       "Description": "三栏管理背包物品：黑名单中的物品会在启动后自动丢弃。",
-      "Version": "1.1.0",
+      "Version": "1.1.1",
       "MinimumOmniVersion": "1.1.3.0",
       "File": "Modules/AutoDiscardJunk.cs",
-      "Sha256": "168e278096611ffd243242eb03dd7e5c2a88e4e4c5ae07839322052d59263583"
+      "Sha256": "9050b583abcc7ff9831df670c0963c10c75d79f86c46261a6096dabe1a7321a8"
     },
     {
       "InternalName": "ToolbarIconPlus",

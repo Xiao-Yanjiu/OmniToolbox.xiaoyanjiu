@@ -58,6 +58,8 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
     private bool   isRunning;
     private bool   windowOpen;
     private string searchInput = string.Empty;
+    private string blacklistSearch = string.Empty;
+    private string whitelistSearch = string.Empty;
     private string lastAction  = string.Empty;
 
     private readonly Queue<System.Action> discardQueue = new();
@@ -338,10 +340,12 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
 
         try
         {
-            var headerWidth = ImGui.GetContentRegionAvail().X;
+            ImGui.AlignTextToFramePadding();
             ImGui.TextColored(BlacklistColor, "黑名单 (自动丢弃)");
-
-            ImGui.SameLine(MathF.Max(0f, headerWidth - 64f));
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(MathF.Max(30f, ImGui.GetContentRegionAvail().X - 60f - ImGui.GetStyle().ItemSpacing.X));
+            ImGui.InputTextWithHint("###OmniDiscardBlacklistSearch", "搜索...", ref blacklistSearch, 64);
+            ImGui.SameLine();
             if (ImGui.Button("清空", new Vector2(60f, 0)) &&
                 ImGui.IsKeyDown(ImGuiKey.LeftCtrl) &&
                 config.Blacklist.Count > 0)
@@ -361,7 +365,9 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
                 return;
             }
 
-            foreach (var id in config.Blacklist.OrderBy(GetItemName).ToList())
+            var visibleItems = config.Blacklist.Where(id => MatchesSearch(id, blacklistSearch)).OrderBy(GetItemName).ToList();
+            if (visibleItems.Count == 0) ImGui.TextDisabled("没有匹配的物品");
+            foreach (var id in visibleItems)
             {
                 ImGui.PushID((int)id);
 
@@ -394,10 +400,11 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         try
         {
             var headerWidth = ImGui.GetContentRegionAvail().X;
+            ImGui.AlignTextToFramePadding();
             ImGui.TextColored(InventoryColor, "背包物品");
 
-            ImGui.SameLine(MathF.Max(0f, headerWidth - 144f));
-            ImGui.SetNextItemWidth(134f);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(-1);
             ImGui.InputTextWithHint("###OmniDiscardSearch", "搜索...", ref searchInput, 64);
 
             ImGui.Separator();
@@ -459,10 +466,12 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
 
         try
         {
-            var headerWidth = ImGui.GetContentRegionAvail().X;
+            ImGui.AlignTextToFramePadding();
             ImGui.TextColored(WhitelistColor, "白名单 (受保护)");
-
-            ImGui.SameLine(MathF.Max(0f, headerWidth - 64f));
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(MathF.Max(30f, ImGui.GetContentRegionAvail().X - 60f - ImGui.GetStyle().ItemSpacing.X));
+            ImGui.InputTextWithHint("###OmniDiscardWhitelistSearch", "搜索...", ref whitelistSearch, 64);
+            ImGui.SameLine();
             if (ImGui.Button("清空", new Vector2(60f, 0)) &&
                 ImGui.IsKeyDown(ImGuiKey.LeftCtrl) &&
                 config.Whitelist.Count > 0)
@@ -482,7 +491,9 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
                 return;
             }
 
-            foreach (var id in config.Whitelist.OrderBy(GetItemName).ToList())
+            var visibleItems = config.Whitelist.Where(id => MatchesSearch(id, whitelistSearch)).OrderBy(GetItemName).ToList();
+            if (visibleItems.Count == 0) ImGui.TextDisabled("没有匹配的物品");
+            foreach (var id in visibleItems)
             {
                 ImGui.PushID((int)id);
 
@@ -507,6 +518,9 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
             ImGui.EndChild();
         }
     }
+
+    private bool MatchesSearch(uint id, string search) =>
+        string.IsNullOrWhiteSpace(search) || GetDisplayName(id).Contains(search.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private Dictionary<uint, uint> GetInventoryDisplay()
     {
