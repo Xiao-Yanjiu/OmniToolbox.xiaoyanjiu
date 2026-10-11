@@ -68,6 +68,7 @@ public sealed class ChatToQQ : ModuleBase
         public bool AtOnFriendReq   { get; set; } = true;
 
         public bool   QQToGameEnabled { get; set; } = false;
+        public bool HelpEnabled { get; set; } = true;
         public string TriggerPrefix   { get; set; } = "#";
         public string GameChannel     { get; set; } = "/p";
         public string BotQQ           { get; set; } = "";
@@ -101,6 +102,9 @@ public sealed class ChatToQQ : ModuleBase
     }
 
     private readonly ConcurrentQueue<string> sendQueue = new();
+    private readonly Dictionary<(long Group, long User), HelpSession> helpSessions = [];
+    private sealed record HelpSession(string Query, int Page, long LastReply);
+    private List<(string Command, string Description)>? gameHelpCommands;
     private readonly List<MembershipReply> membershipReplies = [];
     private sealed record MembershipReply(object Client, bool Join, long? Group, long Deadline);
     private CancellationTokenSource? senderCts;
@@ -110,6 +114,10 @@ public sealed class ChatToQQ : ModuleBase
     private IObjectTable? objectTable;
 
     private bool windowOpen;
+    private bool helpWindowOpen;
+    private string helpSearch = "", helpCommandText = "";
+    private int helpPage;
+    private long helpRefreshAt;
 
     private readonly HashSet<string> lastTargetingNames = [];
     private long lastTargetScanAt;
@@ -211,6 +219,8 @@ public sealed class ChatToQQ : ModuleBase
 
         if (DalamudServices.PluginInterface != null)
             DalamudServices.PluginInterface.UiBuilder.Draw += DrawPanel;
+        if (DalamudServices.PluginInterface != null)
+            DalamudServices.PluginInterface.UiBuilder.Draw += DrawHelpPanel;
 
         senderCts = new CancellationTokenSource();
         _ = Task.Run(() => SenderLoop(senderCts.Token));
@@ -220,12 +230,16 @@ public sealed class ChatToQQ : ModuleBase
 
     protected override void OnDisable()
     {
+        helpSessions.Clear();
+        gameHelpCommands = null;
         membershipReplies.Clear();
         DetachWorldChat();
         try { if (chatGui != null) chatGui.ChatMessage -= OnChatMessage; } catch { }
         try { addonLifecycle?.UnregisterListener(AddonEvent.PostSetup, "SelectYesno", OnSelectYesnoPopup); } catch { }
         try { if (framework != null) framework.Update -= OnFrameworkUpdate; } catch { }
         try { if (DalamudServices.PluginInterface != null) DalamudServices.PluginInterface.UiBuilder.Draw -= DrawPanel; } catch { }
+        try { if (DalamudServices.PluginInterface != null) DalamudServices.PluginInterface.UiBuilder.Draw -= DrawHelpPanel; } catch { }
+        helpWindowOpen = false;
 
         UnregisterCommands();
 
@@ -585,13 +599,14 @@ public sealed class ChatToQQ : ModuleBase
 
     private async Task PollQQMessages(CancellationToken ct)
     {
+        var initializedGroups = new HashSet<long>();
         while (!ct.IsCancellationRequested)
         {
             try
             {
                 await Task.Delay(2000, ct);
 
-                if (!config.QQToGameEnabled) continue;
+                if (!config.QQToGameEnabled && !config.HelpEnabled) continue;
 
                 var groups = ParseGroups();
                 if (groups.Count == 0) continue;
@@ -634,17 +649,23 @@ public sealed class ChatToQQ : ModuleBase
                             if (seenMsgIDs.Count > 1000) seenMsgIDs.Clear();
                         }
 
-                        if (!firstPollDone) continue;
+                        if (!initializedGroups.Contains(gid)) continue;
 
                         var userID = m.TryGetProperty("user_id", out var uid) && uid.ValueKind == JsonValueKind.Number ? uid.GetInt64() : 0;
 
                         var botQQ = (config.BotQQ ?? "").Trim();
                         if (botQQ.Length > 0 && userID.ToString() == botQQ) continue;
 
+                        var text = m.TryGetProperty("message", out var mm) ? ExtractQQText(mm) : "";
+                        if (config.HelpEnabled && m.TryGetProperty("message", out var helpMessage) && IsBotMention(helpMessage, botQQ))
+                        {
+                            var helpText = text;
+                            RunOnGameThread(() => HandleQQHelp(gid, userID, helpText), gid);
+                            continue;
+                        }
+                        if (!config.QQToGameEnabled) continue;
                         var trig = (config.TriggerPrefix ?? "").Trim();
                         if (trig.Length == 0) continue;
-
-                        var text = m.TryGetProperty("message", out var mm) ? ExtractQQText(mm) : "";
                         if (string.IsNullOrWhiteSpace(text)) continue;
                         if (!text.StartsWith(trig)) continue;
                         text = text[trig.Length..].TrimStart();
@@ -709,6 +730,7 @@ public sealed class ChatToQQ : ModuleBase
                             LogDebug($"入队发送失败: {sendEx}");
                         }
                     }
+                    initializedGroups.Add(gid);
                 }
 
                 firstPollDone = true;
@@ -721,6 +743,116 @@ public sealed class ChatToQQ : ModuleBase
             }
         }
     }
+
+    private static bool IsBotMention(JsonElement message, string botQQ)
+    {
+        if (!long.TryParse(botQQ, out var bot) || bot <= 0) return false;
+        if (message.ValueKind == JsonValueKind.String)
+            return Regex.Matches(message.GetString() ?? "", @"\[CQ:at,qq=(\d+)(?:,[^\]]*)?\]")
+                .Any(m => long.TryParse(m.Groups[1].Value, out var id) && id == bot);
+        if (message.ValueKind != JsonValueKind.Array) return false;
+        foreach (var segment in message.EnumerateArray())
+            if (segment.ValueKind == JsonValueKind.Object && segment.TryGetProperty("type", out var type) && type.GetString() == "at" &&
+                segment.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object && data.TryGetProperty("qq", out var qq) &&
+                long.TryParse(qq.ToString(), out var id) && id == bot) return true;
+        return false;
+    }
+
+    private void HandleQQHelp(long group, long user, string text)
+    {
+        if (!config.HelpEnabled || senderCts == null || senderCts.IsCancellationRequested) return;
+        var key = (group, user);
+        long now = Environment.TickCount64;
+        helpSessions.TryGetValue(key, out var session);
+        if (session != null && now - session.LastReply < 2000) return;
+        foreach (var expired in helpSessions.Where(e => now - e.Value.LastReply > 600000).Select(e => e.Key).ToList()) helpSessions.Remove(expired);
+        if (helpSessions.Count > 500) helpSessions.Clear();
+        string request = text.Trim();
+        bool recognized = request == "帮助" || request.Equals("help", StringComparison.OrdinalIgnoreCase) ||
+            request == "菜单" || request is "1" or "2" or "3" or "4" or "5" or "6" or "下一页" or "上一页" ||
+            request.StartsWith("搜索 ") || request.StartsWith("搜索　");
+        if (session != null && !recognized) return;
+        string query = "";
+        int page = 0;
+        string prefix = string.IsNullOrWhiteSpace(config.TriggerPrefix) ? "#" : config.TriggerPrefix;
+        string result;
+        if (request == "3" || request.StartsWith("搜索 ") || request.StartsWith("搜索　") || request == "下一页" || request == "上一页")
+        {
+            query = request.StartsWith("搜索") ? request[2..].Trim() : request == "3" ? "" : session?.Query ?? "";
+            page = request == "下一页" ? (session?.Page ?? 0) + 1 : request == "上一页" ? Math.Max(0, (session?.Page ?? 0) - 1) : 0;
+            try { result = BuildCommandHelp(query, ref page); }
+            catch (Exception e) { result = "指令目录暂不可用：" + e.Message; }
+        }
+        else result = GetHelpText(request, true);
+        helpSessions[key] = new HelpSession(query, page, now);
+        if (user <= 0) return;
+        var segments = new JsonArray
+        {
+            new JsonObject { ["type"] = "at", ["data"] = new JsonObject { ["qq"] = user.ToString() } },
+            new JsonObject { ["type"] = "text", ["data"] = new JsonObject { ["text"] = "\n" + result } }
+        };
+        sendQueue.Enqueue(new JsonObject { ["group_id"] = group, ["message"] = segments }.ToJsonString());
+    }
+
+    private string GetHelpText(string request, bool fromQQ = false)
+    {
+        string prefix = string.IsNullOrWhiteSpace(config.TriggerPrefix) ? "#" : config.TriggerPrefix;
+        return request switch
+        {
+            "1" => "【安装与配置】\n1. 下载并安装 NapCatQQ Desktop，在程序中创建并启动机器人、登录 QQ：\nhttps://github.com/NapNeko/NapCatQQ-Desktop\n安装包在仓库 Releases 中下载。\n2. 在机器人网络配置中启用 OneBot HTTP 服务，记下地址、端口与 Token。\n3. OMNI 在线模块中安装并启用 ChatToQQ，填入 OneBot HTTP 地址、相同 Token、QQ群号和机器人 QQ号。\n4. 点击发送测试消息，打开群内帮助；需要发送游戏消息时再开启双向同步。\n地址示例：http://127.0.0.1:3000（须与实际 HTTP 服务端口一致，并非 WebUI 地址）。",
+            "2" => $"【频道指令】\n{prefix}小队 消息 → 小队\n{prefix}团队 消息 → 团队\n{prefix}说话 消息 → 附近\n{prefix}喊话 消息 → 区域喊话\n{prefix}呼喊 消息 → 区域呼喊\n{prefix}部队 消息 → 部队\n{prefix}新人 消息 → 新人频道\n{prefix}通讯贝1 消息 / {prefix}跨服贝1 消息（编号 1～8）\n{prefix}悄悄话 姓名@服务器 消息\n{prefix}国服 消息 → OMNI 国服频道\n只写 {prefix}消息 时使用设置中的默认频道。",
+            "4" => $"【国服频道】\n先启用 OMNI 聊天框优化。\n{prefix}加入国服：连接国服频道\n{prefix}退出国服：退出频道\n{prefix}国服 消息：发送消息\n加入、退出和发送结果会回复到本群。\n游戏宏：/qqworldjoin、/qqworldleave、/qqworld 消息。",
+            "5" => BuildConnectionHelp(fromQQ),
+            "6" => "【常见问题】\n不回复帮助：检查机器人 QQ号、群号、群内帮助开关及 NapCatQQ Desktop 的 OneBot HTTP 服务。\n不能向游戏发送：打开双向同步，确认触发符号正确、角色已登录。\n国服发送失败：启用聊天框优化，先加入频道并等待连接成功。\n宏未找到：启用提供该指令的插件或模块，再搜索指令。\n帮助和转发依赖游戏内 ChatToQQ 运行；模块停用或游戏关闭后不会回复。",
+            _ => "【ChatToQQ 帮助】\n1 · 安装与配置\n2 · 聊天频道指令\n3 · 当前游戏与插件宏指令\n4 · 国服频道操作\n5 · 连接状态\n6 · 常见问题\n\n@我 + 数字 查看分项\n@我 搜索 关键词：搜索指令或说明\n@我 下一页 / 上一页：翻页\n@我 帮助：返回菜单"
+        };
+    }
+
+    private string BuildConnectionHelp(bool fromQQ = false)
+    {
+        string world;
+        try
+        {
+            var client = FindOmniWorldChatClient();
+            world = client == null ? "聊天框优化未就绪" : client.GetType().GetProperty("Connected")?.GetValue(client) is true ? "已连接" :
+                client.GetType().GetProperty("Connecting")?.GetValue(client) is true ? "连接中" : "未连接";
+        }
+        catch { world = "无法读取"; }
+        return $"【当前状态】\nQQ 接收：{(fromQQ ? "本群消息已收到" : "请在群内 @机器人 5 检查连接")}\n游戏角色：{(objectTable?.LocalPlayer == null ? "未登录" : "已登录")}\n双向同步：{(config.QQToGameEnabled ? "开启" : "关闭")}\n国服频道：{world}\n触发符号：{config.TriggerPrefix}\n默认频道：{config.GameChannel}";
+    }
+
+#pragma warning disable PendingExcelSchema
+    private string BuildCommandHelp(string query, ref int page)
+    {
+        if (gameHelpCommands == null)
+        {
+            var loaded = new List<(string Command, string Description)>();
+            foreach (var row in DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Experimental.TextCommand>())
+                foreach (var alias in new[] { row.Command.ExtractText(), row.ShortCommand.ExtractText(), row.Alias.ExtractText(), row.ShortAlias.ExtractText() })
+                    if (alias.Trim().StartsWith('/')) loaded.Add((alias.Trim(), row.Description.ExtractText().Trim()));
+            gameHelpCommands = loaded;
+        }
+        var all = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in gameHelpCommands) all[entry.Command] = entry.Description;
+        foreach (var entry in commandManager!.Commands.ToArray()) all[entry.Key] = entry.Value.HelpMessage ?? "";
+        var matches = all.Where(e => query.Length == 0 || e.Key.Contains(query, StringComparison.OrdinalIgnoreCase) || e.Value.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(e => e.Key, StringComparer.OrdinalIgnoreCase).ToList();
+        int total = Math.Max(1, (matches.Count + 7) / 8);
+        page = Math.Clamp(page, 0, total - 1);
+        var result = new StringBuilder($"【宏指令目录】{matches.Count} 条 · {page + 1}/{total} 页\n");
+        foreach (var entry in matches.Skip(page * 8).Take(8))
+        {
+            string description = entry.Value.Replace('\n', ' ').Replace('\r', ' ').Trim();
+            if (description.Length == 0) description = "未提供说明";
+            if (description.Length > 90) description = description[..90] + "…";
+            result.AppendLine(entry.Key + "（" + description + "）");
+        }
+        if (matches.Count == 0) result.AppendLine("没有匹配的指令。");
+        result.AppendLine("@我 搜索 关键词 · @我 下一页 / 上一页");
+        result.Append("执行：" + config.TriggerPrefix + "宏 /指令 参数（须开启双向同步）");
+        return result.ToString();
+    }
+#pragma warning restore PendingExcelSchema
 
     private bool TryQueueRemoteOperation(string text, long? replyGroup = null)
     {
@@ -962,11 +1094,11 @@ public sealed class ChatToQQ : ModuleBase
 
             using var resp = await Http.SendAsync(req);
             if (!resp.IsSuccessStatusCode)
-                statusText = $"发送失败: HTTP {(int)resp.StatusCode} (检查 NapCat 是否运行/端口/token)";
+                statusText = $"发送失败: HTTP {(int)resp.StatusCode} (检查 NapCatQQ Desktop 机器人是否运行/端口/token)";
         }
         catch (Exception e)
         {
-            statusText = $"发送失败: {e.Message} (检查 NapCat 是否运行/端口)";
+            statusText = $"发送失败: {e.Message} (检查 NapCatQQ Desktop 机器人是否运行/端口)";
         }
     }
 
@@ -976,8 +1108,67 @@ public sealed class ChatToQQ : ModuleBase
     {
         if (ImGui.Button(windowOpen ? "关闭独立面板" : "打开独立面板"))
             TogglePanel();
+        ImGui.SameLine();
+        if (ImGui.Button("说明")) helpWindowOpen = true;
 
         return false;
+    }
+
+    private void DrawHelpPanel()
+    {
+        if (!helpWindowOpen) return;
+        using var font = OmniFonts.GetUIFont().Push();
+        using var theme = new ComicStyleScope();
+        float scale = OmniTheme.ScaleValue;
+        ImGui.SetNextWindowSize(new Vector2(740, 620) * scale, ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSizeConstraints(new Vector2(480, 340) * scale, new Vector2(float.MaxValue));
+        bool visible = ImGui.Begin("ChatToQQ 使用说明###OmniChatToQQHelp", ref helpWindowOpen);
+        try
+        {
+            if (!visible) return;
+            foreach (var section in new[] { ("1", "安装与配置"), ("2", "聊天频道指令"), ("3", "当前游戏与插件宏指令"),
+                ("4", "国服频道操作"), ("5", "连接状态"), ("6", "常见问题") })
+            {
+                if (!ImGui.CollapsingHeader(section.Item2 + "###help" + section.Item1, ImGuiTreeNodeFlags.DefaultOpen)) continue;
+                if (section.Item1 != "3")
+                {
+                    string content = GetHelpText(section.Item1);
+                    const string downloadLink = "https://github.com/NapNeko/NapCatQQ-Desktop";
+                    if (section.Item1 == "1")
+                    {
+                        int linkAt = content.IndexOf(downloadLink, StringComparison.Ordinal);
+                        if (linkAt >= 0)
+                        {
+                            ImGui.TextWrapped(content[..linkAt].TrimEnd());
+                            ImGui.TextUnformatted(downloadLink);
+                            if (ImGui.GetContentRegionAvail().X > ImGui.CalcTextSize(downloadLink).X + ImGui.CalcTextSize("复制链接").X + ImGui.GetStyle().FramePadding.X * 2 + ImGui.GetStyle().ItemSpacing.X)
+                                ImGui.SameLine();
+                            if (ImGui.Button("复制链接")) ImGui.SetClipboardText(downloadLink);
+                            ImGui.TextWrapped(content[(linkAt + downloadLink.Length)..].TrimStart());
+                        }
+                        else ImGui.TextWrapped(content);
+                    }
+                    else ImGui.TextWrapped(content);
+                    ImGui.Spacing();
+                    continue;
+                }
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.InputTextWithHint("##helpSearch", "搜索指令或说明…", ref helpSearch, 256)) { helpPage = 0; helpRefreshAt = 0; }
+                ImGui.BeginDisabled(helpPage == 0);
+                if (ImGui.Button("上一页")) { helpPage--; helpRefreshAt = 0; }
+                ImGui.EndDisabled(); ImGui.SameLine();
+                if (ImGui.Button("下一页")) { helpPage++; helpRefreshAt = 0; }
+                if (Environment.TickCount64 >= helpRefreshAt)
+                {
+                    try { helpCommandText = BuildCommandHelp(helpSearch.Trim(), ref helpPage); }
+                    catch (Exception e) { helpCommandText = "指令目录暂不可用：" + e.Message; }
+                    helpRefreshAt = Environment.TickCount64 + 1000;
+                }
+                ImGui.TextWrapped(helpCommandText);
+                ImGui.Spacing();
+            }
+        }
+        finally { ImGui.End(); }
     }
 
     private void DrawPanel()
@@ -1037,6 +1228,8 @@ public sealed class ChatToQQ : ModuleBase
 
         var qqToGame = config.QQToGameEnabled;
         if (ImGui.Checkbox("把 QQ 群消息同步进游戏 (双向)", ref qqToGame)) { config.QQToGameEnabled = qqToGame; SaveOwnConfig(); }
+        var helpEnabled = config.HelpEnabled;
+        if (ImGui.Checkbox("群内 @机器人帮助菜单", ref helpEnabled)) { config.HelpEnabled = helpEnabled; SaveOwnConfig(); }
 
         var world = config.SyncWorldChat;
         if (ImGui.Checkbox("同步 Omni 国服频道到群里", ref world))
@@ -1077,7 +1270,7 @@ public sealed class ChatToQQ : ModuleBase
         ImGui.SetNextItemWidth(-130f);
         changed |= ImGui.InputText("QQ 群号 (多个用英文逗号分隔)", ref groupsInput, 300);
 
-        if (config.QQToGameEnabled)
+        if (config.QQToGameEnabled || config.HelpEnabled)
         {
             ImGui.SetNextItemWidth(-130f);
             if (ImGui.InputText("机器人 QQ号", ref botQQInput, 32))
