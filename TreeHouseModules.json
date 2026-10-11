@@ -56,10 +56,10 @@
       "Name": "IChing",
       "Author": "小烟酒（基于 IChing 原作者源码）",
       "Description": "",
-      "Version": "0.2.0",
+      "Version": "0.6.0",
       "MinimumOmniVersion": "1.1.6.5",
       "File": "Modules/IChingModule.cs",
-      "Sha256": "f54f40f7936a65f6ef20c808656f26c22195407554a0e8bb347c818a6db49455"
+      "Sha256": "f641104e197fee7b68168b03bab770d4efb09afb6238d715a43ee373a0ed557d"
     }
   ]
 }
