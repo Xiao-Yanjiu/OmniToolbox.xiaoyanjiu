@@ -101,6 +101,8 @@ public sealed class ChatToQQ : ModuleBase
     }
 
     private readonly ConcurrentQueue<string> sendQueue = new();
+    private readonly List<MembershipReply> membershipReplies = [];
+    private sealed record MembershipReply(object Client, bool Join, long? Group, long Deadline);
     private CancellationTokenSource? senderCts;
     private IChatGui? chatGui;
     private IAddonLifecycle? addonLifecycle;
@@ -218,6 +220,7 @@ public sealed class ChatToQQ : ModuleBase
 
     protected override void OnDisable()
     {
+        membershipReplies.Clear();
         DetachWorldChat();
         try { if (chatGui != null) chatGui.ChatMessage -= OnChatMessage; } catch { }
         try { addonLifecycle?.UnregisterListener(AddonEvent.PostSetup, "SelectYesno", OnSelectYesnoPopup); } catch { }
@@ -272,6 +275,10 @@ public sealed class ChatToQQ : ModuleBase
     {
         if (commandManager == null) return;
         AddCommand(CommandTogglePanel, new CommandInfo((command, arguments) => TogglePanel()));
+        AddCommand("/qqworld", new CommandInfo((_, text) => RunOnGameThread(() => SendWorldChat(text))) { HelpMessage = "发送到 Omni 国服频道：/qqworld 消息" });
+        AddCommand("/qqworldjoin", new CommandInfo((_, _) => RunOnGameThread(() => ChangeWorldChatMembership(true))) { HelpMessage = "加入 Omni 国服频道" });
+        AddCommand("/qqworldleave", new CommandInfo((_, _) => RunOnGameThread(() => ChangeWorldChatMembership(false))) { HelpMessage = "退出 Omni 国服频道" });
+        AddCommand("/qqmacro", new CommandInfo((_, text) => RunOnGameThread(() => ExecuteRemoteCommand(text))) { HelpMessage = "执行一条游戏或插件宏指令：/qqmacro /指令 参数" });
     }
 
     private void AddCommand(string cmd, CommandInfo info)
@@ -348,7 +355,7 @@ public sealed class ChatToQQ : ModuleBase
         _ = Task.Run(() => PollQQMessages(pollCts.Token));
     }
 
-    private void RunOnGameThread(System.Action action)
+    private void RunOnGameThread(System.Action action, long? replyGroup = null)
     {
         try
         {
@@ -356,13 +363,14 @@ public sealed class ChatToQQ : ModuleBase
         }
         catch (Exception e) { LogDebug($"RunOnFrameworkThread 派发失败: {e}"); }
 
-        try { action(); }
-        catch (Exception e) { LogDebug($"发送动作执行失败: {e}"); }
+        // Never run game APIs on the QQ polling thread if dispatch is unavailable.
+        ReplyMembership(replyGroup, "❌ 游戏线程不可用，未执行指令。");
     }
 
     private void OnFrameworkUpdate(IFramework fw)
     {
         var now = Environment.TickCount64;
+        CheckMembershipReplies(now);
 
         if (config.SyncWorldChat && worldChatClient == null && now - worldChatRetryAt > 5_000)
         {
@@ -641,6 +649,8 @@ public sealed class ChatToQQ : ModuleBase
                         if (!text.StartsWith(trig)) continue;
                         text = text[trig.Length..].TrimStart();
 
+                        if (TryQueueRemoteOperation(text, gid)) continue;
+
                         var cmd   = (config.GameChannel ?? "/p").Trim();
                         var parts = text.Split([' ', '　'], StringSplitOptions.RemoveEmptyEntries);
                         if (parts.Length >= 2)
@@ -710,6 +720,155 @@ public sealed class ChatToQQ : ModuleBase
                 LogDebug($"轮询异常: {e}");
             }
         }
+    }
+
+    private bool TryQueueRemoteOperation(string text, long? replyGroup = null)
+    {
+        var split = text.IndexOfAny([' ', '　']);
+        var verb = split < 0 ? text : text[..split];
+        var body = split < 0 ? "" : text[(split + 1)..].Trim();
+        if (verb == "加入国服") { RunOnGameThread(() => ChangeWorldChatMembership(true, replyGroup), replyGroup); return true; }
+        if (verb == "退出国服") { RunOnGameThread(() => ChangeWorldChatMembership(false, replyGroup), replyGroup); return true; }
+        if (verb == "国服") { RunOnGameThread(() => SendWorldChat(body, replyGroup), replyGroup); return true; }
+        if (verb == "宏") { RunOnGameThread(() => ExecuteRemoteCommand(body, replyGroup), replyGroup); return true; }
+        // Slash commands after the trigger prefix also bypass the normal chat channel.
+        if (text.StartsWith('/')) { RunOnGameThread(() => ExecuteRemoteCommand(text, replyGroup), replyGroup); return true; }
+        return false;
+    }
+
+    private object RequireWorldChatClient()
+    {
+        // Resolve each operation again: the host may reload its chat module.
+        return FindOmniWorldChatClient() ?? throw new InvalidOperationException("请先启用 Omni 的聊天框优化模块。");
+    }
+
+    private void ChangeWorldChatMembership(bool join, long? replyGroup = null)
+    {
+        try
+        {
+            var client = RequireWorldChatClient();
+            var name = join ? "Join" : "Leave";
+            var method = client.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.Public, null, Type.EmptyTypes, null)
+                ?? throw new InvalidOperationException("当前 Omni 版本没有 " + name + " 接口。");
+            method.Invoke(client, null);
+            foreach (var pending in membershipReplies.Where(p => p.Join != join).ToList())
+            {
+                ReplyMembership(pending.Group, "此前的国服频道操作已被新操作取消。");
+                membershipReplies.Remove(pending);
+            }
+            membershipReplies.Add(new MembershipReply(client, join, replyGroup, Environment.TickCount64 + 30000));
+            ReportOperation(join ? "正在加入国服频道…" : "正在退出国服频道…");
+            CheckMembershipReplies(Environment.TickCount64);
+        }
+        catch (Exception e) { ReplyMembership(replyGroup, "国服频道操作失败：" + (e.InnerException ?? e).Message); }
+    }
+
+    private void CheckMembershipReplies(long now)
+    {
+        foreach (var pending in membershipReplies.ToList())
+        {
+            try
+            {
+                var type = pending.Client.GetType();
+                bool connected = type.GetProperty("Connected")?.GetValue(pending.Client) is true;
+                bool connecting = type.GetProperty("Connecting")?.GetValue(pending.Client) is true;
+                if (pending.Join ? connected : !connected && !connecting)
+                {
+                    ReplyMembership(pending.Group, pending.Join ? "✅ 已成功加入国服频道。" : "✅ 已成功退出国服频道。");
+                    membershipReplies.Remove(pending);
+                }
+                else if (now >= pending.Deadline)
+                {
+                    ReplyMembership(pending.Group, pending.Join ? "❌ 加入国服频道超时，请检查 Omni 连接状态。" : "❌ 退出国服频道超时，请检查 Omni 连接状态。");
+                    membershipReplies.Remove(pending);
+                }
+            }
+            catch (Exception e)
+            {
+                ReplyMembership(pending.Group, "❌ 无法确认国服频道状态：" + e.Message);
+                membershipReplies.Remove(pending);
+            }
+        }
+    }
+
+    private void ReplyMembership(long? group, string text)
+    {
+        ReportOperation(text);
+        if (group.HasValue)
+            sendQueue.Enqueue(JsonSerializer.Serialize(new { group_id = group.Value, message = text }));
+        else Enqueue(null, text);
+    }
+
+    private void SendWorldChat(string text, long? replyGroup = null)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("请输入要发送的消息。");
+            var client = RequireWorldChatClient();
+            if (client.GetType().GetProperty("Connected")?.GetValue(client) is not true)
+                throw new InvalidOperationException("国服频道尚未连接，请先加入并等待连接完成。");
+            var method = client.GetType().GetMethod("SendAsync", BindingFlags.Instance | BindingFlags.Public, null, [typeof(string)], null)
+                ?? throw new InvalidOperationException("当前 Omni 版本没有发送接口。");
+            if (method.Invoke(client, [text.Trim()]) is not Task<bool> task)
+                throw new InvalidOperationException("国服频道发送接口不匹配。");
+            _ = ObserveWorldChatSend(task, replyGroup);
+        }
+        catch (Exception e) { ReplyMembership(replyGroup, "❌ 国服发送失败：" + (e.InnerException ?? e).Message); }
+    }
+
+    private async Task ObserveWorldChatSend(Task<bool> task, long? replyGroup)
+    {
+        try { ReplyMembership(replyGroup, await task ? "✅ 国服消息已发送。" : "❌ 国服消息未发送，请检查连接状态与发送频率。"); }
+        catch (Exception e) { ReplyMembership(replyGroup, "❌ 国服发送失败：" + e.Message); }
+    }
+
+    private void ExecuteRemoteCommand(string text, long? replyGroup = null)
+    {
+        try
+        {
+            if (!text.StartsWith('/') || text.Contains('\n') || text.Contains('\r') || Encoding.UTF8.GetByteCount(text) > 500)
+                throw new InvalidOperationException("宏指令须为一条以 / 开头的指令，且不超过 500 字节。");
+            if (objectTable?.LocalPlayer == null) throw new InvalidOperationException("请先进入游戏。");
+            var command = text.Split([' ', '\t', '　'], 2, StringSplitOptions.RemoveEmptyEntries);
+            if (command[0].Equals("/qqworldjoin", StringComparison.OrdinalIgnoreCase)) { ChangeWorldChatMembership(true, replyGroup); return; }
+            if (command[0].Equals("/qqworldleave", StringComparison.OrdinalIgnoreCase)) { ChangeWorldChatMembership(false, replyGroup); return; }
+            if (command[0].Equals("/qqworld", StringComparison.OrdinalIgnoreCase)) { SendWorldChat(command.Length == 2 ? command[1] : "", replyGroup); return; }
+            if (command[0].Equals("/qqmacro", StringComparison.OrdinalIgnoreCase)) { ExecuteRemoteCommand(command.Length == 2 ? command[1].Trim() : "", replyGroup); return; }
+            // Plugin commands must go through Dalamud; game commands use the native chat input path.
+            if (commandManager?.ProcessCommand(text) == true)
+                ReplyMembership(replyGroup, "✅ 已执行插件宏指令：" + text + "（处理器已受理）");
+            else if (IsNativeCommand(command[0]))
+            {
+                ChatManager.Instance().SendMessage(text);
+                ReplyMembership(replyGroup, "✅ 已提交游戏宏指令：" + text + "（具体执行结果以游戏提示为准）");
+            }
+            else ReplyMembership(replyGroup, "❌ 未找到宏指令：" + command[0]);
+        }
+        catch (Exception e) { ReplyMembership(replyGroup, "❌ 宏指令执行失败：" + e.Message); }
+    }
+
+    private HashSet<string>? nativeCommands;
+#pragma warning disable PendingExcelSchema
+    private bool IsNativeCommand(string command)
+    {
+        if (nativeCommands == null)
+        {
+            var commands = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var sheet = DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Experimental.TextCommand>();
+            foreach (var row in sheet)
+                foreach (var alias in new[] { row.Command.ExtractText(), row.ShortCommand.ExtractText(), row.Alias.ExtractText(), row.ShortAlias.ExtractText() })
+                    if (!string.IsNullOrWhiteSpace(alias)) commands.Add(alias.Trim());
+            if (commands.Count == 0) throw new InvalidOperationException("游戏指令表暂不可用，未执行指令。");
+            nativeCommands = commands;
+        }
+        return nativeCommands.Contains(command);
+    }
+#pragma warning restore PendingExcelSchema
+
+    private void ReportOperation(string text)
+    {
+        statusText = text;
+        LogDebug(text);
     }
 
     private static string ExtractQQText(JsonElement message)
