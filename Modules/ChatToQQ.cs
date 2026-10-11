@@ -74,6 +74,8 @@ public sealed class ChatToQQ : ModuleBase
         public string BotQQ           { get; set; } = "";
 
         public bool   SyncWorldChat { get; set; } = true;
+        public bool AtOnAnonymousWhisper { get; set; } = false;
+        public bool AtOnWorldMention { get; set; } = true;
         public string WorldChatTag  { get; set; } = "国服";
     }
 
@@ -129,6 +131,8 @@ public sealed class ChatToQQ : ModuleBase
     private object?    worldChatClient;
     private EventInfo? worldChatEvent;
     private Delegate?  worldChatHandler;
+    private EventInfo? whisperEvent;
+    private Delegate? whisperHandler;
     private long       worldChatRetryAt;
     private string     worldChatStatus = "未连接";
 
@@ -289,7 +293,6 @@ public sealed class ChatToQQ : ModuleBase
     {
         if (commandManager == null) return;
         AddCommand(CommandTogglePanel, new CommandInfo((command, arguments) => TogglePanel()));
-        AddCommand("/qqworld", new CommandInfo((_, text) => RunOnGameThread(() => SendWorldChat(text))) { HelpMessage = "发送到 Omni 国服频道：/qqworld 消息" });
         AddCommand("/qqworldjoin", new CommandInfo((_, _) => RunOnGameThread(() => ChangeWorldChatMembership(true))) { HelpMessage = "加入 Omni 国服频道" });
         AddCommand("/qqworldleave", new CommandInfo((_, _) => RunOnGameThread(() => ChangeWorldChatMembership(false))) { HelpMessage = "退出 Omni 国服频道" });
         AddCommand("/qqmacro", new CommandInfo((_, text) => RunOnGameThread(() => ExecuteRemoteCommand(text))) { HelpMessage = "执行一条游戏或插件宏指令：/qqmacro /指令 参数" });
@@ -386,7 +389,7 @@ public sealed class ChatToQQ : ModuleBase
         var now = Environment.TickCount64;
         CheckMembershipReplies(now);
 
-        if (config.SyncWorldChat && worldChatClient == null && now - worldChatRetryAt > 5_000)
+        if ((config.SyncWorldChat||config.AtOnAnonymousWhisper||config.AtOnWorldMention) && worldChatClient == null && now - worldChatRetryAt > 5_000)
         {
             worldChatRetryAt = now;
             AttachWorldChat();
@@ -465,9 +468,23 @@ public sealed class ChatToQQ : ModuleBase
             var sender = (message.Sender?.TextValue ?? "").Trim();
             var kind   = message.LogKind;
 
+            if (IsNativeWorldMentionNotice(kind, sender, content)) return;
+
+            // Omni also renders anonymous whispers as native incoming tells.
+            // Handle its hidden identity before the ordinary game tell path.
+            var anonymousSender = Regex.Match(sender, @"^冒险者(\d+)已隐藏(?:@.*)?$");
+            if ((kind == XivChatType.TellIncoming || kind == XivChatType.TellOutgoing) && anonymousSender.Success)
+            {
+                if (kind == XivChatType.TellIncoming && int.TryParse(anonymousSender.Groups[1].Value, out var alias))
+                    ForwardWorldWhisper(alias, sender, content);
+                return;
+            }
+
             if (kind == XivChatType.TellIncoming && config.AtOnTell)
             {
-                Enqueue(ResolveAt(sender), $"💬 收到私聊  {DecorateSender(sender)}: {content}");
+                var replyTarget = DecorateSender(sender);
+                var replyHint = replyTarget.Length > 0 ? $"\n回复：{config.TriggerPrefix}悄悄话 {replyTarget} 消息内容" : "";
+                Enqueue(ResolveAt(sender), $"收到悄悄话\n来自：{replyTarget}\n{content}" + replyHint);
                 return;
             }
 
@@ -502,6 +519,13 @@ public sealed class ChatToQQ : ModuleBase
             }
         }
         catch { }
+    }
+
+    private static bool IsNativeWorldMentionNotice(XivChatType kind, string sender, string content)
+    {
+        return kind == XivChatType.TellIncoming
+            && (sender == "Omni" || sender.StartsWith("Omni@", StringComparison.Ordinal))
+            && Regex.IsMatch(content, @"^有人在国服频道\s*[@＠]\s*了你[。！!\s]*$");
     }
 
     private string homeWorldName  = "";
@@ -560,7 +584,7 @@ public sealed class ChatToQQ : ModuleBase
         XivChatType.Yell            => "呼喊",
         XivChatType.Party           => "小队",
         XivChatType.Alliance        => "团队",
-        XivChatType.TellIncoming    => "私聊",
+        XivChatType.TellIncoming    => "悄悄话",
         XivChatType.TellOutgoing    => "悄悄话",
         XivChatType.FreeCompany     => "部队",
         XivChatType.CustomEmote     => "表情",
@@ -664,6 +688,9 @@ public sealed class ChatToQQ : ModuleBase
                             continue;
                         }
                         if (!config.QQToGameEnabled) continue;
+                        text=ExtractQQCommandText(mm);
+                        if (text.StartsWith("/omni chatcn ",StringComparison.OrdinalIgnoreCase))
+                        {var direct=text[13..].Trim();RunOnGameThread(()=>SendWorldChat(direct,gid),gid);continue;}
                         var trig = (config.TriggerPrefix ?? "").Trim();
                         if (trig.Length == 0) continue;
                         if (string.IsNullOrWhiteSpace(text)) continue;
@@ -800,8 +827,8 @@ public sealed class ChatToQQ : ModuleBase
         return request switch
         {
             "1" => "【安装与配置】\n1. 下载并安装 NapCatQQ Desktop，在程序中创建并启动机器人、登录 QQ：\nhttps://github.com/NapNeko/NapCatQQ-Desktop\n安装包在仓库 Releases 中下载。\n2. 在机器人网络配置中启用 OneBot HTTP 服务，记下地址、端口与 Token。\n3. OMNI 在线模块中安装并启用 ChatToQQ，填入 OneBot HTTP 地址、相同 Token、QQ群号和机器人 QQ号。\n4. 点击发送测试消息，打开群内帮助；需要发送游戏消息时再开启双向同步。\n地址示例：http://127.0.0.1:3000（须与实际 HTTP 服务端口一致，并非 WebUI 地址）。",
-            "2" => $"【频道指令】\n{prefix}小队 消息 → 小队\n{prefix}团队 消息 → 团队\n{prefix}说话 消息 → 附近\n{prefix}喊话 消息 → 区域喊话\n{prefix}呼喊 消息 → 区域呼喊\n{prefix}部队 消息 → 部队\n{prefix}新人 消息 → 新人频道\n{prefix}通讯贝1 消息 / {prefix}跨服贝1 消息（编号 1～8）\n{prefix}悄悄话 姓名@服务器 消息\n{prefix}国服 消息 → OMNI 国服频道\n只写 {prefix}消息 时使用设置中的默认频道。",
-            "4" => $"【国服频道】\n先启用 OMNI 聊天框优化。\n{prefix}加入国服：连接国服频道\n{prefix}退出国服：退出频道\n{prefix}国服 消息：发送消息\n加入、退出和发送结果会回复到本群。\n游戏宏：/qqworldjoin、/qqworldleave、/qqworld 消息。",
+            "2" => $"【频道指令】\n{prefix}小队 消息 → 小队\n{prefix}团队 消息 → 团队\n{prefix}说话 消息 → 附近\n{prefix}喊话 消息 → 区域喊话\n{prefix}呼喊 消息 → 区域呼喊\n{prefix}部队 消息 → 部队\n{prefix}新人 消息 → 新人频道\n{prefix}通讯贝1 消息 / {prefix}跨服贝1 消息（编号 1～8）\n{prefix}悄悄话 姓名@服务器 消息\n{prefix}国服 消息 → OMNI 国服频道（执行 /omni chatcn）\n{prefix}国服 @频道昵称或AliasID 消息 → 在国服频道 @ 对方\n{prefix}国服悄悄话 频道昵称或AliasID 消息 → 发送或回复国服悄悄话\n例如：{prefix}国服 @252536 你好\n例如：{prefix}国服悄悄话 252536 你好\n以上指令在 QQ 群使用，须开启双向同步。\n只写 {prefix}消息 时使用设置中的默认频道。",
+            "4" => $"【国服频道】\n先启用 OMNI 聊天框优化。\n{prefix}加入国服：连接国服频道\n{prefix}退出国服：退出频道\n{prefix}国服 消息：执行 Omni 官方 /omni chatcn 指令发送\n{prefix}国服 @频道昵称或AliasID 消息：在国服频道 @ 用户\n{prefix}国服悄悄话 频道昵称或AliasID 消息：发送或回复国服悄悄话\n收到提醒后，复制消息末尾的回复指令，将“消息内容”替换为要说的话。\n例如：{prefix}国服 @252536 你好（公开频道回复并 @ 对方）\n例如：{prefix}国服悄悄话 252536 你好（悄悄话回复）\n普通游戏悄悄话使用 {prefix}悄悄话 姓名@服务器 消息，与国服悄悄话分开。\n这些指令在 QQ 群使用，须开启双向同步。\nQQ群直接 @ 用户需配置 频道昵称或AliasID=QQ号。\n加入、退出结果会回复到本群；国服悄悄话成功后同步发出的内容，不额外发成功确认；失败时提示；普通频道发送反馈为指令已提交。\n游戏宏：/qqworldjoin、/qqworldleave。",
             "5" => BuildConnectionHelp(fromQQ),
             "6" => "【常见问题】\n不回复帮助：检查机器人 QQ号、群号、群内帮助开关及 NapCatQQ Desktop 的 OneBot HTTP 服务。\n不能向游戏发送：打开双向同步，确认触发符号正确、角色已登录。\n国服发送失败：启用聊天框优化，先加入频道并等待连接成功。\n宏未找到：启用提供该指令的插件或模块，再搜索指令。\n帮助和转发依赖游戏内 ChatToQQ 运行；模块停用或游戏关闭后不会回复。",
             _ => "【ChatToQQ 帮助】\n1 · 安装与配置\n2 · 聊天频道指令\n3 · 当前游戏与插件宏指令\n4 · 国服频道操作\n5 · 连接状态\n6 · 常见问题\n\n@我 + 数字 查看分项\n@我 搜索 关键词：搜索指令或说明\n@我 下一页 / 上一页：翻页\n@我 帮助：返回菜单"
@@ -862,6 +889,7 @@ public sealed class ChatToQQ : ModuleBase
         if (verb == "加入国服") { RunOnGameThread(() => ChangeWorldChatMembership(true, replyGroup), replyGroup); return true; }
         if (verb == "退出国服") { RunOnGameThread(() => ChangeWorldChatMembership(false, replyGroup), replyGroup); return true; }
         if (verb == "国服") { RunOnGameThread(() => SendWorldChat(body, replyGroup), replyGroup); return true; }
+        if (verb is "国服悄悄话" or "匿名" or "匿名悄悄话") { RunOnGameThread(() => SendAnonymousWhisper(body, replyGroup), replyGroup); return true; }
         if (verb == "宏") { RunOnGameThread(() => ExecuteRemoteCommand(body, replyGroup), replyGroup); return true; }
         // Slash commands after the trigger prefix also bypass the normal chat channel.
         if (text.StartsWith('/')) { RunOnGameThread(() => ExecuteRemoteCommand(text, replyGroup), replyGroup); return true; }
@@ -936,14 +964,24 @@ public sealed class ChatToQQ : ModuleBase
         try
         {
             if (string.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("请输入要发送的消息。");
-            var client = RequireWorldChatClient();
-            if (client.GetType().GetProperty("Connected")?.GetValue(client) is not true)
-                throw new InvalidOperationException("国服频道尚未连接，请先加入并等待连接完成。");
-            var method = client.GetType().GetMethod("SendAsync", BindingFlags.Instance | BindingFlags.Public, null, [typeof(string)], null)
-                ?? throw new InvalidOperationException("当前 Omni 版本没有发送接口。");
-            if (method.Invoke(client, [text.Trim()]) is not Task<bool> task)
-                throw new InvalidOperationException("国服频道发送接口不匹配。");
-            _ = ObserveWorldChatSend(task, replyGroup);
+            text=text.Trim();
+            if(text.StartsWith('@'))
+            {
+                var client = RequireWorldChatClient();
+                if (ReadValue(client.GetType(), client, "Connected") is not true)
+                    throw new InvalidOperationException("国服频道尚未连接，请先加入并等待连接完成。");
+                var split=text.IndexOf(' ');if(split<2)throw new InvalidOperationException("用法：/omni chatcn @频道昵称 消息；也可用 @AliasID。");
+                var alias=ResolveWorldAlias(client,text[1..split]);
+                var method=client.GetType().GetMethod("SendAsync",[typeof(string),typeof(int)])??throw new InvalidOperationException("当前 Omni 没有频道 @ 发送接口。");
+                var body=text[(split+1)..].Trim();if(body.Length==0)throw new InvalidOperationException("消息不能为空。");
+                if(method.Invoke(client,[body,alias]) is not Task<bool> task)throw new InvalidOperationException("频道 @ 接口不匹配。");
+                _=ObserveWorldChatSend(task,replyGroup);
+            }
+            else
+            {
+                if(DalamudServices.CommandManager?.ProcessCommand("/omni chatcn "+text)!=true)throw new InvalidOperationException("未找到 /omni chatcn 指令，请更新 Omni。");
+                ReplyMembership(replyGroup,"✅ 已提交 /omni chatcn 发送指令，具体发送结果以 Omni 提示为准。");
+            }
         }
         catch (Exception e) { ReplyMembership(replyGroup, "❌ 国服发送失败：" + (e.InnerException ?? e).Message); }
     }
@@ -953,9 +991,45 @@ public sealed class ChatToQQ : ModuleBase
         try { ReplyMembership(replyGroup, await task ? "✅ 国服消息已发送。" : "❌ 国服消息未发送，请检查连接状态与发送频率。"); }
         catch (Exception e) { ReplyMembership(replyGroup, "❌ 国服发送失败：" + e.Message); }
     }
+    private int ResolveWorldAlias(object client,string target)
+    {
+        if(target.StartsWith("qq:",StringComparison.Ordinal))
+        {
+            var names=(config.AtRules??"").Split('\n').Select(line=>line.Split('=',2)).Where(parts=>parts.Length==2&&parts[1].Trim()==target[3..]).Select(parts=>parts[0].Trim()).Distinct().ToList();
+            if(names.Count!=1)throw new InvalidOperationException("此QQ号没有唯一的频道昵称对应关系，请在提醒规则中配置 频道昵称或AliasID=QQ号。");target=names[0];
+        }
+        var members=ReadValue(client.GetType(),client,"Members") as System.Collections.IEnumerable;
+        if(members==null)throw new InvalidOperationException("国服频道成员列表不可用。");
+        var matches=new List<int>();
+        foreach(var member in members){if(member==null)continue;var type=member.GetType();var id=ReadValue(type,member,"AliasID") is int n?n:0;var name=ReadMember(type,member,"DisplayName");var world=ReadMember(type,member,"HomeWorldName");
+            if(id>0&&(target==id.ToString()||target==name||target==name+"@"+world))matches.Add(id);}
+        return matches.Count==1?matches[0]:throw new InvalidOperationException(matches.Count==0?"未找到频道用户，请使用当前频道昵称或 Alias ID。":"频道昵称重名，请使用 Alias ID。");
+    }
+    private void SendAnonymousWhisper(string input,long? group)
+    {
+        try{var split=input.IndexOf(' ');if(split<1||string.IsNullOrWhiteSpace(input[(split+1)..]))throw new InvalidOperationException("用法：#国服悄悄话 频道昵称或AliasID 消息");
+            var client=RequireWorldChatClient();if(ReadValue(client.GetType(),client,"Connected") is not true)throw new InvalidOperationException("国服频道未连接。");
+            var alias=ResolveWorldAlias(client,input[..split].TrimStart('@'));var method=client.GetType().GetMethod("SendWhisper",[typeof(int),typeof(string)])??throw new InvalidOperationException("当前 Omni 不支持匿名悄悄话。");
+            var body = input[(split+1)..].Trim();
+            if(method.Invoke(client,[alias,body]) is not Task<bool> task)throw new InvalidOperationException("匿名悄悄话接口不匹配。");
+            _=ObserveWhisperSend(task,group,input[..split].TrimStart('@'),alias,body);
+        }catch(Exception e){ReplyMembership(group,"❌ 匿名悄悄话发送失败："+(e.InnerException??e).Message);}
+    }
+    private async Task ObserveWhisperSend(Task<bool> task,long? group,string recipient,int alias,string text)
+    {
+        try
+        {
+            if (await task)
+                ReplyMembership(group, $"[国服] 已发送悄悄话\n发给：{recipient}（{alias}）\n{text}");
+            else
+                ReplyMembership(group, "❌ 国服悄悄话未发送，请检查连接、屏蔽或发送频率。");
+        }
+        catch (Exception e) { ReplyMembership(group, "❌ 国服悄悄话发送失败：" + e.Message); }
+    }
 
     private void ExecuteRemoteCommand(string text, long? replyGroup = null)
     {
+        if(text.StartsWith("/omni chatcn ",StringComparison.OrdinalIgnoreCase)){SendWorldChat(text[13..],replyGroup);return;}
         try
         {
             if (!text.StartsWith('/') || text.Contains('\n') || text.Contains('\r') || Encoding.UTF8.GetByteCount(text) > 500)
@@ -1029,6 +1103,16 @@ public sealed class ChatToQQ : ModuleBase
         return "";
     }
 
+    private static string ExtractQQCommandText(JsonElement message)
+    {
+        if(message.ValueKind==JsonValueKind.String){var raw=message.GetString()??"";raw=Regex.Replace(raw,@"\[CQ:at,qq=(\d+)\]",m=>" @qq:"+m.Groups[1].Value+" ");return Regex.Replace(raw,@"\[CQ:[^\]]*\]","").Trim();}
+        if(message.ValueKind!=JsonValueKind.Array)return ExtractQQText(message);
+        var text=new StringBuilder();foreach(var segment in message.EnumerateArray())
+        {if(segment.ValueKind!=JsonValueKind.Object||!segment.TryGetProperty("type",out var type)||!segment.TryGetProperty("data",out var data))continue;
+         if(type.GetString()=="text"&&data.TryGetProperty("text",out var value))text.Append(value.GetString());
+         else if(type.GetString()=="at"&&data.TryGetProperty("qq",out var qq))text.Append(" @qq:"+qq.ToString()+" ");}
+        return text.ToString().Trim();
+    }
     private void Enqueue(string? atQQ, string text)
     {
         var groups = ParseGroups();
@@ -1039,7 +1123,7 @@ public sealed class ChatToQQ : ModuleBase
             var segments = new JsonArray();
             if (!string.IsNullOrEmpty(atQQ))
                 segments.Add(new JsonObject { ["type"] = "at", ["data"] = new JsonObject { ["qq"] = atQQ } });
-            segments.Add(new JsonObject { ["type"] = "text", ["data"] = new JsonObject { ["text"] = " " + text } });
+            segments.Add(new JsonObject { ["type"] = "text", ["data"] = new JsonObject { ["text"] = (string.IsNullOrEmpty(atQQ) ? "" : "\n") + text } });
 
             var payload = new JsonObject { ["group_id"] = gid, ["message"] = segments }.ToJsonString();
             sendQueue.Enqueue(payload);
@@ -1236,7 +1320,7 @@ public sealed class ChatToQQ : ModuleBase
         {
             config.SyncWorldChat = world;
             SaveOwnConfig();
-            if (world) { DetachWorldChat(); AttachWorldChat(); }
+            DetachWorldChat();if(world||config.AtOnAnonymousWhisper||config.AtOnWorldMention)AttachWorldChat();
         }
 
         ImGui.SameLine();
@@ -1246,7 +1330,11 @@ public sealed class ChatToQQ : ModuleBase
         ImGui.TextUnformatted("什么消息需要 @我 (自行勾选):");
 
         var atTell = config.AtOnTell;
-        if (ImGui.Checkbox("收到私聊时", ref atTell)) { config.AtOnTell = atTell; SaveOwnConfig(); }
+        if (ImGui.Checkbox("收到悄悄话时", ref atTell)) { config.AtOnTell = atTell; SaveOwnConfig(); }
+        var anonymous=config.AtOnAnonymousWhisper;
+        if(ImGui.Checkbox("收到国服匿名悄悄话时",ref anonymous)){config.AtOnAnonymousWhisper=anonymous;SaveOwnConfig();DetachWorldChat();AttachWorldChat();}
+        var mention=config.AtOnWorldMention;
+        if(ImGui.Checkbox("在国服频道被 @ 时",ref mention)){config.AtOnWorldMention=mention;SaveOwnConfig();DetachWorldChat();AttachWorldChat();}
 
         var atParty = config.AtOnPartyInvite;
         if (ImGui.Checkbox("被邀请组队时", ref atParty)) { config.AtOnPartyInvite = atParty; SaveOwnConfig(); }
@@ -1367,6 +1455,9 @@ public sealed class ChatToQQ : ModuleBase
             worldChatHandler = (Delegate?)hook.MakeGenericMethod(msgType).Invoke(this, new object[] { client, evt });
             worldChatEvent   = evt;
             worldChatClient  = client;
+            whisperEvent=type.GetEvent("WhisperReceived",BindingFlags.Public|BindingFlags.Instance);
+            var whisperType=type.GetNestedType("ChannelWhisper",BindingFlags.Public|BindingFlags.NonPublic);
+            if(whisperEvent!=null&&whisperType!=null){var whisperHook=typeof(ChatToQQ).GetMethod(nameof(HookWhisperEvent),BindingFlags.NonPublic|BindingFlags.Instance)!;whisperHandler=(Delegate?)whisperHook.MakeGenericMethod(whisperType).Invoke(this,[client,whisperEvent]);}
             worldChatStatus  = "已连接";
 
             var connected = ReadValue(type, client, "Connected")?.ToString() ?? "?";
@@ -1396,12 +1487,14 @@ public sealed class ChatToQQ : ModuleBase
         {
             if (worldChatClient != null && worldChatEvent != null && worldChatHandler != null)
                 worldChatEvent.RemoveEventHandler(worldChatClient, worldChatHandler);
+            if(worldChatClient!=null&&whisperEvent!=null&&whisperHandler!=null)whisperEvent.RemoveEventHandler(worldChatClient,whisperHandler);
         }
         catch { }
 
         worldChatClient  = null;
         worldChatEvent   = null;
         worldChatHandler = null;
+        whisperEvent=null;whisperHandler=null;
         worldChatStatus  = "未连接";
     }
 
@@ -1411,12 +1504,38 @@ public sealed class ChatToQQ : ModuleBase
         evt.AddEventHandler(client, handler);
         return handler;
     }
+    private Delegate HookWhisperEvent<T>(object client,EventInfo evt)
+    {Action<T> handler=message=>OnAnonymousWhisper(message);evt.AddEventHandler(client,handler);return handler;}
+    private readonly Dictionary<string, long> recentWorldWhispers = new();
+    private void ForwardWorldWhisper(int alias, string name, string text)
+    {
+        if (!config.AtOnAnonymousWhisper || alias <= 0 || string.IsNullOrWhiteSpace(text)) return;
+        var now = Environment.TickCount64;
+        var key = alias + "\n" + text;
+        lock (recentWorldWhispers)
+        {
+            foreach (var old in recentWorldWhispers.Where(entry => now - entry.Value > 2_000).Select(entry => entry.Key).ToArray())
+                recentWorldWhispers.Remove(old);
+            if (recentWorldWhispers.ContainsKey(key)) return;
+            recentWorldWhispers[key] = now;
+        }
+        Enqueue(string.IsNullOrWhiteSpace(config.DefaultAtQQ) ? null : config.DefaultAtQQ.Trim(),
+            $"[国服] 收到悄悄话\n来自：{name}（{alias}）\n{text}\n\n回复：{config.TriggerPrefix}国服悄悄话 {alias} 消息内容");
+    }
+    private void OnAnonymousWhisper(object? message)
+    {
+        try{if(message==null||!config.AtOnAnonymousWhisper||worldChatClient==null)return;var type=message.GetType();var self=ReadValue(worldChatClient.GetType(),worldChatClient,"SelfAliasID");
+            if(self is not int selfId||selfId<=0||ReadValue(type,message,"RecipientAliasID") is not int recipient||recipient!=selfId)return;
+            var text=ReadMember(type,message,"Text");if(text.Length==0)return;var name=ReadMember(type,message,"SenderDisplayName");var alias=ReadValue(type,message,"SenderAliasID");
+            if (alias is int senderAlias) ForwardWorldWhisper(senderAlias, name, text);
+        }catch(Exception e){LogDebug("匿名悄悄话接收失败："+e.Message);}
+    }
 
     private void OnWorldChatMessage(object? message)
     {
         try
         {
-            if (message == null || !config.SyncWorldChat) return;
+            if (message == null) return;
 
             var type = message.GetType();
             var text = ReadMember(type, message, "Text");
@@ -1426,10 +1545,15 @@ public sealed class ChatToQQ : ModuleBase
             var world = ReadMember(type, message, "HomeWorldName");
             var sender = name.Length == 0 ? "" : (name.Contains('@') || world.Length == 0 ? name : name + "@" + world);
 
-            var tag = (config.WorldChatTag ?? "").Trim();
-            if (tag.Length == 0) tag = "国服";
-
-            Enqueue(null, $"[{tag}] {(sender.Length > 0 ? sender + ": " : "")}{text}");
+            var mention=ReadValue(type,message,"Mention");var self=worldChatClient==null?null:ReadValue(worldChatClient.GetType(),worldChatClient,"SelfAliasID");
+            var mentioned=config.AtOnWorldMention&&self is int selfId&&selfId>0&&mention!=null&&ReadValue(mention.GetType(),mention,"AliasID") is int id&&id==selfId;
+            if(!config.SyncWorldChat&&!mentioned)return;
+            var senderAlias = ReadValue(type, message, "AliasID");
+            var replyHint = mentioned && senderAlias is int replyAlias && replyAlias > 0
+                ? $"\n\n频道回复：{config.TriggerPrefix}国服 @{replyAlias} 消息内容\n悄悄话回复：{config.TriggerPrefix}国服悄悄话 {replyAlias} 消息内容" : "";
+            var heading = mentioned ? "[国服] 有人 @ 了你" : "[国服]";
+            var from = sender.Length > 0 ? $"\n来自：{sender}" : "";
+            Enqueue(mentioned?(config.DefaultAtQQ??"").Trim():null,heading+from+"\n"+text+replyHint);
         }
         catch (Exception e) { LogDebug($"国服频道消息处理异常: {e.Message}"); }
     }

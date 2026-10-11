@@ -25,11 +25,11 @@
       "InternalName": "ChatToQQ",
       "Name": "游戏聊天同步 QQ",
       "Author": "小烟酒",
-      "Description": "把游戏聊天镜像同步到 QQ 群；可同时同步 Omni「国服频道」（跨服世界聊天）；收到私聊、组队邀请、交易请求或被人选中时在群里 @你。",
-      "Version": "1.4.0",
-      "MinimumOmniVersion": "1.1.3.0",
+      "Description": "同步游戏与 Omni 国服频道聊天到 QQ 群；支持国服悄悄话、频道 @ 提醒与回复，内置游戏面板和群内帮助，消息分行显示并过滤重复通知。",
+      "Version": "1.5.0",
+      "MinimumOmniVersion": "1.1.6.6",
       "File": "Modules/ChatToQQ.cs",
-      "Sha256": "42875539775ce64ab756f50a9073b251d3ce61e77f892a8d2ba32bc00f033146"
+      "Sha256": "e7c61c18a2dac158ee35d59b93ce82bcc5ab2866ec08a2f361ebf907e12b682e"
     },
     {
       "InternalName": "AutoDiscardJunk",
