@@ -1,8 +1,10 @@
 # 小烟酒手机 App / 手机app支持
 
-版本 0.3.34，APK 软件名为“小烟酒”，Android 包名 `cn.xiaoyanjiu.ff14chat`。
+手机支持模块版本 0.3.35，APK 仍为 0.3.34，无需重新安装。APK 软件名为“小烟酒”，Android 包名 `cn.xiaoyanjiu.ff14chat`。
 
-在 Omni 在线模块中安装并启用“手机app支持”。下载 [小烟酒 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.34)，在手机填写电脑可访问的地址与端口，提交验证码，再由电脑模块确认设备授权。路由器转发需由用户配置；默认端口 18765。
+QQ 扫码登录需先填写可用的 V1 签名服务地址。此版补充输入检查、登录进度和失败提示，生成登录码后自动打开；真实 QQ 登录仍取决于签名服务和协议版本。`tests/QQLoginRegression.csproj` 提供无需真实账号的回归检查，构建时指定 `YanjiuLibraryPath` 和 `DalamudLibPath`。
+
+在 Omni 在线模块中安装并启用“手机app支持”。下载 [小烟酒 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.35)，在手机填写电脑可访问的地址与端口，提交验证码，再由电脑模块确认设备授权。路由器转发需由用户配置；默认端口 18765。
 
 使用个人云推送时，WxPusher、Server酱及 QQ 的凭据由用户自行设置。QQ 使用 Lagrange V1；真实登录仍需可用的 V1 签名服务和匹配协议版本，不提供内置公共签名服务。
 

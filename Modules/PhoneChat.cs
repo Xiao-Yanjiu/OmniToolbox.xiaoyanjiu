@@ -486,7 +486,7 @@ public sealed class PhoneChat : ModuleBase
         if(headers.TryGetValue("Content-Length",out var size)&&(!int.TryParse(size,out length)||length<0||length>4096)){await Reply(tls,413,new{error="请求过长"},ct);return;}
         var body=new byte[length];await tls.ReadExactlyAsync(body,ct);
         var uri=new Uri("https://localhost"+first[1]);
-        if(uri.AbsolutePath=="/pair-info"&&first[0]=="GET"){await Reply(tls,200,new{manualAuthorization=true,version="0.3.34"},ct);return;}
+        if(uri.AbsolutePath=="/pair-info"&&first[0]=="GET"){await Reply(tls,200,new{manualAuthorization=true,version="0.3.35"},ct);return;}
         if((uri.AbsolutePath=="/pair-request"||uri.AbsolutePath=="/pair-status")&&first[0]=="POST")
         {
             try{
@@ -1058,24 +1058,43 @@ public sealed class PhoneChat : ModuleBase
     }
     private static uint[] QQIds(string input)=>Regex.Split(input??"",@"[,，;；\s]+").Select(x=>uint.TryParse(x,out var id)?id:0).Where(id=>id>0).Distinct().Take(32).ToArray();
     private bool QQOnline(){lock(qqGate)return qqBridge!=null&&(bool)qqBridge.GetType().GetProperty("Online").GetValue(qqBridge);}
+    private int qqLoginGeneration;
+    private static bool TryQqSignAddress(string value,out string address,out string error)
+    {
+        address=(value??"").Trim();error="";
+        if(address.Length==0){error="请先填写 V1 签名服务地址，再扫码登录 QQ";return false;}
+        if(!Uri.TryCreate(address,UriKind.Absolute,out var uri)||!(uri.Scheme=="https"||uri.Scheme=="http"&&uri.IsLoopback)||uri.UserInfo.Length>0||uri.Fragment.Length>0){error="签名地址须为 HTTPS，或本机 HTTP 地址";return false;}
+        return true;
+    }
+    private static string QQLoginError(Exception exception,string signUrl)
+    {
+        var cause=exception.GetBaseException();string detail=cause.Message;
+        if(!string.IsNullOrEmpty(signUrl))detail=detail.Replace(signUrl,"[签名服务]");
+        detail=Regex.Replace(detail,@"https?://\S+","[签名服务]");
+        return "QQ 登录失败："+(detail.Length>220?detail[..220]+"…":detail);
+    }
     private void ConnectQQ(bool scan)
     {
-        if(Interlocked.CompareExchange(ref qqLoginRunning,1,0)!=0)return;
-        string signUrl=settings.QQSignUrl;
-        _=Task.Run(async()=>{object instance=null;try{
-            DisconnectQQ();RestoreQQ();var context=new QQAssemblyContext();instance=context.Create();
-            lock(qqGate){if(!enabled){((IDisposable)instance).Dispose();context.Unload();return;}qqContext=context;qqBridge=instance;}
+        if(!enabled){qqStatus="请先启用手机app支持模块，再登录 QQ";return;}
+        if(!TryQqSignAddress(settings.QQSignUrl,out var signUrl,out var inputError)){qqStatus=inputError;return;}
+        if(Interlocked.CompareExchange(ref qqLoginRunning,1,0)!=0){qqStatus="QQ 正在登录，稍候或点击断开 QQ 取消";return;}
+        int generation=Volatile.Read(ref qqLoginGeneration);string appInfo=settings.QQAppInfo;
+        qqStatus="QQ 正在初始化登录…";
+        _=Task.Run(async()=>{object instance=null;QQAssemblyContext context=null;bool attached=false;try{
+            if(!enabled||Volatile.Read(ref qqLoginGeneration)!=generation)return;DisconnectQQ("QQ 正在初始化登录…",false);RestoreQQ();context=new QQAssemblyContext();instance=context.Create();
+            lock(qqGate){if(!enabled||Volatile.Read(ref qqLoginGeneration)!=generation)return;qqContext=context;qqBridge=instance;attached=true;}
             var current=instance;bool Active(){lock(qqGate)return enabled&&ReferenceEquals(qqBridge,current);}
             Action<string> persist=data=>{if(Active())PersistQQ(data);};
             Action<string> status=text=>{if(Active())qqStatus=text;};
-            Action<byte[]> qr=bytes=>{if(Active())File.WriteAllBytes(QrFile,bytes);};
+            Action<byte[]> qr=bytes=>{if(!Active())return;Directory.CreateDirectory(Path.GetDirectoryName(QrFile));File.WriteAllBytes(QrFile,bytes);qqStatus="QQ 登录码已生成，正在打开…";Action show=()=>{if(!Active())return;try{OpenUrl(QrFile);}catch{qqStatus="登录码已生成，请点击查看登录码";}};if(framework!=null)_=framework.RunOnTick(show);else show();};
             Action<uint,uint,string,string> receive=(group,user,name,text)=>{if(Active())ReceiveQQ(group,user,name,text);};
-            var task=(Task)instance.GetType().GetMethod("Login").Invoke(instance,new object[]{signUrl,qqSession,scan,status,persist,qr,receive,settings.QQAppInfo});await task;
-        }catch(OperationCanceledException){if(enabled)qqStatus="QQ 登录已取消或超时";}
-        catch{if(enabled)qqStatus="QQ 登录失败，请检查 V1 签名服务、协议版本及网络";DisconnectQQ();}
-        finally{Interlocked.Exchange(ref qqLoginRunning,0);}});
+            var task=(Task)instance.GetType().GetMethod("Login").Invoke(instance,new object[]{signUrl,qqSession,scan,status,persist,qr,receive,appInfo});await task;
+            if(Active()&&!QQOnline())DisconnectQQ("QQ 未成功登录，请重新扫码或检查协议版本",false);
+        }catch(OperationCanceledException){if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation)DisconnectQQ("QQ 登录已取消或超时，请重新扫码",false);}
+        catch(Exception e){if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation){var message=QQLoginError(e,signUrl);DisconnectQQ(message,false);DalamudServices.PluginLog?.Warning("{Error}",message);}}
+        finally{if(!attached){try{(instance as IDisposable)?.Dispose();}catch{}context?.Unload();}Interlocked.Exchange(ref qqLoginRunning,0);}});
     }
-    private void DisconnectQQ(){object old;QQAssemblyContext context;lock(qqGate){old=qqBridge;context=qqContext;qqBridge=null;qqContext=null;qqStatus="QQ 已断开";while(qqMirrorQueue.TryDequeue(out _)){}}if(old!=null||context!=null)_=Task.Run(()=>{try{(old as IDisposable)?.Dispose();}catch{}finally{context?.Unload();}});try{if(File.Exists(QrFile))File.Delete(QrFile);}catch{}}
+    private void DisconnectQQ(string finalStatus="QQ 已断开",bool cancelLogin=true){if(cancelLogin)Interlocked.Increment(ref qqLoginGeneration);object old;QQAssemblyContext context;lock(qqGate){old=qqBridge;context=qqContext;qqBridge=null;qqContext=null;qqStatus=finalStatus;while(qqMirrorQueue.TryDequeue(out _)){}}if(old!=null||context!=null)_=Task.Run(()=>{try{(old as IDisposable)?.Dispose();}catch{}finally{context?.Unload();}});try{if(File.Exists(QrFile))File.Delete(QrFile);}catch{}}
     private async Task<PushResult> SendQQPush(string target,string text,CancellationToken token)
     {if(!uint.TryParse(target,out var id)||id==0)return new PushResult{status="填写接收 QQ 号或群号"};return await SendQQMessage(id,settings.QQNotifyGroup,text,settings.QQMention,token);}
     private async Task<PushResult> SendQQMessage(uint id,bool group,string text,string mention,CancellationToken token)
@@ -1109,7 +1128,7 @@ public sealed class PhoneChat : ModuleBase
     private void DrawQQSettings()
     {
         ImGui.TextWrapped(qqStatus);ImGui.SetNextItemWidth(-1);string sign=settings.QQSignUrl;if(ImGui.InputTextWithHint("##QQ签名","V1 签名服务地址（HTTPS / 本机 HTTP）",ref sign,500)){settings.QQSignUrl=sign;Save();}
-        if(ImGui.Button("QQ 扫码登录"))ConnectQQ(true);ImGui.SameLine();if(ImGui.Button("恢复登录"))ConnectQQ(false);ImGui.SameLine();if(ImGui.Button("断开 QQ"))DisconnectQQ();ImGui.SameLine();if(ImGui.Button("查看登录码")&&File.Exists(QrFile))OpenUrl(QrFile);
+        ImGui.BeginDisabled(Volatile.Read(ref qqLoginRunning)!=0);if(ImGui.Button("QQ 扫码登录"))ConnectQQ(true);ImGui.SameLine();if(ImGui.Button("恢复登录"))ConnectQQ(false);ImGui.EndDisabled();ImGui.SameLine();if(ImGui.Button("断开 QQ"))DisconnectQQ();ImGui.SameLine();if(ImGui.Button("查看登录码")){if(File.Exists(QrFile))OpenUrl(QrFile);else qqStatus="暂无登录码，请先点击 QQ 扫码登录";}
         bool auto=settings.QQAutoConnect;if(ImGui.Checkbox("随模块恢复 QQ",ref auto)){settings.QQAutoConnect=auto;Save();}
         string target=settings.QQNotifyTarget;ImGui.SetNextItemWidth(210);if(ImGui.InputTextWithHint("##QQ接收","提醒接收 QQ 号 / 群号",ref target,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQNotifyTarget=target;Save();}ImGui.SameLine();bool group=settings.QQNotifyGroup;if(ImGui.Checkbox("发到群",ref group)){settings.QQNotifyGroup=group;Save();}
         string at=settings.QQMention;ImGui.SetNextItemWidth(210);if(ImGui.InputTextWithHint("##QQ提醒对象","群提醒 @QQ（选填）",ref at,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQMention=at;Save();}
