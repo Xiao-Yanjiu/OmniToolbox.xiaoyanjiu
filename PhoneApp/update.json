@@ -1,7 +1,7 @@
 {
   "versionCode": 29,
   "versionName": "0.3.36",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.36/%E5%B0%8F%E7%83%9F%E9%85%92.apk",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.36/Xiaoyanjiu.apk",
   "sha256": "ea0f3f717e2769ea6a9cb7a729eb7e38d58edf7bee7edc2802036f6214279c41",
   "size": 2310992,
   "notes": "新增启动检查更新、设置中手动检查更新、APK 下载进度和校验、系统覆盖安装。手机支持模块保持 0.3.35。"
