@@ -486,7 +486,7 @@ public sealed class PhoneChat : ModuleBase
         if(headers.TryGetValue("Content-Length",out var size)&&(!int.TryParse(size,out length)||length<0||length>4096)){await Reply(tls,413,new{error="请求过长"},ct);return;}
         var body=new byte[length];await tls.ReadExactlyAsync(body,ct);
         var uri=new Uri("https://localhost"+first[1]);
-        if(uri.AbsolutePath=="/pair-info"&&first[0]=="GET"){await Reply(tls,200,new{manualAuthorization=true,version="0.3.35"},ct);return;}
+        if(uri.AbsolutePath=="/pair-info"&&first[0]=="GET"){await Reply(tls,200,new{manualAuthorization=true,version="0.3.36"},ct);return;}
         if((uri.AbsolutePath=="/pair-request"||uri.AbsolutePath=="/pair-status")&&first[0]=="POST")
         {
             try{
@@ -1128,7 +1128,8 @@ public sealed class PhoneChat : ModuleBase
     private void DrawQQSettings()
     {
         ImGui.TextWrapped(qqStatus);ImGui.SetNextItemWidth(-1);string sign=settings.QQSignUrl;if(ImGui.InputTextWithHint("##QQ签名","V1 签名服务地址（HTTPS / 本机 HTTP）",ref sign,500)){settings.QQSignUrl=sign;Save();}
-        ImGui.BeginDisabled(Volatile.Read(ref qqLoginRunning)!=0);if(ImGui.Button("QQ 扫码登录"))ConnectQQ(true);ImGui.SameLine();if(ImGui.Button("恢复登录"))ConnectQQ(false);ImGui.EndDisabled();ImGui.SameLine();if(ImGui.Button("断开 QQ"))DisconnectQQ();ImGui.SameLine();if(ImGui.Button("查看登录码")){if(File.Exists(QrFile))OpenUrl(QrFile);else qqStatus="暂无登录码，请先点击 QQ 扫码登录";}
+        ImGui.TextDisabled("请用作为机器人的 QQ 账号扫描登录码");
+        ImGui.BeginDisabled(Volatile.Read(ref qqLoginRunning)!=0);if(ImGui.Button("机器人 QQ 扫码登录"))ConnectQQ(true);ImGui.SameLine();if(ImGui.Button("恢复登录"))ConnectQQ(false);ImGui.EndDisabled();ImGui.SameLine();if(ImGui.Button("断开 QQ"))DisconnectQQ();ImGui.SameLine();if(ImGui.Button("查看登录码")){if(File.Exists(QrFile))OpenUrl(QrFile);else qqStatus="暂无登录码，请先点击 机器人 QQ 扫码登录";}
         bool auto=settings.QQAutoConnect;if(ImGui.Checkbox("随模块恢复 QQ",ref auto)){settings.QQAutoConnect=auto;Save();}
         string target=settings.QQNotifyTarget;ImGui.SetNextItemWidth(210);if(ImGui.InputTextWithHint("##QQ接收","提醒接收 QQ 号 / 群号",ref target,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQNotifyTarget=target;Save();}ImGui.SameLine();bool group=settings.QQNotifyGroup;if(ImGui.Checkbox("发到群",ref group)){settings.QQNotifyGroup=group;Save();}
         string at=settings.QQMention;ImGui.SetNextItemWidth(210);if(ImGui.InputTextWithHint("##QQ提醒对象","群提醒 @QQ（选填）",ref at,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQMention=at;Save();}

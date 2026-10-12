@@ -1,6 +1,6 @@
 # 小烟酒手机 App / 手机app支持
 
-手机支持模块版本 0.3.35，APK 版本 0.3.36（versionCode 29）。APK 软件名为“小烟酒”，Android 包名 `cn.xiaoyanjiu.ff14chat`。
+手机支持模块版本 0.3.36，APK 版本 0.3.36（versionCode 29）。APK 软件名为“小烟酒”，Android 包名 `cn.xiaoyanjiu.ff14chat`。
 
 QQ 扫码登录需先填写可用的 V1 签名服务地址。此版补充输入检查、登录进度和失败提示，生成登录码后自动打开；真实 QQ 登录仍取决于签名服务和协议版本。`tests/QQLoginRegression.csproj` 提供无需真实账号的回归检查，构建时指定 `YanjiuLibraryPath` 和 `DalamudLibPath`。
 
