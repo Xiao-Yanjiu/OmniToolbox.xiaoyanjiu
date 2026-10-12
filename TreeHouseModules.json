@@ -70,6 +70,16 @@
       "MinimumOmniVersion": "1.1.6.5",
       "File": "Modules/CommandCatalog.cs",
       "Sha256": "5c00c7e8187524cc282c22104ec3fb7dcbab5dbd40419cf598f53ecd8c6aedf6"
+    },
+    {
+      "InternalName": "PhoneChat",
+      "Name": "手机app支持",
+      "Author": "小烟酒",
+      "Description": "配合小烟酒 Android App 同步游戏与 Omni 聊天窗口，支持设备验证码授权、磁盘缓存、自定义频道及个人推送。",
+      "Version": "0.3.34",
+      "MinimumOmniVersion": "1.1.6.6",
+      "File": "Modules/PhoneChat.cs",
+      "Sha256": "ce9c460260d44ca7e392652e3527089231ca7490c01b108ccadd79bfa7b8df62"
     }
   ]
 }

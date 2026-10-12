@@ -2,6 +2,12 @@
 
 小烟酒的 Omni Toolbox（树树妙妙屋）在线模块仓库。
 
+## 小烟酒手机 App
+
+- **手机app支持**（PhoneChat）— 需 Omni 1.1.6.6 或更新版本。
+- [下载小烟酒 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.34)
+- 配置、对应源码和第三方许可见 [PhoneApp](PhoneApp/README.md)。
+
 ## 模块列表
 
 
