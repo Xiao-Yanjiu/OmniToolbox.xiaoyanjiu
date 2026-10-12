@@ -1,10 +1,10 @@
 # 小烟酒手机 App / 手机app支持
 
-手机支持模块版本 0.3.35，APK 仍为 0.3.34，无需重新安装。APK 软件名为“小烟酒”，Android 包名 `cn.xiaoyanjiu.ff14chat`。
+手机支持模块版本 0.3.35，APK 版本 0.3.36（versionCode 29）。APK 软件名为“小烟酒”，Android 包名 `cn.xiaoyanjiu.ff14chat`。
 
 QQ 扫码登录需先填写可用的 V1 签名服务地址。此版补充输入检查、登录进度和失败提示，生成登录码后自动打开；真实 QQ 登录仍取决于签名服务和协议版本。`tests/QQLoginRegression.csproj` 提供无需真实账号的回归检查，构建时指定 `YanjiuLibraryPath` 和 `DalamudLibPath`。
 
-在 Omni 在线模块中安装并启用“手机app支持”。下载 [小烟酒 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.35)，在手机填写电脑可访问的地址与端口，提交验证码，再由电脑模块确认设备授权。路由器转发需由用户配置；默认端口 18765。
+在 Omni 在线模块中安装并启用“手机app支持”。下载 [小烟酒 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.36)，在手机填写电脑可访问的地址与端口，提交验证码，再由电脑模块确认设备授权。路由器转发需由用户配置；默认端口 18765。
 
 使用个人云推送时，WxPusher、Server酱及 QQ 的凭据由用户自行设置。QQ 使用 Lagrange V1；真实登录仍需可用的 V1 签名服务和匹配协议版本，不提供内置公共签名服务。
 
@@ -16,3 +16,11 @@ QQ 扫码登录需先填写可用的 V1 签名服务地址。此版补充输入�
 嵌入 QRCoder 的 MIT 版权与许可证保留在模块文件内，Android 扫码库的许可证随源码保留。用户设备票据、推送凭据、QQ 登录数据及 APK 私人签名密钥均不随仓库发布。
 
 独立卫月插件在 [Yanjiu 仓库](https://github.com/Xiao-Yanjiu/Yanjiu) 开发，本目录为 Omni 单文件模块版本。
+
+## 手机内更新
+
+首次安装 0.3.36 后，启动会自动检查本仓库的 PhoneApp/update.json；设置内也可点击检查并下载最新版。发现新版本后选择下载，下载显示进度，完成时校验大小、SHA-256、包名、版本号及与已安装应用一致的签名，再打开系统安装确认。首次需允许小烟酒安装应用；取消安装可再次检查更新。GitHub 无法访问时可稍后重试。更新不清除设备授权和聊天数据。
+
+后续发布 APK 时必须使用原签名，递增 versionCode，在 Releases 上传 APK 并更新 update.json 的版本、下载地址、大小和 SHA-256。模块继续通过 TreeHouseModules.json 独立更新，无需随每次 APK 发布改版本。
+
+更新地址回归检查见 tests/UpdatePolicyRegression.java；真实 Android 安装权限及覆盖安装需在设备上验证。

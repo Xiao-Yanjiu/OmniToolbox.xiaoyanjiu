@@ -10,6 +10,8 @@ import org.json.*;
 
 public class MainActivity extends Activity {
  private WebView web;
+ private AppUpdater updater;
+ private static final java.util.concurrent.atomic.AtomicBoolean updateChecked=new java.util.concurrent.atomic.AtomicBoolean();
  private FrameLayout root;
  private boolean pageReady;
  private JSONObject pendingPushOpen;
@@ -27,12 +29,12 @@ public class MainActivity extends Activity {
    while(pairingGeneration.get()==generation&&android.os.SystemClock.elapsedRealtime()<until){if(reply.optBoolean("approved")){if(pairingGeneration.get()!=generation)return;String credential=reply.getString("token");if(credential.length()!=64)throw new Exception("授权凭证无效");getSharedPreferences("pair",0).edit().putString("url",address).putString("pin",pin).putString("token",credential).apply();ui.post(()->{if(pairingGeneration.get()!=generation)return;stopService(new Intent(this,ChatService.class));ChatService.initialize();startForegroundService(new Intent(this,ChatService.class));web.evaluateJavascript("manualPairDone()",null);Toast.makeText(this,"授权成功",Toast.LENGTH_SHORT).show();});return;}Thread.sleep(2000);reply=Transport.call(address,pin,"","/pair-status",request);}if(pairingGeneration.get()==generation)throw new Exception("授权请求已超时，请重新连接");
   }catch(Exception e){if(pairingGeneration.get()==generation)pairProgress("",e.getMessage()==null?"连接失败":e.getMessage());}});}
  private void pairProgress(String code,String text){ui.post(()->{if(!isFinishing()&&!isDestroyed())web.evaluateJavascript("manualPairProgress("+JSONObject.quote(code)+","+JSONObject.quote(text)+")",null);});}
- @Override public void onCreate(Bundle b){super.onCreate(b);try{ChatService.initializeForAppStart(this);}catch(Exception e){ChatService.state="聊天缓存初始化失败："+e.getMessage();ui.post(()->showError(ChatService.state));}
+ @Override public void onCreate(Bundle b){super.onCreate(b);updater=new AppUpdater(this);try{ChatService.initializeForAppStart(this);}catch(Exception e){ChatService.state="聊天缓存初始化失败："+e.getMessage();ui.post(()->showError(ChatService.state));}
   if(Build.VERSION.SDK_INT>=33)requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},11);
   web=new WebView(this);web.setBackgroundColor(0xff15181f);web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);web.getSettings().setAllowFileAccess(false);web.getSettings().setAllowContentAccess(false);
   web.addJavascriptInterface(new Bridge(),"Phone");
   web.setWebViewClient(new WebViewClient(){@Override public boolean shouldOverrideUrlLoading(WebView w,WebResourceRequest r){return true;}
-   @Override public void onPageFinished(WebView view,String url){if("file:///android_asset/index.html".equals(url)){pageReady=true;deliverPushIntent();}}
+   @Override public void onPageFinished(WebView view,String url){if("file:///android_asset/index.html".equals(url)){pageReady=true;deliverPushIntent();if(updateChecked.compareAndSet(false,true))updater.check(false);}}
   });
   setContentView(web);
   getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
@@ -56,9 +58,9 @@ public class MainActivity extends Activity {
   applyTheme(getSharedPreferences("appearance",0).getString("settings","{}"));
   if(!getSharedPreferences("pair",0).getString("token","").isEmpty())startForegroundService(new Intent(this,ChatService.class));
  }
- @Override public void onResume(){super.onResume();ChatService.visible=true;if(!getSharedPreferences("pair",0).getString("token","").isEmpty())startForegroundService(new Intent(this,ChatService.class).setAction("recover"));}
+ @Override public void onResume(){super.onResume();if(updater!=null)updater.resume();ChatService.visible=true;if(!getSharedPreferences("pair",0).getString("token","").isEmpty())startForegroundService(new Intent(this,ChatService.class).setAction("recover"));}
  @Override public void onPause(){ChatService.visible=false;super.onPause();}
- @Override public void onDestroy(){pairingGeneration.incrementAndGet();pairingExecutor.shutdown();web.removeJavascriptInterface("Phone");web.destroy();super.onDestroy();}
+ @Override public void onDestroy(){updater.close();pairingGeneration.incrementAndGet();pairingExecutor.shutdown();web.removeJavascriptInterface("Phone");web.destroy();super.onDestroy();}
  private void showError(String text){new AlertDialog.Builder(this).setTitle("连接提示").setMessage(text).setPositiveButton("知道了",null).show();}
  @Override public void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(result!=RESULT_OK||data==null)return;if(request==30&&data.getData()!=null)importBackground(data.getData());}
 
@@ -84,6 +86,8 @@ public class MainActivity extends Activity {
   String image=readBackground();ui.post(()->web.evaluateJavascript("backgroundChanged("+JSONObject.quote(image)+")",null));
  }catch(Exception e){if(output!=null)store.failWrite(output);ui.post(()->showError(e.getMessage()));}finally{if(bitmap!=null)bitmap.recycle();}},"Chat-background").start();}
  private final class Bridge {
+  @JavascriptInterface public void checkUpdate(){ui.post(()->updater.check(true));}
+  @JavascriptInterface public String appVersion(){try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}catch(Exception e){return "";}}
   @JavascriptInterface public void history(String direction){ChatService.history(direction);}
   @JavascriptInterface public String snapshotFor(String current,String view,String thread){return ChatService.snapshotFor(current,view,thread);}
   @JavascriptInterface public void requestPair(String host,int port){manualConnect(host,port);}
