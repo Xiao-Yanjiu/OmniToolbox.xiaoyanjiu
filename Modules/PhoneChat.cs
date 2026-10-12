@@ -1514,8 +1514,8 @@ internal sealed class PhoneLLBot : IDisposable
     {
         if(Interlocked.Exchange(ref disposed,1)!=0)return;Online=false;stop.Cancel();
         lock(processGate){try{if(process!=null&&!process.HasExited){process.Kill(entireProcessTree:true);process.WaitForExit(5000);}}catch{}process?.Dispose();}
-        http.Dispose();lease?.Dispose();
-        try{File.Delete(Path.Combine(home,"data","webui_token.txt"));File.Delete(Path.Combine(home,"data","auth_token.txt"));}catch{}
+        http.Dispose();
+        if(lease!=null){try{File.Delete(Path.Combine(home,"data","webui_token.txt"));File.Delete(Path.Combine(home,"data","auth_token.txt"));}catch{}finally{lease.Dispose();}}
     }
 }
 

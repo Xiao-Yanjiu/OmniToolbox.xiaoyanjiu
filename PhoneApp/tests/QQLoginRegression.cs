@@ -66,6 +66,7 @@ if(args.Length==4){
  using var proc=new System.Diagnostics.Process{StartInfo=info};proc.OutputDataReceived+=(_,_)=>{};proc.ErrorDataReceived+=(_,_)=>{};
  var probe=Activator.CreateInstance(helper,BindingFlags.Instance|BindingFlags.Public,null,[runtime,(Action<string>)(_=>{}),(Action<byte[]>)(_=>{}),(Action<uint,uint,string,string>)((_,_,_,_)=>{}),(Action<string>)(_=>{})],null)!;
  helper.GetField("webPort",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(probe,webPort);helper.GetField("webToken",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(probe,secret);
+ helper.GetField("lease",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(probe,new FileStream(Path.Combine(runtime,"running.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None));
  try{
   Check(proc.Start(),"real LLBot starts");proc.BeginOutputReadLine();proc.BeginErrorReadLine();
   bool ready=false;for(int retry=0;retry<60;retry++){if(proc.HasExited)throw new Exception("LLBot exited before WebUI ready: "+proc.ExitCode);try{var json=await (Task<System.Text.Json.JsonElement>)helper.GetMethod("Web",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(probe,["/api/login-info",null,CancellationToken.None])!;Check(!json.GetProperty("online").GetBoolean(),"no token cannot fake QQ online");ready=true;break;}catch(System.Net.Http.HttpRequestException){await Task.Delay(500);}}
@@ -74,5 +75,5 @@ if(args.Length==4){
   Check(!state.GetProperty("hasToken").GetBoolean(),"auth status reports absent token");
   Check(state.GetProperty("validation").GetString()=="idle","waiting for personal auth, no account logged in");
   Console.WriteLine("PASS: pinned official LLBot 8.3.2 started hidden in direct mode; authenticated login/status API verified with no real QQ login");
- }finally{int pid=proc.Id;helper.GetField("process",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(probe,proc);((IDisposable)probe).Dispose();bool running;try{using var check=System.Diagnostics.Process.GetProcessById(pid);running=!check.HasExited;}catch(ArgumentException){running=false;}Check(!running,"Dispose terminates only the owned LLBot process");Console.WriteLine("PASS: backend disposal terminates owned process and clears temporary API credentials");}
+ }finally{int pid=proc.Id;helper.GetField("process",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(probe,proc);((IDisposable)probe).Dispose();bool running;try{using var check=System.Diagnostics.Process.GetProcessById(pid);running=!check.HasExited;}catch(ArgumentException){running=false;}Check(!running,"Dispose terminates only the owned LLBot process");Check(!File.Exists(Path.Combine(data,"webui_token.txt")),"temporary WebUI credential cleared");Console.WriteLine("PASS: backend disposal terminates owned process and clears temporary API credentials");}
 }
