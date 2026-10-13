@@ -1,0 +1,85 @@
+{
+  "SchemaVersion": 1,
+  "Modules": [
+    {
+      "InternalName": "MusicPlayer",
+      "Name": "游戏内音乐播放器",
+      "Author": "小烟酒",
+      "Description": "QQ音乐播放器：真实播放（不需要装 QQ音乐客户端）、搜索、LRC 歌词滚动、扫码登录、我喜欢/收藏歌单读写、跟随歌曲变色的圆角悬浮窗（可固定在角色头顶）。无需 Node 或任何额外运行库。",
+      "Version": "1.2.0",
+      "MinimumOmniVersion": "1.1.3.0",
+      "File": "Modules/MusicPlayer.cs",
+      "Sha256": "c71b7e15c589fbc97c91746c6e2dfdb6e896bddfa0f9f1e14eff3a0c9e96f300"
+    },
+    {
+      "InternalName": "GameWebBrowser",
+      "Name": "游戏内浏览器",
+      "Author": "小烟酒",
+      "Description": "CEF 游戏内浏览器：沿用原贴图外观，用户点击下载内核并查看实时进度；保留独立 Edge/Chrome 模式，共用网页、宏命令、代理和收藏。",
+      "Version": "1.4.4",
+      "MinimumOmniVersion": "1.1.6.6",
+      "File": "Modules/Browser/1.4.4/GameWebBrowser.dll",
+      "Sha256": "75de99f8bf97f028395350dcecbc59d2f28c70363f9231b383b3c46f01d7568e"
+    },
+    {
+      "InternalName": "ChatToQQ",
+      "Name": "游戏聊天同步 QQ",
+      "Author": "小烟酒",
+      "Description": "同步游戏与 Omni 国服频道聊天到 QQ 群；支持国服悄悄话、频道 @ 提醒与回复，内置游戏面板和群内帮助，消息分行显示并过滤重复通知。",
+      "Version": "1.5.0",
+      "MinimumOmniVersion": "1.1.6.6",
+      "File": "Modules/ChatToQQ.cs",
+      "Sha256": "e7c61c18a2dac158ee35d59b93ce82bcc5ab2866ec08a2f361ebf907e12b682e"
+    },
+    {
+      "InternalName": "AutoDiscardJunk",
+      "Name": "自动丢垃圾",
+      "Author": "小烟酒",
+      "Description": "三栏管理背包物品：黑名单中的物品会在启动后自动丢弃。",
+      "Version": "1.1.1",
+      "MinimumOmniVersion": "1.1.3.0",
+      "File": "Modules/AutoDiscardJunk.cs",
+      "Sha256": "9050b583abcc7ff9831df670c0963c10c75d79f86c46261a6096dabe1a7321a8"
+    },
+    {
+      "InternalName": "ToolbarIconPlus",
+      "Name": "更好的图标管理",
+      "Author": "小烟酒",
+      "Description": "网站图标（favicon）与本地图片入库后，可给游戏宏当图标（宏面板与热键栏原生显示），也可按编号把界面上任意图标换成图库图或别的游戏图标，支持一键还原。",
+      "Version": "1.2.0",
+      "MinimumOmniVersion": "1.1.3.0",
+      "File": "Modules/ToolbarIconPlus.cs",
+      "Sha256": "8b5532fdce0ac1c9607998d235a5ca02445c8ca0ce6482516fecf38a215d3811"
+    },
+    {
+      "InternalName": "IChingModule",
+      "Name": "IChing",
+      "Author": "小烟酒（基于 IChing 原作者源码）",
+      "Description": "",
+      "Version": "0.6.0",
+      "MinimumOmniVersion": "1.1.6.5",
+      "File": "Modules/IChingModule.cs",
+      "Sha256": "f641104e197fee7b68168b03bab770d4efb09afb6238d715a43ee373a0ed557d"
+    },
+    {
+      "InternalName": "CommandCatalog",
+      "Name": "宏指令目录",
+      "Author": "小烟酒",
+      "Description": "实时列出游戏与插件斜杠指令及功能说明，支持搜索、来源筛选、填写参数执行和复制；使用 /cmdcatalog 打开，界面跟随 OMNI 主题。",
+      "Version": "1.0.0",
+      "MinimumOmniVersion": "1.1.6.5",
+      "File": "Modules/CommandCatalog.cs",
+      "Sha256": "5c00c7e8187524cc282c22104ec3fb7dcbab5dbd40419cf598f53ecd8c6aedf6"
+    },
+    {
+      "InternalName": "PhoneChat",
+      "Name": "手机app支持",
+      "Author": "小烟酒",
+      "Description": "配合小烟酒 Android App 同步游戏与 Omni 聊天窗口，支持设备验证码授权、磁盘缓存、自定义频道及个人推送。",
+      "Version": "0.3.38",
+      "MinimumOmniVersion": "1.1.6.6",
+      "File": "Modules/PhoneChat.cs",
+      "Sha256": "cef82d9e177269e9c72d201bbfcbaead5af9bdf2500870e086242095e7f1dd29"
+    }
+  ]
+}
