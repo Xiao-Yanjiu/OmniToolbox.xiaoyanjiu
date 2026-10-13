@@ -904,9 +904,9 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
     {
         var pad = ChromePad;
         var px  = win.X + pad;
-        var py  = win.Y + pad + TabRowH + NavRowH + win.InputRowHeight;
+        var py  = win.Y + pad + TabRowH + NavRowH;
         var pw  = MathF.Max(60f, win.W - pad * 2f - FavoritePanelWidth(win));
-        var ph  = MathF.Max(60f, win.H - pad * 2f - TabRowH - NavRowH - win.InputRowHeight);
+        var ph  = MathF.Max(60f, win.H - pad * 2f - TabRowH - NavRowH);
 
         if (MathF.Abs(win.PageX - px) < 0.5f && MathF.Abs(win.PageY - py) < 0.5f &&
             MathF.Abs(win.PageW - pw) < 0.5f && MathF.Abs(win.PageH - ph) < 0.5f) return;
@@ -2713,7 +2713,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
     // 只让活动标签可见：同一个窗口里的标签共用一块客户区，切换就是显隐互换
     private void Wv2ApplyActiveTab(BrowserWin win)
     {
-        if (CefMode) { foreach (var t in win.TabsSnapshot()) win.Cef?.Send(new { Kind = "visible", Id = t.Cef?.Id, Focus = win.Visible && t == win.ActiveTabSafe() }); return; }
+        if (CefMode) { foreach (var t in win.TabsSnapshot()) if (t.Cef != null) win.Cef?.Send(new { Kind = "visible", Id = t.Cef.Id, Focus = win.Visible && t == win.ActiveTabSafe() }); return; }
         var tabs   = win.TabsSnapshot();
         var active = win.ActiveIndex;
         for (var i = 0; i < tabs.Length; i++)
@@ -3436,7 +3436,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         ImGui.PushStyleVar(ImGuiStyleVar.WindowMinSize, new Vector2(48f, 48f));
 
         bool pointerInInputRow = win.InputRowHeight > 0 && IsMouseInRect(
-            new Vector2(win.X + ChromePad, win.Y + ChromePad), new Vector2(win.X + win.W - ChromePad, win.Y + ChromePad + win.InputRowHeight));
+            BrowserInputPosition(win), BrowserInputPosition(win) + BrowserInputSize(win));
         if (pointerInInputRow) wf |= ImGuiWindowFlags.NoMouseInputs;
         var open = ImGui.Begin("##gwb_win_" + win.Key, wf);
 
@@ -3605,7 +3605,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         var consumed = false;
 
         // ================= 第一行：标签条 + 右上角三个窗口按钮 =================
-        var rowY0 = mn.Y + (win.InputRowHeight > 0 ? pad : bth) + win.InputRowHeight;
+        var rowY0 = mn.Y + bth;
         var rowY1 = win.PageY - bth;
 
         var stripX0 = mn.X + pad;
@@ -3656,12 +3656,12 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         var favoritesMn = new Vector2(favoritesMx.X - favoritesWidth, btnY0);
         var proxyMx = new Vector2(favoritesMn.X - 4f, btnY1);
         var proxyMn = new Vector2(proxyMx.X - proxyWidth, btnY0);
-        var plusMx = new Vector2(proxyMn.X - 4f, btnY1);
+        var plusLimit = proxyMn.X - 4f;
+        var plusMx = new Vector2(plusLimit, btnY1);
         var plusMn = new Vector2(plusMx.X - btnW, btnY0);
         var tabsX1 = MathF.Max(tabsX0 + 20f, plusMn.X - 4f);
-        var clickPlus = ChromeBtn(dl, "##gbnewtab", plusMn, plusMx, btnRad, cHover, cActive, cText, cText, GlyphKind.Plus);
-        consumed |= IsMouseInRect(plusMn, plusMx);
-        if (IsMouseInRect(plusMn, plusMx)) ImGui.SetTooltip("新建标签页");
+        var clickPlus = false;
+
         var proxyHover = IsMouseInRect(proxyMn, proxyMx);
         var proxyClick = proxyHover && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
         consumed |= proxyHover;
@@ -3687,6 +3687,11 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         var gap      = 3f;
         var tabW     = MathF.Min(OmniScale(190f), (tabsX1 - tabsX0 - gap * (tabCount - 1)) / MathF.Max(1, tabCount));
         tabW = MathF.Max(54f, tabW);
+        plusMn.X = MathF.Min(plusLimit - btnW, tabsX0 + tabCount * (tabW + gap));
+        plusMx.X = plusMn.X + btnW;
+        clickPlus = ChromeBtn(dl, "##gbnewtab", plusMn, plusMx, btnRad, cHover, cActive, cText, cText, GlyphKind.Plus);
+        consumed |= IsMouseInRect(plusMn, plusMx);
+        if (IsMouseInRect(plusMn, plusMx)) ImGui.SetTooltip("新建标签页");
 
         var active = win.ActiveIndex;
         var switchTo = -1;
@@ -3783,7 +3788,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         {
             if (win.TabCount >= 16) { statusMessage = "每个窗口最多打开 16 个标签。"; return; }
             win.AddTab(new BrowserTab { Win = win, Title = "新标签页" }, true);
-            ShowBrowserDialog("address", win);
+            CloseBrowserInput();
             return;
         }
         if (win.FavoritesOpen) consumed |= DrawFavoritePanel(dl, win, navT, mx, cText, cDim, cHover, cBorder);
@@ -4010,8 +4015,9 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             if (dialogError.Length > 0) height += ImGui.GetStyle().ItemSpacing.Y + ImGui.CalcTextSize(dialogError, false, MathF.Max(120, owner.W - ChromePad * 2 - ImGui.GetStyle().WindowPadding.X * 2)).Y;
             if (MathF.Abs(owner.InputRowHeight - height) > 0.5f) { owner.InputRowHeight = height; ApplyPageRect(owner); }
         }
-        ImGui.SetNextWindowPos(new Vector2(owner.X + ChromePad, owner.Y + ChromePad), ImGuiCond.Always);
-        ImGui.SetNextWindowSize(new Vector2(owner.W - ChromePad * 2, owner.InputRowHeight), ImGuiCond.Always);
+        ImGui.SetNextWindowPos(BrowserInputPosition(owner), ImGuiCond.Always);
+        ImGui.SetNextWindowSize(BrowserInputSize(owner), ImGuiCond.Always);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, OmniScale(10f));
         ImGui.PushStyleColor(ImGuiCol.WindowBg, GetSkin().Background with { W = 1 });
         if (dialogRequested) ImGui.SetNextWindowFocus();
         bool open = true;
@@ -4071,6 +4077,15 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         ImGui.End();
         if (!open || ImGui.IsKeyPressed(ImGuiKey.Escape)) CloseBrowserInput();
         ImGui.PopStyleColor();
+        ImGui.PopStyleVar();
+    }
+    private static Vector2 BrowserInputSize(BrowserWin owner) =>
+        new(MathF.Min(owner.W - ChromePad * 2, MathF.Max(240, ImGui.GetIO().DisplaySize.X - ChromePad * 2)), owner.InputRowHeight);
+    private static Vector2 BrowserInputPosition(BrowserWin owner)
+    {
+        var size = BrowserInputSize(owner);
+        return new Vector2(Math.Clamp(owner.X + ChromePad, ChromePad, MathF.Max(ChromePad, ImGui.GetIO().DisplaySize.X - size.X - ChromePad)),
+            MathF.Max(ChromePad, owner.Y - size.Y - OmniScale(8f)));
     }
     private bool DrawFavoritePanel(ImDrawListPtr dl, BrowserWin win, BrowserTab? current, Vector2 outerMax,
         uint text, uint dim, uint hover, uint border)

@@ -76,6 +76,12 @@ try
     await Wait(() => messages.Any(m => m.Contains("RAF_OK")), "browser animation frame callback runs");
     await Wait(() => messages.Any(m => m.Contains("TICK_3")) && view.ReadInt32(0) > firstSequence,
         "JavaScript timers and continuous repaint remain active");
+    string secondId = Guid.NewGuid().ToString("N");
+    using var secondMemory = MemoryMappedFile.CreateNew("Local\\Yanjiu.Cef." + secondId, 64 + 2560 * 1600 * 4);
+    using var secondView = secondMemory.CreateViewAccessor();
+    using var secondGate = new Mutex(false, "Local\\Yanjiu.Cef.Lock." + secondId);
+    await Send(new { Kind = "create", Id = secondId, Url = $"http://127.0.0.1:{port}/", Width = 800, Height = 400 });
+    await Wait(() => secondView.ReadInt32(0) > 0, "second tab produces frames without exiting shared host");
     await Send(new { Kind = "shutdown" });
     await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(8));
     if (process.ExitCode != 0) throw new Exception("Unexpected exit " + process.ExitCode);

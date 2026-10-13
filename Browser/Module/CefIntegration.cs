@@ -58,6 +58,8 @@ public sealed unsafe partial class GameWebBrowser
         win.Cef ??= new CefPeer(CefRoot, Path.Combine(Path.GetDirectoryName(ConfigFilePath)!, "YanjiuBrowser", "profiles",
             Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(win.Key + "|" + win.Proxy))).ToLowerInvariant()),
             win.Proxy, message => gameQueue.Enqueue(() => CefEvent(win, message)));
+        win.LaunchStartMs = Environment.TickCount64;
+        win.CapFailReason = "";
         tab.Cef = new CefSurface();
         tab.Wv2Busy = false;
         tab.Pending = null;
