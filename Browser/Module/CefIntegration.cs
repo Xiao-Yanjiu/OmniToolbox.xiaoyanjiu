@@ -392,9 +392,9 @@ internal sealed class CefInstaller
     // The base runtime package contains locales/runtime.json only. The RID package includes both binaries and locales.
     private const string NativeUrl = "https://api.nuget.org/v3-flatcontainer/chromiumembeddedframework.runtime.win-x64/154.0.34/chromiumembeddedframework.runtime.win-x64.154.0.34.nupkg";
     private const string NativeSha512 = "MnHgTXjzGD4nuaNByVcPCcOnVVDBJ5c/cA4BDVwdm5eBnChDTpaUp/uYpozffVOkvRBjXwCpfmsI8OSdfLH3ig==";
-    private const string HostUrl = "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/browser-v1.4.4/BrowserHost.zip";
-    private const string HostSha256 = "eca170da57f8351d609027137d67d64a2697671c77589517377757430fd96028";
-    private const string HostDllSha256 = "77dc7a54fb0250c6a2fed3c8782ebd78eb604faf8d2def594d9360bf98b37919";
+    private const string HostUrl = "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/browser-v1.4.5/BrowserHost.zip";
+    private const string HostSha256 = "2f46b760773e4019d5bad0d66b5fa9020062a6303ff94b1963206083fe407ad1";
+    private const string HostDllSha256 = "879026cd00e37c1ba42ee973cbab45c814830d0609d31954db36a5e3e710cb96";
     private readonly string root;
     private CancellationTokenSource? cancel;
     public volatile bool Busy;
@@ -466,7 +466,7 @@ internal sealed class CefInstaller
     {
         Status = label; Interlocked.Exchange(ref bytes, 0); Interlocked.Exchange(ref total, 0);
         using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("YanjiuBrowser/1.4.4");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("YanjiuBrowser/1.4.5");
         using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token);
         response.EnsureSuccessStatusCode();
         Interlocked.Exchange(ref total, response.Content.Headers.ContentLength ?? 0);

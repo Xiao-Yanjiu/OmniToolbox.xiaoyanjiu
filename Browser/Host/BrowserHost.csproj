@@ -7,7 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>Yanjiu.BrowserHost</AssemblyName>
-    <Version>1.4.3</Version>
+    <Version>1.4.5</Version>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <!-- Reference only the binding packages. Do not restore the CEF native dependency. -->
   <ItemGroup>
@@ -19,4 +20,7 @@
     <Content Include="$(CefManagedPath)/cefsharp.common.netcore/runtimes/win-x64/native/CefSharp.BrowserSubprocess.Core.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="CefSharp.BrowserSubprocess.Core.dll" />
     <Content Include="$(CefManagedPath)/cefsharp.common.netcore/runtimes/win-x64/native/CefSharp.BrowserSubprocess.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="CefSharp.BrowserSubprocess.dll" />
   </ItemGroup>
+  <Target Name="ConfigureBrowserStack" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)SetStackReserve.ps1&quot; -Path &quot;$(PublishDir)$(AssemblyName).exe&quot;" />
+  </Target>
 </Project>

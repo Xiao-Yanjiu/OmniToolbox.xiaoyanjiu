@@ -19,7 +19,7 @@ var server = Task.Run(async () =>
             using var client = await tcp.AcceptTcpClientAsync(stop.Token); using var stream = client.GetStream();
             using var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, true);
             while (!string.IsNullOrEmpty(await reader.ReadLineAsync(stop.Token))) { }
-            var html = Encoding.UTF8.GetBytes("<!doctype html><html><head><title>CEF_TEST_READY</title></head><body style='margin:0;background:white'><input style='width:200px;height:30px' oninput=\"document.title='INPUT_'+this.value\"><div style='color:red'>真实 CEF 离屏渲染测试</div></body></html>");
+            var html = Encoding.UTF8.GetBytes("<!doctype html><html><head><title>CEF_TEST_READY</title></head><body style='margin:0;background:white'><input style='width:200px;height:30px' oninput=\"document.title='INPUT_'+this.value\"><div style='color:red'>真实 CEF 离屏渲染测试</div><script>let ticks=0;fetch('/data').then(r=>r.text()).then(()=>document.title='FETCH_OK');requestAnimationFrame(()=>document.title='RAF_OK');setInterval(()=>{document.title='TICK_'+(++ticks);document.body.style.background=ticks%2?'white':'pink'},500)</script></body></html>");
             var header = Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {html.Length}\r\nConnection: close\r\n\r\n");
             await stream.WriteAsync(header, stop.Token); await stream.WriteAsync(html, stop.Token);
         }
@@ -60,6 +60,7 @@ try
         Console.WriteLine("PASS frame dimensions and opaque pixel");
     }
     finally { gate.ReleaseMutex(); }
+    var firstSequence = view.ReadInt32(0);
     await Send(new { Kind = "focus", Id = id, Focus = true });
     await Send(new { Kind = "move", Id = id, X = 30, Y = 15 });
     await Send(new { Kind = "click", Id = id, X = 30, Y = 15, Button = 0, Up = false, Count = 1 });
@@ -68,6 +69,10 @@ try
     await Send(new { Kind = "key", Id = id, Key = 97, Character = true });
     await Send(new { Kind = "key", Id = id, Key = 65, Up = true, NativeKey = unchecked((int)0xc01e0001) });
     await Wait(() => messages.Any(m => m.Contains("INPUT_a")), "CEF mouse focus and keyboard input APIs");
+    await Wait(() => messages.Any(m => m.Contains("FETCH_OK")), "fetch and Promise callbacks complete");
+    await Wait(() => messages.Any(m => m.Contains("RAF_OK")), "browser animation frame callback runs");
+    await Wait(() => messages.Any(m => m.Contains("TICK_3")) && view.ReadInt32(0) > firstSequence,
+        "JavaScript timers and continuous repaint remain active");
     await Send(new { Kind = "shutdown" });
     await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(8));
     if (process.ExitCode != 0) throw new Exception("Unexpected exit " + process.ExitCode);

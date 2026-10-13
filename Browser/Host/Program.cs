@@ -30,6 +30,7 @@ internal static class Program
                 BrowserSubprocessPath = Environment.ProcessPath!,
                 RootCachePath = profile, CachePath = Path.Combine(profile, "cache"),
                 WindowlessRenderingEnabled = true, MultiThreadedMessageLoop = true,
+                BackgroundColor = 0xFFFFFFFF,
                 LogFile = Path.Combine(profile, "cef.log"), LogSeverity = LogSeverity.Error,
             };
             var proxy = args.FirstOrDefault(a => a.StartsWith("--yanjiu-proxy=", StringComparison.Ordinal))?.Substring("--yanjiu-proxy=".Length);

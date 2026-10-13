@@ -1,10 +1,10 @@
-# 游戏内浏览器 1.4.4 测试版
+# 游戏内浏览器 1.4.5 测试版
 
 本版将在线入口改为 `Modules/GameWebBrowser.dll`，取消 WebView2 抽帧模式，保留独立 Edge/Chrome 模式，使用 CEF 离屏模式承接原贴图外观。旧配置的 WebView2 选项自动迁移到 CEF。源码由 `Modules/GameWebBrowser.cs` 和 `Browser/Module/CefIntegration.cs` 共同组成，不再将前者作为单文件模块导入。
 
 ## 使用
 
-在 Omni 刷新本仓库并更新游戏内浏览器。若旧版本仍在运行，停用后重新加载或重启 Omni，再选择“CEF 游戏内浏览器”。初次使用需要点击“下载 CEF”；已安装 1.4.0/1.4.1 内核的用户点击“更新浏览器组件”，只更新辅助程序，不重新下载约 175 MiB 的原生内核。进度条显示当前下载文件的已下载大小、总大小和速度，可以取消或失败后重试。没有安装内核时打开网页会显示提示，不会自动下载。
+在 Omni 刷新在线仓库并更新游戏内浏览器。若旧版本仍在运行，停用后重新加载或重启 Omni，再选择“CEF 游戏内浏览器”。初次使用需要点击“下载 CEF”；已安装旧版内核的用户点击“更新浏览器组件”，只更新辅助程序，不重新下载约 175 MiB 的原生内核。进度条显示当前下载文件的已下载大小、总大小和速度，可以取消或失败后重试。没有安装内核时打开网页会显示提示，不会自动下载。
 
 网页、收藏、宏命令和外观沿用现有配置。CEF 的登录资料独立保存，代理切换会重建窗口。CEF 输出 BGRA 像素，通过本机共享内存写入游戏设备的动态纹理，沿用原贴图模式的窗口、标题栏、缩放和主题。第一版不使用 GPU 跨进程共享纹理；不是外部窗口捕获，也没有图片压缩编码。
 
@@ -18,6 +18,8 @@
 
 ## 下载与隔离
 
+1.4.5 修复辅助程序缺失 Windows 10 兼容声明的问题。该遗漏使复杂网页停在加载或空白状态；补充兼容声明后，隔离实测中鱼糕首页与 DeepSeek 登录页正常显示。自托管进程同时采用 Chromium 建议的 8 MiB 栈保留量，发布过程自动设置并验证。网页默认底色改为不透明，加载和错误页面不会透出游戏画面。实现依据见 [CefSharp 自托管说明](https://github.com/cefsharp/CefSharp/wiki/SelfHost-BrowserSubProcess)。内核仍使用 154.0.34；下载 145.0.26 作隔离对比后，没有替换用户安装。
+
 - 固定 CefSharp 154.0.340 / CEF 154.0.34 的匹配版本，不使用浮动 latest。
 - 用户点击按钮后，下载 CefSharp 维护的 `chromiumembeddedframework.runtime.win-x64` NuGet 架构包（包含原生内核及语言资源，约 175 MiB）和本仓库 Release 的 `BrowserHost.zip`。
 - 原生包按 NuGet 公布的 SHA512 校验，桥接包按源码内固定 SHA256 校验。安装文件另保存逐文件 SHA256 清单。
@@ -30,10 +32,10 @@
 
 需要 .NET 10 SDK、本机 Omni 1.1.6.6 和对应 Dalamud API 15 程序集。`Browser/Host/BrowserHost.csproj` 使用明确的本地托管接口引用，避免通过 NuGet 依赖链自动下载 CEF 原生包。
 
-`CefManagedPath` 指向解压后的 `CefSharp.Common.NETCore` 和 `CefSharp.OffScreen.NETCore` 154.0.340 包，目录名分别为 `cefsharp.common.netcore` 和 `cefsharp.offscreen.netcore`。`OmniLibPath`、`DalamudLibPath` 指向实际安装目录。发布桥接程序时使用 `-r win-x64 --self-contained true`。
+`CefManagedPath` 指向解压后的 `CefSharp.Common.NETCore` 和 `CefSharp.OffScreen.NETCore` 154.0.340 包，目录名分别为 `cefsharp.common.netcore` 和 `cefsharp.offscreen.netcore`。`OmniLibPath`、`DalamudLibPath` 指向实际安装目录。Windows 上发布桥接程序时使用 `-r win-x64 --self-contained true`，发布目标自动运行 `SetStackReserve.ps1` 设置 x64 EXE 的栈大小。ZIP 须保留语言子目录，并在发行前用实际解压器验证完整包。
 
 发行桥接 ZIP 中附带 CefSharp BSD 许可和 .NET 第三方声明；CEF 包安装时保留其许可文件。没有修改或再分发 Omni 程序集。
 
 ## 验证边界
 
-使用 Omni 1.1.6.6 / Dalamud API 15 的真实程序集编译模块和辅助程序，20 项本地回归检查通过，涵盖安装包校验、解压防护、进度、取消、已有原生内核的辅助程序更新及失败回滚。另用已安装的 CEF 在隔离测试目录启动真实辅助程序，8 项实测通过：载入本地网页、收到标题、共享画面尺寸与像素、鼠标与键盘输入、正常退出，以及无资料目录参数时返回明确错误。三站并发复现中，软件合成使 DeepSeek 从零帧变为有首帧；鱼糕仍停在加载动画，灰机 Wiki 的样式和脚本请求被网站返回的 HTML 验证内容替代。测试没有重新下载 CEF 内核，也没有复制用户登录资料。游戏内实际绘制、中文输入法和网站人机验证仍需游戏环境测试。
+使用 Omni 1.1.6.6 / Dalamud API 15 的真实程序集编译模块和辅助程序，24 项回归检查通过，包含完整发行包解压、兼容声明、栈大小及安装回滚。11 项真实 CEF 测试通过，覆盖画面、输入、异步请求、Promise、动画帧回调、定时器持续重绘及正常退出。并发站点实测中鱼糕与 DeepSeek 页面正常显示；Telegram/Discord 使用用户配置代理时显示代理连接失败，单独 TCP 检查确认配置的代理端口不可达。灰机 Wiki 仍可能遇到站点验证。测试使用全新资料目录，没有复制用户登录资料。游戏内实际绘制、中文输入法和网站人机验证仍需游戏环境验证。

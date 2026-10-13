@@ -153,6 +153,12 @@ if (args.Length > 4)
         File.Exists(Path.Combine(releaseRoot, "zh-Hans", "System.Windows.Forms.resources.dll")) &&
         File.Exists(Path.Combine(releaseRoot, "de", "System.Windows.Forms.resources.dll")),
         "actual release archive preserves satellite assembly directories");
+    var hostBytes = File.ReadAllBytes(Path.Combine(releaseRoot, "Yanjiu.BrowserHost.exe"));
+    var optionalHeader = BitConverter.ToInt32(hostBytes, 60) + 24;
+    Check(BitConverter.ToUInt64(hostBytes, optionalHeader + 72) >= 8388608,
+        "published self-hosted renderer has Chromium-compatible stack reserve");
+    Check(Encoding.UTF8.GetString(hostBytes).Contains("8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a"),
+        "published host contains Windows 10 compatibility manifest");
     using var archive = ZipFile.OpenRead(args[4]);
     Check(archive.Entries.Where(e => e.Name.Length > 0).All(e =>
         new FileInfo(Path.Combine(releaseRoot, e.FullName.Replace('/', Path.DirectorySeparatorChar))).Length == e.Length),
