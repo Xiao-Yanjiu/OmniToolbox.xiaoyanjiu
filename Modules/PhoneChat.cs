@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// 2026-10-12: LLBot official local CLI integration. Runtime is downloaded separately with pinned SHA-256.
+// 2026-10-12: NapCat official local Node integration. Runtime is downloaded separately with pinned SHA-256.
 /*
 Embedded QRCoder license:
 The MIT License (MIT)
@@ -374,7 +374,7 @@ public sealed class PhoneChat : ModuleBase
                 if(oldUri!=null)settings.PublicAddress=oldUri.Host;
             }
         } catch { }
-        entries=OpenHistoryStore();RestorePairingFile();RestoreGameState();RestorePushKeys();RestoreQQSecrets();
+        entries=OpenHistoryStore();RestorePairingFile();RestoreGameState();RestorePushKeys();
     }
     protected override void OnEnable()
     {
@@ -485,7 +485,7 @@ public sealed class PhoneChat : ModuleBase
         if(headers.TryGetValue("Content-Length",out var size)&&(!int.TryParse(size,out length)||length<0||length>4096)){await Reply(tls,413,new{error="请求过长"},ct);return;}
         var body=new byte[length];await tls.ReadExactlyAsync(body,ct);
         var uri=new Uri("https://localhost"+first[1]);
-        if(uri.AbsolutePath=="/pair-info"&&first[0]=="GET"){await Reply(tls,200,new{manualAuthorization=true,version="0.3.37"},ct);return;}
+        if(uri.AbsolutePath=="/pair-info"&&first[0]=="GET"){await Reply(tls,200,new{manualAuthorization=true,version="0.3.38"},ct);return;}
         if((uri.AbsolutePath=="/pair-request"||uri.AbsolutePath=="/pair-status")&&first[0]=="POST")
         {
             try{
@@ -1030,11 +1030,11 @@ public sealed class PhoneChat : ModuleBase
     }
     private int pushPanel;
     private string portInput="",externalPortInput="";
-    private string qqStatus="QQ 未连接",qqAuthToken="";
-    private static string QQSecretsFile=>Path.ChangeExtension(ConfigFile,"llbot-auth");
+    private string qqStatus="QQ 未连接";
+    private PhoneQr qqLoginQr;
     private static string QrFile=>Path.Combine(Path.GetDirectoryName(ConfigFile),"OmniPhoneChat-QQ-login.png");
-    private static string LLBotDirectory=>Path.Combine(Path.GetDirectoryName(ConfigFile),"OmniPhoneChat-LLBot");
-    private PhoneLLBot qqBridge;
+    private static string NapCatDirectory=>Path.Combine(Path.GetDirectoryName(ConfigFile),"OmniPhoneChat-NapCat");
+    private PhoneNapCat qqBridge;
     private readonly object qqGate=new();
     private long qqMirrorCursor;
     private DateTimeOffset qqMirrorSince;
@@ -1043,8 +1043,6 @@ public sealed class PhoneChat : ModuleBase
     private Task qqCleanup=Task.CompletedTask;
     private readonly HashSet<string> qqMirrored=new();private readonly Queue<string> qqMirroredOrder=new();
     private DateTime qqLastReply;
-    private void RestoreQQSecrets(){try{if(File.Exists(QQSecretsFile))qqAuthToken=Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(QQSecretsFile),null,DataProtectionScope.CurrentUser));}catch{qqStatus="LLBot 授权无法读取，请重新填写";}}
-    private void SaveQQSecrets(){try{Directory.CreateDirectory(Path.GetDirectoryName(QQSecretsFile));File.WriteAllBytes(QQSecretsFile+".tmp",ProtectedData.Protect(Encoding.UTF8.GetBytes(qqAuthToken),null,DataProtectionScope.CurrentUser));File.Move(QQSecretsFile+".tmp",QQSecretsFile,true);}catch{qqStatus="LLBot 授权保存失败";}}
     private static uint[] QQIds(string input)=>Regex.Split(input??"",@"[,，;；\s]+").Select(x=>uint.TryParse(x,out var id)?id:0).Where(id=>id>0).Distinct().Take(32).ToArray();
     private bool QQOnline(){lock(qqGate)return qqBridge?.Online==true;}
     private static string QQLoginError(Exception exception,string token)
@@ -1054,37 +1052,35 @@ public sealed class PhoneChat : ModuleBase
         detail=Regex.Replace(detail,@"https?://\S+","[服务地址]");
         return "QQ 登录失败："+(detail.Length>220?detail[..220]+"…":detail);
     }
-    private void PrepareLLBot()
+    private void PrepareNapCat()
     {
         if(!enabled){qqStatus="请先启用手机app支持模块";return;}
         if(Interlocked.CompareExchange(ref qqLoginRunning,1,0)!=0)return;
         int generation=Volatile.Read(ref qqLoginGeneration);
-        qqStatus="正在准备官方 LLBot…";
-        _=Task.Run(async()=>{try{await PhoneLLBot.Prepare(LLBotDirectory,text=>{if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation)qqStatus=text;},CancellationToken.None);}catch(Exception e){if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation)qqStatus=QQLoginError(e,qqAuthToken);}finally{Interlocked.Exchange(ref qqLoginRunning,0);}});
+        qqStatus="正在准备 QQ 服务…";
+        _=Task.Run(async()=>{try{await PhoneNapCat.Prepare(NapCatDirectory,text=>{if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation)qqStatus=text;},CancellationToken.None);}catch(Exception e){if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation)qqStatus=QQLoginError(e,"");}finally{Interlocked.Exchange(ref qqLoginRunning,0);}});
     }
     private void ConnectQQ(bool scan)
     {
         if(!enabled){qqStatus="请先启用手机app支持模块，再登录 QQ";return;}
-        if(!PhoneLLBot.ValidToken(qqAuthToken)){qqStatus="请先获取并填写 LLBot 授权 Token，再扫码登录机器人 QQ";return;}
-        if(!PhoneLLBot.ValidAccount(settings.QQBotAccount)){qqStatus="机器人 QQ 号格式不正确";return;}
+        if(!PhoneNapCat.ValidAccount(settings.QQBotAccount)){qqStatus="机器人 QQ 号格式不正确";return;}
         if(Interlocked.CompareExchange(ref qqLoginRunning,1,0)!=0){qqStatus="QQ 正在准备登录，请稍候";return;}
-        int generation=Volatile.Read(ref qqLoginGeneration);string token=qqAuthToken,bot=settings.QQBotAccount;
-        qqStatus="正在启动 LLBot…";
-        _=Task.Run(async()=>{PhoneLLBot current=null;try{
+        int generation=Volatile.Read(ref qqLoginGeneration);string token="",bot=settings.QQBotAccount;
+        qqStatus="正在启动 QQ 服务…";
+        _=Task.Run(async()=>{PhoneNapCat current=null;try{
             await qqCleanup;
             if(!enabled||Volatile.Read(ref qqLoginGeneration)!=generation)return;
-            DisconnectQQ("正在启动 LLBot…",false);await qqCleanup;
+            DisconnectQQ("正在启动 QQ 服务…",false);await qqCleanup;
             bool Active()=>enabled&&Volatile.Read(ref qqLoginGeneration)==generation&&ReferenceEquals(qqBridge,current);
-            current=new PhoneLLBot(LLBotDirectory,text=>{if(Active())qqStatus=text;},bytes=>{
+            current=new PhoneNapCat(NapCatDirectory,text=>{if(Active())qqStatus=text;},(url,bytes)=>{
                 if(!Active())return;Directory.CreateDirectory(Path.GetDirectoryName(QrFile));File.WriteAllBytes(QrFile,bytes);
-                Action show=()=>{if(Active())try{OpenUrl(QrFile);}catch{qqStatus="登录码已生成，请点击查看登录码";}};
-                if(framework!=null)_=framework.RunOnTick(show);else show();
+                qqLoginQr=PhoneQr.EncodeText(url,0);
             },(group,user,name,text)=>{if(Active())ReceiveQQ(group,user,name,text);},id=>{
                 if(Active()&&settings.QQBotAccount!=id&&framework!=null)_=framework.RunOnTick(()=>{if(Active()){settings.QQBotAccount=id;Save();}});
             });
             lock(qqGate){if(!enabled||Volatile.Read(ref qqLoginGeneration)!=generation){current.Dispose();return;}qqBridge=current;}
             // Manual login explicitly prepares the pinned runtime; auto-restore never downloads or updates code.
-            await current.Start(token,bot,scan,scan);
+            await current.Start(bot,scan,scan);
         }catch(OperationCanceledException){if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation)DisconnectQQ("QQ 登录已取消",false);}
         catch(Exception e){if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation){var message=QQLoginError(e,token);DisconnectQQ(message,false);}}
         finally{Interlocked.Exchange(ref qqLoginRunning,0);}});
@@ -1092,7 +1088,7 @@ public sealed class PhoneChat : ModuleBase
     private void DisconnectQQ(string finalStatus="QQ 已断开",bool cancelLogin=true)
     {
         if(cancelLogin)Interlocked.Increment(ref qqLoginGeneration);
-        PhoneLLBot old;lock(qqGate){old=qqBridge;qqBridge=null;qqStatus=finalStatus;while(qqMirrorQueue.TryDequeue(out _)){}}
+        PhoneNapCat old;lock(qqGate){old=qqBridge;qqBridge=null;qqLoginQr=null;qqStatus=finalStatus;while(qqMirrorQueue.TryDequeue(out _)){}}
         if(old!=null)qqCleanup=Task.Run(old.Dispose);
         try{if(File.Exists(QrFile))File.Delete(QrFile);}catch{}
     }
@@ -1100,7 +1096,7 @@ public sealed class PhoneChat : ModuleBase
     {if(!uint.TryParse(target,out var id)||id==0)return new PushResult{status="填写接收 QQ 号或群号"};return await SendQQMessage(id,settings.QQNotifyGroup,text,settings.QQMention,token);}
     private async Task<PushResult> SendQQMessage(uint id,bool group,string text,string mention,CancellationToken token)
     {
-        PhoneLLBot instance;lock(qqGate)instance=qqBridge;if(instance==null)return new PushResult{status="QQ 未登录"};
+        PhoneNapCat instance;lock(qqGate)instance=qqBridge;if(instance==null)return new PushResult{status="QQ 未登录"};
         uint.TryParse(mention,out var at);
         try{var error=await instance.Send(id,group,text,at,token);return new PushResult{ok=error.Length==0,status=error};}
         catch(OperationCanceledException){throw;}catch{return new PushResult{status="QQ 发送失败"};}
@@ -1130,14 +1126,13 @@ public sealed class PhoneChat : ModuleBase
     {
         ImGui.TextWrapped(qqStatus);
         string bot=settings.QQBotAccount;ImGui.SetNextItemWidth(180);if(ImGui.InputTextWithHint("##机器人QQ","机器人 QQ 号（选填）",ref bot,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQBotAccount=bot;Save();}
-        ImGui.SameLine();if(ImGui.Button("获取 LLBot 授权"))OpenUrl("https://auth.luckylillia.com");
-        string auth=qqAuthToken;ImGui.SetNextItemWidth(-1);if(ImGui.InputTextWithHint("##LLBot授权","LLBot 授权 Token · 在上方官网获取",ref auth,4096,ImGuiInputTextFlags.Password)){qqAuthToken=auth.Trim();SaveQQSecrets();}
         ImGui.TextDisabled("请用作为机器人的 QQ 账号扫描登录码");
         ImGui.BeginDisabled(Volatile.Read(ref qqLoginRunning)!=0);
-        if(ImGui.Button("准备 LLBot"))PrepareLLBot();if(ImGui.IsItemHovered())ImGui.SetTooltip("首次下载官方 Windows CLI 8.3.2（约 91 MB），校验 SHA-256；不启动桌面 QQ");
+        if(ImGui.Button("准备 QQ 服务"))PrepareNapCat();if(ImGui.IsItemHovered())ImGui.SetTooltip("首次下载官方 NapCat Windows Node 包（约 118 MB），校验 SHA-256；无需申请运行授权，QQ 数据单独保存");
         ImGui.SameLine();if(ImGui.Button("机器人 QQ 扫码登录"))ConnectQQ(true);
         ImGui.SameLine();if(ImGui.Button("恢复登录"))ConnectQQ(false);ImGui.EndDisabled();
         if(ImGui.Button("断开 QQ"))DisconnectQQ();ImGui.SameLine();if(ImGui.Button("查看登录码")){if(File.Exists(QrFile))OpenUrl(QrFile);else qqStatus="暂无登录码，请先点击机器人 QQ 扫码登录";}
+        var loginCode=qqLoginQr;if(loginCode!=null&&!QQOnline())DrawQr(loginCode,Math.Min(260,ImGui.GetContentRegionAvail().X));
         bool auto=settings.QQAutoConnect;if(ImGui.Checkbox("随模块恢复 QQ",ref auto)){settings.QQAutoConnect=auto;Save();}
         string target=settings.QQNotifyTarget;ImGui.SetNextItemWidth(210);if(ImGui.InputTextWithHint("##QQ接收","提醒接收 QQ 号 / 群号",ref target,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQNotifyTarget=target;Save();}ImGui.SameLine();bool group=settings.QQNotifyGroup;if(ImGui.Checkbox("发到群",ref group)){settings.QQNotifyGroup=group;Save();}
         string at=settings.QQMention;ImGui.SetNextItemWidth(210);if(ImGui.InputTextWithHint("##QQ提醒对象","群提醒 @QQ（选填）",ref at,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQMention=at;Save();}
@@ -1148,7 +1143,7 @@ public sealed class PhoneChat : ModuleBase
         bool reply=settings.QQReply;if(ImGui.Checkbox("QQ 回复游戏（以 # 开头）",ref reply)){settings.QQReply=reply;Save();}
         string users=settings.QQReplyUsers;ImGui.SetNextItemWidth(-1);if(ImGui.InputTextWithHint("##QQ回复白名单","允许回复的 QQ 号，多个用逗号分隔",ref users,500)){settings.QQReplyUsers=users;Save();}
         string[] channels=Commands.Keys.ToArray();int selectedChannel=Math.Max(0,Array.IndexOf(channels,settings.QQReplyChannel));ImGui.SetNextItemWidth(160);if(ImGui.Combo("回复频道",ref selectedChannel,string.Join('\0',channels)+"\0")){settings.QQReplyChannel=channels[selectedChannel];Save();}
-        if(ImGui.TreeNode("协议与许可证")){ImGui.TextWrapped("LLBot 8.3.2 · 本机后台纯协议模式，需用户自行获取官方授权。模块仅通过本地接口调用，不内嵌或修改 LLBot。LLBot 项目 GPL-2.0；运行包内其他组件以其自身许可为准。");if(ImGui.Button("查看 LLBot 源码与许可"))OpenUrl("https://github.com/LLOneBot/LuckyLilliaBot");ImGui.TreePop();}
+        if(ImGui.TreeNode("协议与许可证")){ImGui.TextWrapped("NapCat 4.18.38 · 本机后台服务，包含 QQ 运行组件。模块独立实现本地 API 适配，不内嵌或修改 NapCat 源码，不重新分发其运行包。上游采用特殊分发许可及各组件自身许可。");if(ImGui.Button("查看 NapCat 来源与许可"))OpenUrl("https://github.com/NapNeko/NapCatQQ");ImGui.TreePop();}
     }
     private static void OpenUrl(string url){try{System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url){UseShellExecute=true});}catch{}}
     private void DrawPushSettings()
@@ -1308,15 +1303,15 @@ private static string ReadMember(Type type, object instance, string property)
 }
 
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Independent local API client. LLBot is downloaded from its official release, not linked into the game.
-internal sealed class PhoneLLBot : IDisposable
+// Independent local API client. NapCat is downloaded from its official release, not linked into the game.
+internal sealed class PhoneNapCat : IDisposable
 {
-    public const string Version="8.3.2";
-    public const string PackageUrl="https://github.com/LLOneBot/LuckyLilliaBot/releases/download/v8.3.2/LuckyLillia-CLI-win-x64.zip";
-    public const string PackageHash="69cf61a40b406009314dfd1eb1d4da4662c6327204fe13d193d9b6889f4ecfe2";
+    public const string Version="4.18.38";
+    public const string PackageUrl="https://github.com/NapNeko/NapCatQQ/releases/download/v4.18.38/NapCat.Shell.Windows.Node.zip";
+    public const string PackageHash="b88007a373a30deefb387e7cf17911752ff900bce22c534b3da6b644f5c6d0ae";
     private readonly string root;
     private readonly Action<string> status;
-    private readonly Action<byte[]> qr;
+    private readonly Action<string,byte[]> qr;
     private readonly Action<uint,uint,string,string> received;
     private readonly Action<string> account;
     private readonly CancellationTokenSource stop=new();
@@ -1324,21 +1319,23 @@ internal sealed class PhoneLLBot : IDisposable
     private System.Diagnostics.Process process;
     private FileStream lease;
     private Task worker;
-    private string webToken="",apiToken="",lastQr="",bot="";
+    private string webToken="",webCredential="",apiToken="",lastQr="",bot="";
+    private DateTime credentialExpires;
+    private readonly SemaphoreSlim credentialGate=new(1);
+    private string work=>Path.Combine(root,"work");
     private int webPort,apiPort,disposed;
     private readonly object processGate=new();
-    private bool forceScan;
+
     private DateTime qrRefresh=DateTime.MinValue;
     public bool Online {get;private set;}
     public string WebAddress=>webPort>0?"http://127.0.0.1:"+webPort:"";
-    public PhoneLLBot(string directory,Action<string> status,Action<byte[]> qr,Action<uint,uint,string,string> received,Action<string> account)
+    public PhoneNapCat(string directory,Action<string> status,Action<string,byte[]> qr,Action<uint,uint,string,string> received,Action<string> account)
     {root=Path.GetFullPath(directory);this.status=status;this.qr=qr;this.received=received;this.account=account;}
-    public static bool ValidToken(string value)=>!string.IsNullOrWhiteSpace(value)&&value.Length<=4096&&!value.Any(char.IsControl);
     public static bool ValidAccount(string value)=>string.IsNullOrEmpty(value)||Regex.IsMatch(value,"^[1-9][0-9]{4,11}$");
     private static string Hash(byte[] bytes)=>Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     private static async Task<string> FileHash(string path,CancellationToken ct){await using var stream=File.OpenRead(path);return Convert.ToHexString(await SHA256.HashDataAsync(stream,ct)).ToLowerInvariant();}
     private string runtime=>Path.Combine(root,"runtime-"+Version);
-    private string home=>Path.Combine(runtime,"bin","llbot");
+    private string home=>runtime;
     private static readonly SemaphoreSlim installGate=new(1);
     public static async Task Prepare(string directory,Action<string> progress,CancellationToken ct)
     {
@@ -1346,36 +1343,36 @@ internal sealed class PhoneLLBot : IDisposable
         try{
             var root=Path.GetFullPath(directory);Directory.CreateDirectory(root);
             string dest=Path.Combine(root,"runtime-"+Version),index=Path.Combine(dest,"yanjiu-integrity.json");
-            if(File.Exists(index)){await Verify(dest,ct);progress("LLBot "+Version+" 已准备好");return;}
+            if(File.Exists(index)){await Verify(dest,ct);progress("NapCat "+Version+" 已准备好");return;}
             // Never silently overwrite an existing installation that failed verification.
-            if(Directory.Exists(dest))throw new IOException("LLBot 目录不完整，请关闭模块后移走 runtime-"+Version+" 目录再准备");
+            if(Directory.Exists(dest))throw new IOException("NapCat 目录不完整，请关闭模块后移走 runtime-"+Version+" 目录再准备");
             string zip=Path.Combine(root,"download-"+Version+".zip"),stage=Path.Combine(root,"stage-"+Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(stage);
             try{
                 if(!File.Exists(zip)||await FileHash(zip,ct)!=PackageHash){
-                    progress("正在下载官方 LLBot（约 91 MB）…");
+                    progress("正在下载官方 NapCat（约 118 MB）…");
                     using var client=new HttpClient{Timeout=TimeSpan.FromMinutes(10)};
                     using var response=await client.GetAsync(PackageUrl,HttpCompletionOption.ResponseHeadersRead,ct);response.EnsureSuccessStatusCode();
                     await using var source=await response.Content.ReadAsStreamAsync(ct);await using var output=new FileStream(zip,FileMode.Create,FileAccess.Write,FileShare.None,65536,true);
                     byte[] bytes=new byte[65536];long count=0;int last=-1,n;
-                    while((n=await source.ReadAsync(bytes,ct))>0){count+=n;if(count>120*1024*1024)throw new IOException("LLBot 包超出大小限制");await output.WriteAsync(bytes.AsMemory(0,n),ct);int mb=(int)(count/1048576);if(mb!=last){last=mb;progress("下载 LLBot："+mb+" / 91 MB");}}
+                    while((n=await source.ReadAsync(bytes,ct))>0){count+=n;if(count>150*1024*1024)throw new IOException("NapCat 包超出大小限制");await output.WriteAsync(bytes.AsMemory(0,n),ct);int mb=(int)(count/1048576);if(mb!=last){last=mb;progress("下载 NapCat："+mb+" / 118 MB");}}
                 }
-                if(await FileHash(zip,ct)!=PackageHash)throw new IOException("LLBot 官方包 SHA-256 不符，未执行任何程序");
-                progress("正在校验并解压 LLBot…");
+                if(await FileHash(zip,ct)!=PackageHash)throw new IOException("NapCat 官方包 SHA-256 不符，未执行任何程序");
+                progress("正在校验并解压 NapCat…");
                 var hashes=new Dictionary<string,string>();long total=0;
                 using(var archive=ZipFile.OpenRead(zip))foreach(var entry in archive.Entries){
                     ct.ThrowIfCancellationRequested();string name=entry.FullName.Replace('\\','/');
-                    if(!SafeArchivePath(name))throw new IOException("LLBot 压缩包路径无效");
+                    if(!SafeArchivePath(name))throw new IOException("NapCat 压缩包路径无效");
                     string file=Path.GetFullPath(Path.Combine(stage,name));
-                    if(!file.StartsWith(stage+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new IOException("LLBot 压缩包路径越界");
+                    if(!file.StartsWith(stage+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new IOException("NapCat 压缩包路径越界");
                     if(name.EndsWith('/')){Directory.CreateDirectory(file);continue;}
-                    total+=entry.Length;if(total>600*1024*1024)throw new IOException("LLBot 解压大小超限");
+                    total+=entry.Length;if(total>600*1024*1024)throw new IOException("NapCat 解压大小超限");
                     Directory.CreateDirectory(Path.GetDirectoryName(file));entry.ExtractToFile(file);
-                    if(name.StartsWith("bin/llbot/",StringComparison.Ordinal)&&name!="bin/llbot/default_config.json")hashes[name]=await FileHash(file,ct);
+                    hashes[name]=await FileHash(file,ct);
                 }
-                if(!hashes.ContainsKey("bin/llbot/node.exe")||!hashes.ContainsKey("bin/llbot/llbot.js")||!hashes.ContainsKey("bin/llbot/sign-proxy.win-x64.node"))throw new IOException("LLBot 包缺少运行文件");
+                if(!hashes.ContainsKey("node.exe")||!hashes.ContainsKey("index.js")||!hashes.ContainsKey("wrapper.node"))throw new IOException("NapCat 包缺少运行文件");
                 await File.WriteAllTextAsync(Path.Combine(stage,"yanjiu-integrity.json"),JsonSerializer.Serialize(hashes),ct);
-                Directory.Move(stage,dest);progress("LLBot "+Version+" 已准备好");
+                Directory.Move(stage,dest);progress("NapCat "+Version+" 已准备好");
             }finally{if(Directory.Exists(stage))Directory.Delete(stage,true);}
         }finally{installGate.Release();}
     }
@@ -1383,60 +1380,73 @@ internal sealed class PhoneLLBot : IDisposable
     private static async Task Verify(string directory,CancellationToken ct)
     {
         var files=JsonSerializer.Deserialize<Dictionary<string,string>>(await File.ReadAllTextAsync(Path.Combine(directory,"yanjiu-integrity.json"),ct));
-        if(files==null||!files.ContainsKey("bin/llbot/node.exe")||!files.ContainsKey("bin/llbot/llbot.js")||!files.ContainsKey("bin/llbot/sign-proxy.win-x64.node"))throw new IOException("LLBot 完整性清单缺失");
-        foreach(var pair in files){ct.ThrowIfCancellationRequested();if(!SafeArchivePath(pair.Key))throw new IOException("LLBot 清单路径无效");var path=Path.GetFullPath(Path.Combine(directory,pair.Key));if(!path.StartsWith(directory+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)||!File.Exists(path)||await FileHash(path,ct)!=pair.Value)throw new IOException("LLBot 文件已改变，停止启动");}
+        if(files==null||!files.ContainsKey("node.exe")||!files.ContainsKey("index.js")||!files.ContainsKey("wrapper.node"))throw new IOException("NapCat 完整性清单缺失");
+        foreach(var pair in files){ct.ThrowIfCancellationRequested();if(!SafeArchivePath(pair.Key))throw new IOException("NapCat 清单路径无效");var path=Path.GetFullPath(Path.Combine(directory,pair.Key));if(!path.StartsWith(directory+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)||!File.Exists(path)||await FileHash(path,ct)!=pair.Value)throw new IOException("NapCat 文件已改变，停止启动");}
     }
     private static int FreePort(){var listener=new TcpListener(IPAddress.Loopback,0);listener.Start();try{return ((IPEndPoint)listener.LocalEndpoint).Port;}finally{listener.Stop();}}
     private static string Secret()=>Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
     private string Configuration()=>JsonSerializer.Serialize(new{
-        webui=new{enable=true,host="127.0.0.1",port=webPort},
-        milky=new{enable=false},satori=new{enable=false},
-        ob11=new{enable=true,connect=new[]{new{type="http",enable=true,host="127.0.0.1",port=apiPort,token=apiToken,reportSelfMessage=false,reportOfflineMessage=false,messageFormat="array",debug=false}}},
-        log=false,logLevel="warn",onlyLocalhost=true,msgCacheExpire=120,autoDeleteFile=true,autoDeleteFileSecond=120
+        network=new{httpSseServers=new[]{new{name="xiaoyanjiu",enable=true,host="127.0.0.1",port=apiPort,token=apiToken,reportSelfMessage=false,messagePostFormat="array",enableCors=false,enableWebsocket=false,debug=false}}},
+        enableLocalFile2Url=false,parseMultMsg=false,musicSignUrl=""
     });
-    public async Task Start(string token,string bot,bool scan,bool allowDownload)
+    public static string Bootstrap(string home,string profile)
     {
-        if(!ValidToken(token))throw new ArgumentException("请先获取并填写 LLBot 授权 Token");
+        // Independent host adapter: bind the native data-directory getter only in this child process.
+        // No upstream files, Windows QQ settings, or registry entries are modified.
+        return "const path=require('path');const fs=require('fs');const home="+JsonSerializer.Serialize(home)+";const profile="+JsonSerializer.Serialize(profile)+";fs.mkdirSync(profile,{recursive:true});"+
+            "const load=process.dlopen;process.dlopen=function(m,p,...flags){const r=load.call(process,m,p,...flags);if(path.resolve(String(p)).toLowerCase()===path.join(home,'wrapper.node').toLowerCase()){const original=m.exports;const util=original.NodeQQNTWrapperUtil;const exposed=Object.create(util);Object.defineProperty(exposed,'getNTUserDataInfoConfig',{value:()=>profile});const wrapped=Object.create(original);Object.defineProperty(wrapped,'NodeQQNTWrapperUtil',{value:exposed});m.exports=wrapped;}return r;};";
+    }
+    public async Task Start(string bot,bool scan,bool allowDownload)
+    {
         if(!ValidAccount(bot))throw new ArgumentException("机器人 QQ 号格式不正确");
-        if(allowDownload)await Prepare(root,status,stop.Token);else{if(!File.Exists(Path.Combine(runtime,"yanjiu-integrity.json")))throw new IOException("首次使用请点击准备 LLBot，再扫码登录机器人 QQ");await Verify(runtime,stop.Token);}
+        if(allowDownload)await Prepare(root,status,stop.Token);else{if(!File.Exists(Path.Combine(runtime,"yanjiu-integrity.json")))throw new IOException("首次使用请点击准备 QQ 服务，再扫码登录机器人 QQ");await Verify(runtime,stop.Token);}
         Directory.CreateDirectory(root);
-        try{lease=new FileStream(Path.Combine(root,"running.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);}catch(IOException){throw new IOException("另一个游戏或模块正在使用此 LLBot，请先断开它");}
+        try{lease=new FileStream(Path.Combine(root,"running.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);}catch(IOException){throw new IOException("另一个游戏或模块正在使用此 QQ 服务，请先断开它");}
         webPort=FreePort();do{apiPort=FreePort();}while(apiPort==webPort);
-        webToken=Secret();apiToken=Secret();this.bot=bot;forceScan=scan;
-        var data=Path.Combine(home,"data");Directory.CreateDirectory(data);
-        File.WriteAllText(Path.Combine(data,"webui_token.txt"),webToken);
-        File.WriteAllText(Path.Combine(home,"default_config.json"),Configuration());
-        foreach(var config in Directory.GetFiles(data,"config_*.json",SearchOption.TopDirectoryOnly))File.WriteAllText(config,Configuration());
+        webToken=Secret();apiToken=Secret();this.bot=bot;
+        var config=Path.Combine(work,"config");Directory.CreateDirectory(config);
+        File.WriteAllText(Path.Combine(config,"webui.json"),JsonSerializer.Serialize(new{host="127.0.0.1",port=webPort,token=webToken,disableWebUI=false,autoLoginAccount=scan?"":bot,loginRate=30,enable2FA=false,accessControlMode="whitelist",ipWhitelist=new[]{"127.0.0.1","::1"},enableXForwardedFor=false}));
+        File.WriteAllText(Path.Combine(config,"onebot11.json"),Configuration());
+        foreach(var file in Directory.GetFiles(config,"onebot11_*.json",SearchOption.TopDirectoryOnly))File.WriteAllText(file,Configuration());
+        var profile=Path.Combine(root,"qq-data");Directory.CreateDirectory(profile);
+        var launcher=Path.Combine(root,"bootstrap.cjs");File.WriteAllText(launcher,Bootstrap(home,profile));
         var info=new System.Diagnostics.ProcessStartInfo(Path.Combine(home,"node.exe")){WorkingDirectory=home,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
-        info.ArgumentList.Add(Path.Combine(home,"llbot.js"));if(bot.Length>0&&!scan){info.ArgumentList.Add("--qq");info.ArgumentList.Add(bot);}
-        info.Environment["AUTH_TOKEN"]=token;info.Environment["TEMP"]=Path.Combine(root,"temp");info.Environment["TMP"]=info.Environment["TEMP"];Directory.CreateDirectory(info.Environment["TEMP"]);
-        // The child may print sensitive protocol data. Do not relay its stdout/stderr into game logs.
-        StartChild(info);
-        status("LLBot 启动中…");
-        var until=DateTime.UtcNow.AddSeconds(45);Exception last=null;
-        while(DateTime.UtcNow<until){stop.Token.ThrowIfCancellationRequested();if(process.HasExited)throw new IOException("LLBot 已退出，请检查官方运行依赖");try{await Web("/api/login-info",null,stop.Token);worker=Task.Run(Monitor);return;}catch(Exception e) when(e is not OperationCanceledException){last=e;await Task.Delay(500,stop.Token);}}
-        throw new IOException("LLBot 本地接口未就绪，请检查端口占用",last);
+        info.ArgumentList.Add(Path.Combine(home,"index.js"));info.Environment["NODE_OPTIONS"]="--require \""+launcher.Replace('\\','/')+"\"";if(bot.Length>0&&!scan){info.ArgumentList.Add("--qq");info.ArgumentList.Add(bot);}
+        info.Environment["NAPCAT_WORKDIR"]=work;info.Environment["NAPCAT_WEBUI_JWT_SECRET_KEY"]=Secret();
+        foreach(string name in new[]{"AUTH_TOKEN","NAPCAT_QUICK_ACCOUNT","NAPCAT_QUICK_PASSWORD","NAPCAT_QUICK_PASSWORD_MD5","NAPCAT_WORKER_PROCESS","NAPCAT_DISABLE_MULTI_PROCESS","NAPCAT_DISABLE_MULTIPROCESSING"})info.Environment.Remove(name);
+        info.Environment["TEMP"]=Path.Combine(root,"temp");info.Environment["TMP"]=info.Environment["TEMP"];Directory.CreateDirectory(info.Environment["TEMP"]);
+        // Protocol stdout/stderr may include QR secrets; do not forward them to game logs.
+        StartChild(info);status("QQ 服务启动中…");
+        var until=DateTime.UtcNow.AddSeconds(60);Exception last=null;
+        while(DateTime.UtcNow<until){stop.Token.ThrowIfCancellationRequested();if(process.HasExited)throw new IOException("QQ 服务已退出，请检查 Windows 运行依赖");try{await Web("/api/QQLogin/CheckLoginStatus",new{},stop.Token);worker=Task.Run(Monitor);return;}catch(Exception e) when(!stop.IsCancellationRequested){last=e;await Task.Delay(500,stop.Token);}}
+        throw new IOException("QQ 服务本地接口未就绪，请检查运行依赖及端口占用",last);
     }
     private void StartChild(System.Diagnostics.ProcessStartInfo info)
     {
         lock(processGate){stop.Token.ThrowIfCancellationRequested();process?.Dispose();process=new System.Diagnostics.Process{StartInfo=info};process.OutputDataReceived+=(_,_)=>{};process.ErrorDataReceived+=(_,_)=>{};
-            if(!process.Start())throw new IOException("LLBot 启动失败");process.BeginOutputReadLine();process.BeginErrorReadLine();}
+            if(!process.Start())throw new IOException("NapCat 启动失败");process.BeginOutputReadLine();process.BeginErrorReadLine();}
     }
     private async Task<JsonElement> Request(int port,string path,string token,bool web,object body,CancellationToken ct)
     {
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct,stop.Token);timeout.CancelAfter(TimeSpan.FromSeconds(8));
         using var request=new HttpRequestMessage(body==null?HttpMethod.Get:HttpMethod.Post,"http://127.0.0.1:"+port+path);
-        if(web)request.Headers.Add("X-Webui-Token",Hash(Encoding.UTF8.GetBytes(token)));else request.Headers.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",token);
+        if(token.Length>0)request.Headers.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",token);
         if(body!=null)request.Content=new StringContent(JsonSerializer.Serialize(body),Encoding.UTF8,"application/json");
         using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token);response.EnsureSuccessStatusCode();
         await using var stream=await response.Content.ReadAsStreamAsync(timeout.Token);using var output=new MemoryStream();byte[] buffer=new byte[8192];int n;
-        while((n=await stream.ReadAsync(buffer,timeout.Token))>0){if(output.Length+n>2*1024*1024)throw new IOException("LLBot 响应过大");output.Write(buffer,0,n);}
+        while((n=await stream.ReadAsync(buffer,timeout.Token))>0){if(output.Length+n>2*1024*1024)throw new IOException("NapCat 响应过大");output.Write(buffer,0,n);}
         using var json=JsonDocument.Parse(output.ToArray());var value=json.RootElement;
-        if(web){if(!value.TryGetProperty("success",out var success)||success.ValueKind!=JsonValueKind.True)throw new IOException("LLBot 登录接口拒绝请求");}
-        else if(!value.TryGetProperty("status",out var state)||state.GetString()!="ok"||!value.TryGetProperty("retcode",out var code)||code.GetInt32()!=0)throw new IOException("LLBot 拒绝消息请求");
+        if(web){if(!value.TryGetProperty("code",out var success)||success.GetInt32()!=0){if(Text(value,"message").Contains("Unauthorized",StringComparison.OrdinalIgnoreCase)||Text(value,"message").Contains("Authorization",StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException("本地登录凭证过期");throw new IOException("NapCat 登录接口暂未就绪");}}
+        else if(!value.TryGetProperty("status",out var state)||state.GetString()!="ok"||!value.TryGetProperty("retcode",out var code)||code.GetInt32()!=0)throw new IOException("NapCat 拒绝消息请求");
         return value.TryGetProperty("data",out var result)?result.Clone():default;
     }
-    private Task<JsonElement> Web(string path,object body,CancellationToken ct)=>Request(webPort,path,webToken,true,body,ct);
+    private async Task<JsonElement> Web(string path,object body,CancellationToken ct)
+    {
+        for(int attempt=0;attempt<2;attempt++){
+            await credentialGate.WaitAsync(ct);try{if(webCredential.Length==0||DateTime.UtcNow>=credentialExpires){var data=await Request(webPort,"/api/auth/login","",true,new{hash=Hash(Encoding.UTF8.GetBytes(webToken+".napcat"))},ct);webCredential=Text(data,"Credential");if(webCredential.Length==0)throw new IOException("QQ 本地接口登录失败");credentialExpires=DateTime.UtcNow.AddMinutes(50);}}finally{credentialGate.Release();}
+            try{return await Request(webPort,path,webCredential,true,body??new{},ct);}catch(UnauthorizedAccessException)when(attempt==0){webCredential="";}
+        }throw new IOException("QQ 本地接口登录失败");
+    }
     private Task<JsonElement> Api(string path,object body,CancellationToken ct)=>Request(apiPort,path,apiToken,false,body,ct);
     private static string Text(JsonElement value,string key)=>value.ValueKind==JsonValueKind.Object&&value.TryGetProperty(key,out var text)?text.ToString():"";
     private async Task Monitor()
@@ -1444,33 +1454,45 @@ internal sealed class PhoneLLBot : IDisposable
         Task events=null;int failures=0,restarts=0;
         try{while(!stop.IsCancellationRequested){
             try{
-                if(process.HasExited){Online=false;if(++restarts>3){status("LLBot 多次退出，已停止重试，请检查授权或运行依赖后恢复登录");return;}status("LLBot 已退出，正在重新启动…");await Task.Delay(TimeSpan.FromSeconds(5*restarts),stop.Token);StartChild(process.StartInfo);continue;}
-                var info=await Web("/api/login-info",null,stop.Token);
-                bool online=info.TryGetProperty("online",out var on)&&on.ValueKind==JsonValueKind.True;
-                if(forceScan&&online){await Web("/api/logout",new{},stop.Token);forceScan=false;online=false;}
+                if(process.HasExited){Online=false;if(++restarts>3){status("QQ 服务多次退出，已停止重试，请检查运行依赖后恢复登录");return;}status("QQ 服务已退出，正在重新启动…");await Task.Delay(TimeSpan.FromSeconds(5*restarts),stop.Token);var startInfo=process.StartInfo;if(bot.Length>0&&!startInfo.ArgumentList.Contains("--qq")){startInfo.ArgumentList.Add("--qq");startInfo.ArgumentList.Add(bot);}webCredential="";StartChild(startInfo);continue;}
+                var info=await Web("/api/QQLogin/CheckLoginStatus",new{},stop.Token);
+                bool online=info.TryGetProperty("isLogin",out var on)&&on.ValueKind==JsonValueKind.True;
                 if(online){
-                    var id=Text(info,"uin");if(bot.Length>0&&bot!=id){await Web("/api/logout",new{},stop.Token);Online=false;status("扫描的 QQ 与机器人 QQ 号不一致，请重新扫码");}
-                    else{
-                        // QQ login and the OneBot adapter initialize separately. Check both before allowing sends.
-                        var ready=await Api("/get_status",new{},stop.Token);Online=ready.TryGetProperty("online",out var yes)&&yes.ValueKind==JsonValueKind.True;
-                        if(Online){bot=id;account(id);status("机器人 QQ 已连接："+id);if(events==null||events.IsCompleted)events=Task.Run(Events);}
-                    }
+                    var ready=await Api("/get_status",new{},stop.Token);var identity=await Api("/get_login_info",new{},stop.Token);var id=Text(identity,"user_id");
+                    if(!ValidAccount(id)||id.Length==0)throw new IOException("QQ 账号信息不完整");
+                    if(bot.Length>0&&bot!=id){Online=false;status("扫描的 QQ 与机器人 QQ 号不一致，已停止服务，请断开后重新扫码");Dispose();return;}
+                    Online=ready.TryGetProperty("online",out var yes)&&yes.ValueKind==JsonValueKind.True;
+                    if(Online){bot=id;account(id);status("机器人 QQ 已连接："+id);if(events==null||events.IsCompleted)events=Task.Run(Events);}
                 }else{
-                    Online=false;var auth=await Web("/api/auth-token/status",null,stop.Token);string validation=Text(auth,"validation");
-                    if(validation=="invalid")status("LLBot 授权无效或已过期，请重新获取 Token");
-                    else if(validation=="error")status("LLBot 授权服务连接失败，后台自动重试中");
-                    else if(Text(auth,"loginError").Length>0)status("LLBot 登录被拒绝，请重新获取授权 Token 或检查账号授权额度");
-                    else if(validation=="valid"&&DateTime.UtcNow>=qrRefresh){
-                        var code=await Web("/api/login-qrcode",null,stop.Token);var png=Text(code,"pngBase64QrcodeData");
-                        if(png!=lastQr&&png.Length>0){qr(DecodeQr(png));lastQr=png;forceScan=false;}
-                        qrRefresh=DateTime.UtcNow.AddSeconds(5);status("请用机器人 QQ 扫描登录码并确认登录");
-                    }else if(validation!="valid")status("LLBot 正在校验授权…");
+                    Online=false;
+                    if(info.TryGetProperty("qrLoginAccepted",out var accepted)&&accepted.ValueKind==JsonValueKind.True)status("扫码已确认，QQ 正在初始化…");
+                    else if(info.TryGetProperty("isOffline",out var offline)&&offline.ValueKind==JsonValueKind.True)status("机器人 QQ 暂时离线，自动重连中…");
+                    else{
+                        string url=Text(info,"qrcodeurl");
+                        if(url.Length>0&&url!=lastQr){qr(url,QrPng(url));lastQr=url;qrRefresh=DateTime.UtcNow.AddSeconds(120);}
+                        else if(url.Length>0&&DateTime.UtcNow>=qrRefresh){await Web("/api/QQLogin/RefreshQRcode",new{},stop.Token);qrRefresh=DateTime.UtcNow.AddSeconds(120);}
+                        status(url.Length>0?"请用机器人 QQ 扫描登录码并确认登录":"QQ 正在生成登录码…");
+                    }
                 }
                 failures=0;
             }catch(OperationCanceledException)when(stop.IsCancellationRequested){break;}
-            catch{Online=false;if(++failures>=3)status("LLBot 暂时断开，自动重连中…");}
+            catch{Online=false;if(++failures>=3)status("QQ 服务暂时断开，自动重连中…");}
             await Task.Delay(2000,stop.Token);
         }}catch(OperationCanceledException){}
+    }
+    public static bool ValidQrUrl(string value)=>value.Length<=4096&&Uri.TryCreate(value,UriKind.Absolute,out var uri)&&uri.Scheme=="https"&&uri.Port==443&&uri.UserInfo.Length==0&&uri.Fragment.Length==0&&(uri.Host=="qrcode.qq.com"||uri.Host=="txz.qq.com");
+    public static byte[] QrPng(string url)
+    {
+        if(!ValidQrUrl(url))throw new IOException("QQ 登录码地址无效");var matrix=PhoneQr.EncodeText(url,0);int size=matrix.Size*6;
+        using var raw=new MemoryStream();for(int y=0;y<size;y++){raw.WriteByte(0);for(int x=0;x<size;x++)raw.WriteByte(matrix.GetModule(x/6,y/6)?(byte)0:(byte)255);}
+        using var compressed=new MemoryStream();using(var zlib=new ZLibStream(compressed,CompressionLevel.Optimal,true)){raw.Position=0;raw.CopyTo(zlib);}
+        using var png=new MemoryStream();png.Write(new byte[]{137,80,78,71,13,10,26,10});var header=new byte[13];System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(0,4),size);System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(4,4),size);header[8]=8;header[9]=0;
+        PngChunk(png,"IHDR",header);PngChunk(png,"IDAT",compressed.ToArray());PngChunk(png,"IEND",Array.Empty<byte>());return png.ToArray();
+    }
+    private static void PngChunk(Stream output,string name,byte[] data)
+    {
+        var number=new byte[4];System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(number,data.Length);output.Write(number);var type=Encoding.ASCII.GetBytes(name);output.Write(type);output.Write(data);
+        uint crc=0xffffffff;foreach(byte b in type.Concat(data)){crc^=b;for(int i=0;i<8;i++)crc=(crc&1)!=0?(crc>>1)^0xedb88320:crc>>1;}System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(number,crc^0xffffffff);output.Write(number);
     }
     public static byte[] DecodeQr(string png)
     {
@@ -1497,7 +1519,7 @@ internal sealed class PhoneLLBot : IDisposable
             using var request=new HttpRequestMessage(HttpMethod.Get,"http://127.0.0.1:"+apiPort+"/_events");request.Headers.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",apiToken);
             using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token);response.EnsureSuccessStatusCode();timeout.CancelAfter(Timeout.InfiniteTimeSpan);
             using var stream=await response.Content.ReadAsStreamAsync(stop.Token);using var reader=new StreamReader(stream);string accumulated="";
-            while(!stop.IsCancellationRequested){using var idle=CancellationTokenSource.CreateLinkedTokenSource(stop.Token);idle.CancelAfter(TimeSpan.FromSeconds(20));var line=await reader.ReadLineAsync(idle.Token);if(line==null)break;if(line.Length>262144)throw new IOException("事件过大");
+            while(!stop.IsCancellationRequested){var line=await reader.ReadLineAsync(stop.Token);if(line==null)break;if(line.Length>262144)throw new IOException("事件过大");
                 if(line.Length==0){if(accumulated.Length>0){try{var message=ParseEvent(accumulated);if(message.HasValue&&Online){var m=message.Value;received(m.group,m.user,m.name,m.text);}}catch(JsonException){}accumulated="";}}
                 else if(line.StartsWith("data:")){accumulated+=line[5..].TrimStart();if(accumulated.Length>262144)throw new IOException("事件过大");}
             }
@@ -1508,14 +1530,14 @@ internal sealed class PhoneLLBot : IDisposable
         if(!Online)return "机器人 QQ 未连接";if(id==0||text.Length==0||text.Length>12000)return "QQ 消息参数无效";
         var parts=new List<object>();if(group&&mention>0)parts.Add(new{type="at",data=new{qq=mention.ToString()}});parts.Add(new{type="text",data=new{text}});
         try{await Api(group?"/send_group_msg":"/send_private_msg",group?new{group_id=id,message=parts}:new{user_id=id,message=parts},ct);return "";}
-        catch(OperationCanceledException){throw;}catch{return "LLBot 消息发送失败";}
+        catch(OperationCanceledException){throw;}catch{return "NapCat 消息发送失败";}
     }
     public void Dispose()
     {
         if(Interlocked.Exchange(ref disposed,1)!=0)return;Online=false;stop.Cancel();
         lock(processGate){try{if(process!=null&&!process.HasExited){process.Kill(entireProcessTree:true);process.WaitForExit(5000);}}catch{}process?.Dispose();}
         http.Dispose();
-        if(lease!=null){try{File.Delete(Path.Combine(home,"data","webui_token.txt"));File.Delete(Path.Combine(home,"data","auth_token.txt"));}catch{}finally{lease.Dispose();}}
+        if(lease!=null){try{File.Delete(Path.Combine(work,"config","webui.json"));File.Delete(Path.Combine(work,"config","onebot11.json"));foreach(var file in Directory.GetFiles(Path.Combine(work,"config"),"onebot11_*.json"))File.Delete(file);}catch{}finally{lease.Dispose();}}
     }
 }
 

@@ -1,3 +1,5 @@
+Historical backend for module 0.3.37. Current modules use NapCat and do not load LLBot.
+
 # LLBot local integration
 
 The module implements its own HTTP/SSE client and manages an independent, hidden local process. It does not copy LLBot source code, link LLBot into the game, inject QQ, or redistribute the runtime package. The runtime downloads directly from the official release only after the user explicitly clicks Prepare LLBot or Robot QQ QR Login. Automatic restore does not download or replace executable code.
