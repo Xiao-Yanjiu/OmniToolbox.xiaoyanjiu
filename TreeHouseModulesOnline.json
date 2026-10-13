@@ -16,10 +16,10 @@
       "Name": "游戏内浏览器",
       "Author": "小烟酒",
       "Description": "CEF 游戏内浏览器：沿用原贴图外观，用户点击下载内核并查看实时进度；保留独立 Edge/Chrome 模式，共用网页、宏命令、代理和收藏。",
-      "Version": "1.4.6",
+      "Version": "1.4.7",
       "MinimumOmniVersion": "1.1.6.6",
-      "File": "Modules/Browser/1.4.6/GameWebBrowser.dll",
-      "Sha256": "58dc9967148a549a6eea7d4adb9ea509c2cf48f5bcd7244066bad3e45ed62d5b"
+      "File": "Modules/Browser/1.4.7/GameWebBrowser.dll",
+      "Sha256": "7a1ed6e2629f41ba438d04452e3f3e10bc0f064c50df427d1158486f3ab94f87"
     },
     {
       "InternalName": "ChatToQQ",

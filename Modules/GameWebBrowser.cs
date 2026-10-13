@@ -904,9 +904,9 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
     {
         var pad = ChromePad;
         var px  = win.X + pad;
-        var py  = win.Y + pad + TabRowH + NavRowH;
+        var py  = win.Y + pad + TabRowH + NavRowH + win.InputRowHeight;
         var pw  = MathF.Max(60f, win.W - pad * 2f - FavoritePanelWidth(win));
-        var ph  = MathF.Max(60f, win.H - pad * 2f - TabRowH - NavRowH);
+        var ph  = MathF.Max(60f, win.H - pad * 2f - TabRowH - NavRowH - win.InputRowHeight);
 
         if (MathF.Abs(win.PageX - px) < 0.5f && MathF.Abs(win.PageY - py) < 0.5f &&
             MathF.Abs(win.PageW - pw) < 0.5f && MathF.Abs(win.PageH - ph) < 0.5f) return;
@@ -3284,6 +3284,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 foreach (var t in win.TabsSnapshot())
                 {
                     if (t.Ready || t.Wv2Closed) continue;
+                    if (CefMode && t.Url.Length == 0) continue;
                     Wv2Fail(t, "内置内核启动超时：请检查 WebView2 运行时与代理设置");
                     Wv2CloseTab(t);
                 }
@@ -3435,7 +3436,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         ImGui.PushStyleVar(ImGuiStyleVar.WindowMinSize, new Vector2(48f, 48f));
 
         bool pointerInInputRow = win.InputRowHeight > 0 && IsMouseInRect(
-            new Vector2(win.X + ChromePad, win.Y + ChromePad + TabRowH + NavRowH), new Vector2(win.X + win.W - ChromePad, win.Y + ChromePad + TabRowH + NavRowH + win.InputRowHeight));
+            new Vector2(win.X + ChromePad, win.Y + ChromePad), new Vector2(win.X + win.W - ChromePad, win.Y + ChromePad + win.InputRowHeight));
         if (pointerInInputRow) wf |= ImGuiWindowFlags.NoMouseInputs;
         var open = ImGui.Begin("##gwb_win_" + win.Key, wf);
 
@@ -3572,13 +3573,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                                                      Math.Clamp(skin.HighlightStrength, 0f, 0.30f)));
 
         // ---- 外框：底板 + Omni 边框，网页画面之外那一圈就是它 ----
-        if (win.InputRowHeight > 0)
-        {
-            var rowTop = win.Y + ChromePad + TabRowH + NavRowH;
-            dl.AddRectFilled(mn, new Vector2(mx.X, rowTop), cSurface, rad);
-            dl.AddRectFilled(new Vector2(mn.X, rowTop + win.InputRowHeight), mx, cSurface, rad);
-        }
-        else dl.AddRectFilled(mn, mx, cSurface, rad);
+        dl.AddRectFilled(mn, mx, cSurface, rad);
 
         // 外壳（标签条 + 导航条）落在暗一档的底上，和网页画面区分开
         dl.AddRectFilled(new Vector2(mn.X + bth, mn.Y + bth),
@@ -3602,7 +3597,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         var pageMx = new Vector2(win.PageX + win.PageW, win.PageY + win.PageH);
         if (config.TextureRender)
         {
-            dl.PushClipRect(pageMn + new Vector2(0, win.InputRowHeight), pageMx, true);
+            dl.PushClipRect(pageMn, pageMx, true);
             DrawPageTexture(dl, win, pageMn, pageMx);
             dl.PopClipRect();
         }
@@ -3610,15 +3605,15 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         var consumed = false;
 
         // ================= 第一行：标签条 + 右上角三个窗口按钮 =================
-        var rowY0 = mn.Y + pad;
-        var rowY1 = rowY0 + tabH;
+        var rowY0 = mn.Y + (win.InputRowHeight > 0 ? pad : bth) + win.InputRowHeight;
+        var rowY1 = win.PageY - bth;
 
         var stripX0 = mn.X + pad;
         var stripX1 = mx.X - pad;
 
         var btnH  = MathF.Max(14f, tabH - 7f);
         var btnW  = MathF.Max(24f, btnH * 1.5f);
-        var btnY0 = rowY0 + (tabH - btnH) * 0.5f;
+        var btnY0 = (rowY0 + rowY1 - btnH) * 0.5f;
         var btnY1 = btnY0 + btnH;
 
         var closeX1 = stripX1;
@@ -3661,7 +3656,12 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         var favoritesMn = new Vector2(favoritesMx.X - favoritesWidth, btnY0);
         var proxyMx = new Vector2(favoritesMn.X - 4f, btnY1);
         var proxyMn = new Vector2(proxyMx.X - proxyWidth, btnY0);
-        var tabsX1 = MathF.Max(tabsX0 + 20f, proxyMn.X - 4f);
+        var plusMx = new Vector2(proxyMn.X - 4f, btnY1);
+        var plusMn = new Vector2(plusMx.X - btnW, btnY0);
+        var tabsX1 = MathF.Max(tabsX0 + 20f, plusMn.X - 4f);
+        var clickPlus = ChromeBtn(dl, "##gbnewtab", plusMn, plusMx, btnRad, cHover, cActive, cText, cText, GlyphKind.Plus);
+        consumed |= IsMouseInRect(plusMn, plusMx);
+        if (IsMouseInRect(plusMn, plusMx)) ImGui.SetTooltip("新建标签页");
         var proxyHover = IsMouseInRect(proxyMn, proxyMx);
         var proxyClick = proxyHover && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
         consumed |= proxyHover;
@@ -3735,7 +3735,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             // 标题
             var title = t.Title.Length > 0 ? t.Title : (t.Url.Length > 0 ? t.Url : win.PageName);
             if (title.Length == 0) title = "新标签页";
-            if (!t.Ready) title = "载入中… " + title;
+            if (!t.Ready && t.Url.Length > 0) title = "载入中… " + title;
 
             dl.PushClipRect(new Vector2(tmn.X + 6f, tmn.Y), new Vector2(bodyX - 3f, tmx.Y), true);
             var tsz = ImGui.CalcTextSize(title);
@@ -3777,6 +3777,13 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         {
             if (!win.UseProxy && string.IsNullOrWhiteSpace(config.Proxy)) ShowBrowserDialog("proxy", win);
             else ChangeWindowProxy(win, !win.UseProxy);
+            return;
+        }
+        if (clickPlus)
+        {
+            if (win.TabCount >= 16) { statusMessage = "每个窗口最多打开 16 个标签。"; return; }
+            win.AddTab(new BrowserTab { Win = win, Title = "新标签页" }, true);
+            ShowBrowserDialog("address", win);
             return;
         }
         if (win.FavoritesOpen) consumed |= DrawFavoritePanel(dl, win, navT, mx, cText, cDim, cHover, cBorder);
@@ -4003,7 +4010,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             if (dialogError.Length > 0) height += ImGui.GetStyle().ItemSpacing.Y + ImGui.CalcTextSize(dialogError, false, MathF.Max(120, owner.W - ChromePad * 2 - ImGui.GetStyle().WindowPadding.X * 2)).Y;
             if (MathF.Abs(owner.InputRowHeight - height) > 0.5f) { owner.InputRowHeight = height; ApplyPageRect(owner); }
         }
-        ImGui.SetNextWindowPos(new Vector2(owner.X + ChromePad, owner.Y + ChromePad + TabRowH + NavRowH), ImGuiCond.Always);
+        ImGui.SetNextWindowPos(new Vector2(owner.X + ChromePad, owner.Y + ChromePad), ImGuiCond.Always);
         ImGui.SetNextWindowSize(new Vector2(owner.W - ChromePad * 2, owner.InputRowHeight), ImGuiCond.Always);
         ImGui.PushStyleColor(ImGuiCol.WindowBg, GetSkin().Background with { W = 1 });
         if (dialogRequested) ImGui.SetNextWindowFocus();
@@ -4046,7 +4053,10 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                     else if (TryWebUrl(dialogAddress, out var url))
                     {
                         var tab = window.ActiveTabSafe();
-                        if (tab != null && tab.Ready) Wv2Navigate(tab, url); else OpenTab(window, url, true);
+                        if (CefMode && tab != null && tab.Cef == null)
+                        { tab.Url = url; tab.Title = ""; CefOpenTab(window, tab); }
+                        else if (tab != null && tab.Ready) Wv2Navigate(tab, url);
+                        else OpenTab(window, url, true);
                         done = true;
                     }
                     else dialogError = "请输入有效的 HTTP/HTTPS 网页地址。";
@@ -4073,8 +4083,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         bool consumed = IsMouseInRect(mn, mx);
         float row = MathF.Max(24, ImGui.GetFontSize() + 12);
         dl.PushClipRect(mn, mx, true);
-        dl.AddText(mn + new Vector2(5, 4), text, "收藏夹");
-        float y = mn.Y + row;
+        float y = mn.Y;
         string currentUrl = "";
         bool canFavorite = current != null && TryWebUrl(current.Url, out currentUrl);
         bool alreadyFavorite = canFavorite && config.Favorites.Any(f => BookmarkKey(f.Url) == currentUrl);
@@ -4803,7 +4812,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
     // ---- 贴图绘制：把抓到的一帧画进外壳的「网页画面」区域 ----
     private void DrawPageTexture(ImDrawListPtr dl, BrowserWin win, Vector2 pmn, Vector2 pmx)
     {
-        if (CefMode) { var surface = win.ActiveTabSafe()?.Cef; if (surface != null && surface.Srv != IntPtr.Zero) dl.AddImageRounded(new ImTextureID(surface.Srv), pmn, pmx, Vector2.Zero, Vector2.One, 0xFFFFFFFF, 4); else dl.AddText(pmn + new Vector2(12, 12), ImGui.GetColorU32(ImGuiCol.TextDisabled), win.CapFailReason.Length > 0 ? win.CapFailReason : "CEF 正在加载网页…"); return; }
+        if (CefMode) { var surface = win.ActiveTabSafe()?.Cef; if (surface != null && surface.Srv != IntPtr.Zero) dl.AddImageRounded(new ImTextureID(surface.Srv), pmn, pmx, Vector2.Zero, Vector2.One, 0xFFFFFFFF, 4); else dl.AddText(pmn + new Vector2(12, 12), ImGui.GetColorU32(ImGuiCol.TextDisabled), win.ActiveTabSafe()?.Url.Length == 0 ? "输入网址打开新标签页" : win.CapFailReason.Length > 0 ? win.CapFailReason : "CEF 正在加载网页…"); return; }
         if (config.TextureRender && !win.CapFailed && win.CapSrv != IntPtr.Zero)
         {
             // 圆角跟外壳那圈描边对齐（见 DrawChromeContent 的 rad * 0.45f），
@@ -4952,7 +4961,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         //   （日志里那些 ly=0 的点击就是这么来的）。
         var mouseOwned = wgcMouseOwnerKey == win.Key;
         if (!mouseOwned && (mouse.X < win.PageX || mouse.X > win.PageX + win.PageW ||
-            mouse.Y < win.PageY + win.InputRowHeight || mouse.Y > win.PageY + win.PageH)) return;
+            mouse.Y < win.PageY || mouse.Y > win.PageY + win.PageH)) return;
         if (wgcMouseOwnerKey.Length > 0 && !mouseOwned) return;
 
         if (win.CapInputHwnd == IntPtr.Zero || !IsWindow(win.CapInputHwnd))

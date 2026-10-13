@@ -152,7 +152,7 @@ public sealed unsafe partial class GameWebBrowser
     {
         var tab = win.ActiveTabSafe(); var frame = tab?.Cef;
         if (frame == null) return;
-        var inside = mouse.X >= win.PageX && mouse.Y >= win.PageY + win.InputRowHeight && mouse.X < win.PageX + win.PageW && mouse.Y < win.PageY + win.PageH;
+        var inside = mouse.X >= win.PageX && mouse.Y >= win.PageY && mouse.X < win.PageX + win.PageW && mouse.Y < win.PageY + win.PageH;
         if (inside) ImGui.SetMouseCursor(CefCursor(frame.Cursor));
         var io = ImGui.GetIO();
         var modifiers = CefModifiers();
