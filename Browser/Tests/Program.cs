@@ -145,5 +145,18 @@ var process = (System.Diagnostics.Process)peerType.GetField("process", BindingFl
 peer.Dispose();
 await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
 Check(process.HasExited, "owned helper cleanup");
+if (args.Length > 4)
+{
+    var releaseRoot = Path.Combine(root, "actual-release"); Directory.CreateDirectory(releaseRoot);
+    extract.Invoke(null, new object[] { Path.GetFullPath(args[4]), releaseRoot, false, CancellationToken.None });
+    Check(File.Exists(Path.Combine(releaseRoot, "Yanjiu.BrowserHost.exe")) &&
+        File.Exists(Path.Combine(releaseRoot, "zh-Hans", "System.Windows.Forms.resources.dll")) &&
+        File.Exists(Path.Combine(releaseRoot, "de", "System.Windows.Forms.resources.dll")),
+        "actual release archive preserves satellite assembly directories");
+    using var archive = ZipFile.OpenRead(args[4]);
+    Check(archive.Entries.Where(e => e.Name.Length > 0).All(e =>
+        new FileInfo(Path.Combine(releaseRoot, e.FullName.Replace('/', Path.DirectorySeparatorChar))).Length == e.Length),
+        "actual release archive completely extracted by production installer");
+}
 Console.WriteLine($"{passed} checks passed. No CEF engine downloaded or started.");
 return 0;
