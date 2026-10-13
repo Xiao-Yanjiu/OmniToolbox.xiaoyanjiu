@@ -51,6 +51,8 @@ try
     await Send(new { Kind = "create", Id = id, Url = $"http://127.0.0.1:{port}/", Width = 800, Height = 400 });
     await Wait(() => messages.Any(m => m.Contains("CEF_TEST_READY")), "local webpage and JavaScript title callback");
     await Wait(() => view.ReadInt32(0) > 0, "actual shared BGRA frame");
+    await Wait(() => view.ReadInt32(4) == 800 && view.ReadInt32(8) == 400 && view.ReadByte(67) != 0,
+        "frame reaches requested size and opaque pixels");
     gate.WaitOne();
     try
     {

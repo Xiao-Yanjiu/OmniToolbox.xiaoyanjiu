@@ -83,6 +83,16 @@ public sealed unsafe partial class GameWebBrowser
                 tab.CanBack = m.GetProperty("CanGoBack").GetBoolean(); tab.CanFwd = m.GetProperty("CanGoForward").GetBoolean();
                 tab.Wv2Busy = m.GetProperty("IsLoading").GetBoolean();
             }
+            if (kind == "load-error" && m.GetProperty("Main").GetBoolean())
+            {
+                var code = m.GetProperty("Code").GetString();
+                if (code != "Aborted")
+                {
+                    var detail = m.GetProperty("Error").GetString() ?? "未知错误";
+                    win.CapFailReason = $"CEF 网页加载失败：{detail}（{code}）";
+                    statusMessage = win.CapFailReason;
+                }
+            }
             if (kind == "popup" && TryWebUrl(m.GetProperty("Url").GetString(), out var url)) OpenTab(win, url, true);
         }
         catch (Exception ex) { Wv2Log("CEF 状态异常：" + ex.Message); }
@@ -101,7 +111,13 @@ public sealed unsafe partial class GameWebBrowser
             frame.RequestWidth = width; frame.RequestHeight = height;
             win.Cef?.Send(new { Kind = "resize", Id = frame.Id, Width = width, Height = height });
         }
-        if (!frame.TryRead(out var pixels, out width, out height)) return;
+        if (!frame.TryRead(out var pixels, out width, out height))
+        {
+            if (frame.Srv == IntPtr.Zero && Environment.TickCount64 - win.LaunchStartMs > 12000 && win.CapFailReason.Length == 0)
+                win.CapFailReason = "CEF 没有收到网页画面。请尝试刷新；若只有此网站如此，可在模块设置中改用独立浏览器。";
+            return;
+        }
+        if (win.CapFailReason.StartsWith("CEF 没有收到网页画面", StringComparison.Ordinal)) win.CapFailReason = "";
         var device = GetGameD3D11Device();
         if (device == IntPtr.Zero) return;
         if (frame.Texture == IntPtr.Zero || frame.Width != width || frame.Height != height)
@@ -376,9 +392,9 @@ internal sealed class CefInstaller
     // The base runtime package contains locales/runtime.json only. The RID package includes both binaries and locales.
     private const string NativeUrl = "https://api.nuget.org/v3-flatcontainer/chromiumembeddedframework.runtime.win-x64/154.0.34/chromiumembeddedframework.runtime.win-x64.154.0.34.nupkg";
     private const string NativeSha512 = "MnHgTXjzGD4nuaNByVcPCcOnVVDBJ5c/cA4BDVwdm5eBnChDTpaUp/uYpozffVOkvRBjXwCpfmsI8OSdfLH3ig==";
-    private const string HostUrl = "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/browser-v1.4.2/BrowserHost.zip";
-    private const string HostSha256 = "be8f0e61b31be9d8452bab0fc79f3fb9e9443f184f4e1200663fd80ae1c5f2d4";
-    private const string HostDllSha256 = "dd8afcdbbaec0bfccf34140169fd24d66b9f9d4a37e12552f4efffb3254d971e";
+    private const string HostUrl = "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/browser-v1.4.3/BrowserHost.zip";
+    private const string HostSha256 = "1eac3d4675bfc982c4d883628a15439ad1e5e885673a4dff49658e34003af54a";
+    private const string HostDllSha256 = "77dc7a54fb0250c6a2fed3c8782ebd78eb604faf8d2def594d9360bf98b37919";
     private readonly string root;
     private CancellationTokenSource? cancel;
     public volatile bool Busy;
@@ -450,7 +466,7 @@ internal sealed class CefInstaller
     {
         Status = label; Interlocked.Exchange(ref bytes, 0); Interlocked.Exchange(ref total, 0);
         using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("YanjiuBrowser/1.4.2");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("YanjiuBrowser/1.4.3");
         using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token);
         response.EnsureSuccessStatusCode();
         Interlocked.Exchange(ref total, response.Content.Headers.ContentLength ?? 0);

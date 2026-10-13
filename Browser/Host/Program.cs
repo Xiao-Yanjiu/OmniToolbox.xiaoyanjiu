@@ -37,6 +37,9 @@ internal static class Program
             // When the game already runs elevated, Chromium's de-elevation restart loses our private IPC pipes.
             settings.CefCommandLineArgs["do-not-de-elevate"] = "1";
             settings.CefCommandLineArgs["crash-dumps-dir"] = Path.Combine(profile, "crash-dumps");
+            settings.CefCommandLineArgs["disable-gpu"] = "1";
+            settings.CefCommandLineArgs["disable-gpu-compositing"] = "1";
+            settings.CefCommandLineArgs["enable-begin-frame-scheduling"] = "1";
             // No fingerprint spoofing, automation flags, TLS bypass, or DevTools input injection.
             if (!Cef.Initialize(settings, performDependencyCheck: false, browserProcessHandler: null))
                 throw new InvalidOperationException("CEF 初始化失败");
@@ -118,7 +121,7 @@ internal sealed class Page : IDisposable
     }
     internal void Create()
     {
-        browser = new ChromiumWebBrowser(initial.Url, browserSettings: new BrowserSettings { WindowlessFrameRate = 60 }, automaticallyCreateBrowser: false);
+        browser = new ChromiumWebBrowser(initial.Url, browserSettings: new BrowserSettings { WindowlessFrameRate = 30 }, automaticallyCreateBrowser: false);
         browser.Size = new Size(Math.Clamp(initial.Width, 1, 2560), Math.Clamp(initial.Height, 1, 1600));
         browser.RenderHandler = new Renderer(browser, this);
         browser.LifeSpanHandler = new Popups(initial.Id);
@@ -126,6 +129,7 @@ internal sealed class Page : IDisposable
         browser.TitleChanged += (_, e) => Program.Emit(new { Kind = "title", Id = initial.Id, Title = e.Title });
         browser.AddressChanged += (_, e) => Program.Emit(new { Kind = "address", Id = initial.Id, Url = e.Address });
         browser.LoadingStateChanged += (_, e) => Program.Emit(new { Kind = "navigation", Id = initial.Id, e.CanGoBack, e.CanGoForward, e.IsLoading });
+        browser.LoadError += (_, e) => Program.Emit(new { Kind = "load-error", Id = initial.Id, Code = e.ErrorCode.ToString(), Error = e.ErrorText, Main = e.Frame.IsMain });
         browser.CreateBrowser();
     }
     private void Paint(object? sender, OnPaintEventArgs e)
