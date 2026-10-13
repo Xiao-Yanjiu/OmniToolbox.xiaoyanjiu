@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>Yanjiu.BrowserHost</AssemblyName>
-    <Version>1.4.0</Version>
+    <Version>1.4.2</Version>
   </PropertyGroup>
   <!-- Reference only the binding packages. Do not restore the CEF native dependency. -->
   <ItemGroup>

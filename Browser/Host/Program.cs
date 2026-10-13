@@ -17,13 +17,14 @@ internal static class Program
     private static int Main(string[] args)
     {
         // Self-host all Chromium child processes; never load the native engine in the game.
-        if (args.Any(a => a.StartsWith("--type=", StringComparison.Ordinal)))
-            return CefSharp.BrowserSubprocess.SelfHost.Main(args);
-        if (args.Length < 1) return 2;
-        var profile = Path.GetFullPath(args[0]);
-        Directory.CreateDirectory(profile);
+        var childExit = CefSharp.BrowserSubprocess.SelfHost.Main(args);
+        if (childExit >= 0) return childExit;
         try
         {
+            var profileArg = args.FirstOrDefault(a => a.StartsWith("--yanjiu-profile=", StringComparison.Ordinal));
+            if (profileArg == null) { Emit(new { Kind = "error", Error = "缺少浏览器配置目录参数，请更新模块和浏览器组件。" }); return 2; }
+            var profile = Path.GetFullPath(profileArg.Substring("--yanjiu-profile=".Length));
+            Directory.CreateDirectory(profile);
             var settings = new CefSettings
             {
                 BrowserSubprocessPath = Environment.ProcessPath!,
@@ -31,7 +32,11 @@ internal static class Program
                 WindowlessRenderingEnabled = true, MultiThreadedMessageLoop = true,
                 LogFile = Path.Combine(profile, "cef.log"), LogSeverity = LogSeverity.Error,
             };
-            if (args.Length > 1 && args[1].Length > 0) settings.CefCommandLineArgs["proxy-server"] = args[1];
+            var proxy = args.FirstOrDefault(a => a.StartsWith("--yanjiu-proxy=", StringComparison.Ordinal))?.Substring("--yanjiu-proxy=".Length);
+            if (!string.IsNullOrEmpty(proxy)) settings.CefCommandLineArgs["proxy-server"] = proxy;
+            // When the game already runs elevated, Chromium's de-elevation restart loses our private IPC pipes.
+            settings.CefCommandLineArgs["do-not-de-elevate"] = "1";
+            settings.CefCommandLineArgs["crash-dumps-dir"] = Path.Combine(profile, "crash-dumps");
             // No fingerprint spoofing, automation flags, TLS bypass, or DevTools input injection.
             if (!Cef.Initialize(settings, performDependencyCheck: false, browserProcessHandler: null))
                 throw new InvalidOperationException("CEF 初始化失败");

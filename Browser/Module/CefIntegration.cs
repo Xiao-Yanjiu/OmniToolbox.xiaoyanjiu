@@ -30,7 +30,7 @@ public sealed unsafe partial class GameWebBrowser
     private void DrawCefSettings()
     {
         cefInstaller ??= new CefInstaller(CefRoot);
-        ImGui.TextDisabled(cefInstaller.Ready ? "CEF 已安装 · 154.0.34" : "CEF 未安装");
+        ImGui.TextDisabled(cefInstaller.Ready ? "CEF 已安装 · 154.0.34" : cefInstaller.NativeInstalled ? "CEF 已安装，需要更新浏览器组件" : "CEF 未安装");
         if (cefInstaller.Busy)
         {
             var downloaded = cefInstaller.Bytes / 1048576d;
@@ -42,7 +42,7 @@ public sealed unsafe partial class GameWebBrowser
         }
         else
         {
-            if (!cefInstaller.Ready && ImGui.Button("下载 CEF")) cefInstaller.Start();
+            if (!cefInstaller.Ready && ImGui.Button(cefInstaller.NativeInstalled ? "更新浏览器组件" : "下载 CEF")) cefInstaller.Start();
             if (cefInstaller.Status.Length > 0) ImGui.TextWrapped(cefInstaller.Status);
         }
     }
@@ -50,7 +50,7 @@ public sealed unsafe partial class GameWebBrowser
     {
         cefInstaller ??= new CefInstaller(CefRoot);
         if (cefInstaller.Ready) return true;
-        statusMessage = "请先在 CEF 模式下点击“下载 CEF”。";
+        statusMessage = cefInstaller.NativeInstalled ? "请在 CEF 模式下点击“更新浏览器组件”。" : "请在 CEF 模式下点击“下载 CEF”。";
         return false;
     }
     private void CefOpenTab(BrowserWin win, BrowserTab tab)
@@ -318,10 +318,11 @@ internal sealed class CefPeer : IDisposable
             var start = new ProcessStartInfo(Path.Combine(root, "Yanjiu.BrowserHost.exe"))
             { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
                 RedirectStandardOutput = true, RedirectStandardError = true };
-            start.ArgumentList.Add(profile); start.ArgumentList.Add(proxy);
+            start.ArgumentList.Add("--yanjiu-profile=" + profile); start.ArgumentList.Add("--yanjiu-proxy=" + proxy);
             process = Process.Start(start) ?? throw new IOException("无法启动 CEF 进程");
             if (stop.IsCancellationRequested) { try { process.Kill(entireProcessTree: true); } catch { } return; }
-            var stderr = DrainErrors(process, stop.Token);
+            var errors = new ConcurrentQueue<string>();
+            var stderr = DrainErrors(process, stop.Token, errors);
             var writer = writerTask = Task.Run(async () =>
             {
                 await foreach (var line in queue.Reader.ReadAllAsync(stop.Token))
@@ -330,7 +331,14 @@ internal sealed class CefPeer : IDisposable
             string? line;
             while ((line = await process.StandardOutput.ReadLineAsync(stop.Token)) != null)
             { if (line.Length <= 65536) output(line); }
-            if (!stop.IsCancellationRequested) output(JsonSerializer.Serialize(new { Kind = "error", Error = "浏览器进程已退出，请关闭并重新打开网页。" }));
+            if (!stop.IsCancellationRequested)
+            {
+                await process.WaitForExitAsync(stop.Token);
+                await stderr;
+                var detail = string.Join("\n", errors);
+                output(JsonSerializer.Serialize(new { Kind = "error", Error = $"浏览器进程已退出（0x{process.ExitCode:X8}）。" +
+                    (detail.Length > 0 ? "\n" + detail : "请关闭并重新打开网页。") }));
+            }
             Dispose();
             try { await writer; } catch (OperationCanceledException) { }
             await stderr;
@@ -338,8 +346,10 @@ internal sealed class CefPeer : IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex) { if (!stop.IsCancellationRequested) output(JsonSerializer.Serialize(new { Kind = "error", Error = ex.Message })); Dispose(); }
     }
-    private static async Task DrainErrors(Process p, CancellationToken token)
-    { try { while (await p.StandardError.ReadLineAsync(token) != null) { } } catch (OperationCanceledException) { } }
+    private static async Task DrainErrors(Process p, CancellationToken token, ConcurrentQueue<string> errors)
+    { try { string? line; while ((line = await p.StandardError.ReadLineAsync(token)) != null)
+        { errors.Enqueue(line.Length > 500 ? line.Substring(0, 500) : line); while (errors.Count > 8) errors.TryDequeue(out _); }
+    } catch (OperationCanceledException) { } }
     public void Dispose()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
@@ -366,8 +376,9 @@ internal sealed class CefInstaller
     // The base runtime package contains locales/runtime.json only. The RID package includes both binaries and locales.
     private const string NativeUrl = "https://api.nuget.org/v3-flatcontainer/chromiumembeddedframework.runtime.win-x64/154.0.34/chromiumembeddedframework.runtime.win-x64.154.0.34.nupkg";
     private const string NativeSha512 = "MnHgTXjzGD4nuaNByVcPCcOnVVDBJ5c/cA4BDVwdm5eBnChDTpaUp/uYpozffVOkvRBjXwCpfmsI8OSdfLH3ig==";
-    private const string HostUrl = "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/browser-v1.4.0/BrowserHost.zip";
-    private const string HostSha256 = "b802f1bc4b5badc39d1cf068a6c6b0669a86bf900633004c529fc480659f746a";
+    private const string HostUrl = "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/browser-v1.4.2/BrowserHost.zip";
+    private const string HostSha256 = "be8f0e61b31be9d8452bab0fc79f3fb9e9443f184f4e1200663fd80ae1c5f2d4";
+    private const string HostDllSha256 = "dd8afcdbbaec0bfccf34140169fd24d66b9f9d4a37e12552f4efffb3254d971e";
     private readonly string root;
     private CancellationTokenSource? cancel;
     public volatile bool Busy;
@@ -375,7 +386,17 @@ internal sealed class CefInstaller
     private long bytes, total;
     public long Bytes => Interlocked.Read(ref bytes);
     public long Total => Interlocked.Read(ref total);
-    public bool Ready => File.Exists(Path.Combine(root, "verified.json")) && File.Exists(Path.Combine(root, "libcef.dll")) && File.Exists(Path.Combine(root, "Yanjiu.BrowserHost.exe"));
+    public bool NativeInstalled => File.Exists(Path.Combine(root, "verified.json")) && File.Exists(Path.Combine(root, "libcef.dll")) && File.Exists(Path.Combine(root, "locales", "zh-CN.pak"));
+    public bool Ready
+    {
+        get
+        {
+            if (!NativeInstalled || !File.Exists(Path.Combine(root, "Yanjiu.BrowserHost.exe"))) return false;
+            try { var hashes = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(Path.Combine(root, "verified.json")));
+                return hashes != null && hashes.TryGetValue("Yanjiu.BrowserHost.dll", out var hash) && hash.Equals(HostDllSha256, StringComparison.OrdinalIgnoreCase); }
+            catch { return false; }
+        }
+    }
     public CefInstaller(string installRoot) { root = installRoot; }
     public void Start() { if (Busy) return; Busy = true; cancel = new CancellationTokenSource(); _ = Install(cancel.Token); }
     public void Cancel() => cancel?.Cancel();
@@ -386,28 +407,39 @@ internal sealed class CefInstaller
         {
             Directory.CreateDirectory(staging);
             var native = Path.Combine(staging, "cef.nupkg"); var host = Path.Combine(staging, "host.zip");
-            await Download(NativeUrl, native, "正在下载 CEF 内核", token);
-            using (var file = File.OpenRead(native))
+            bool bridgeOnly = NativeInstalled;
+            if (!bridgeOnly)
+            {
+                await Download(NativeUrl, native, "正在下载 CEF 内核", token);
+                using var file = File.OpenRead(native);
                 if (!CryptographicOperations.FixedTimeEquals(await SHA512.HashDataAsync(file, token), Convert.FromBase64String(NativeSha512))) throw new IOException("CEF 校验失败，安装已取消");
+            }
             await Download(HostUrl, host, "正在下载浏览器桥接程序", token);
             using (var file = File.OpenRead(host))
                 if (!CryptographicOperations.FixedTimeEquals(await SHA256.HashDataAsync(file, token), Convert.FromHexString(HostSha256))) throw new IOException("桥接程序校验失败，安装已取消");
             Status = "正在解压和校验，首次安装可能需要稍等";
             var install = Path.Combine(staging, "install"); Directory.CreateDirectory(install);
-            Extract(native, install, nativeOnly: true, token);
+            if (!bridgeOnly) Extract(native, install, nativeOnly: true, token);
             Extract(host, install, nativeOnly: false, token);
-            foreach (var file in new[] { "libcef.dll", "icudtl.dat", "resources.pak", "chrome_elf.dll", "Yanjiu.BrowserHost.exe", "CefSharp.Core.Runtime.dll" })
+            var engineRoot = bridgeOnly ? root : install;
+            foreach (var file in new[] { "libcef.dll", "icudtl.dat", "resources.pak", "chrome_elf.dll" })
+                if (!File.Exists(Path.Combine(engineRoot, file))) throw new IOException("安装包缺少 " + file);
+            foreach (var file in new[] { "Yanjiu.BrowserHost.exe", "Yanjiu.BrowserHost.dll", "CefSharp.Core.Runtime.dll" })
                 if (!File.Exists(Path.Combine(install, file))) throw new IOException("安装包缺少 " + file);
             foreach (var locale in new[] { "zh-CN.pak", "en-US.pak" })
-                if (!File.Exists(Path.Combine(install, "locales", locale))) throw new IOException("安装包缺少 locales/" + locale);
-            var hashes = new Dictionary<string, string>();
+                if (!File.Exists(Path.Combine(engineRoot, "locales", locale))) throw new IOException("安装包缺少 locales/" + locale);
+            var hashes = bridgeOnly ? JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(Path.Combine(root, "verified.json")))! : new Dictionary<string, string>();
             foreach (var file in Directory.EnumerateFiles(install, "*", SearchOption.AllDirectories))
             { using var stream = File.OpenRead(file); hashes[Path.GetRelativePath(install, file)] = Convert.ToHexString(await SHA256.HashDataAsync(stream, token)); }
             await File.WriteAllTextAsync(Path.Combine(install, "verified.json"), JsonSerializer.Serialize(hashes), token);
             token.ThrowIfCancellationRequested();
-            if (Directory.Exists(root)) throw new IOException("目标目录已存在，请关闭浏览器并移除未完成的安装目录后重试");
-            Directory.Move(install, root);
-            Status = "CEF 下载完成，可以打开网页了。";
+            if (bridgeOnly) ReplaceBridge(install, root, Path.Combine(staging, "rollback"));
+            else
+            {
+                if (Directory.Exists(root)) throw new IOException("目标目录已存在，请关闭浏览器并移除未完成的安装目录后重试");
+                Directory.Move(install, root);
+            }
+            Status = bridgeOnly ? "浏览器组件已更新，原 CEF 内核和登录资料已保留。" : "CEF 下载完成，可以打开网页了。";
         }
         catch (OperationCanceledException) { Status = "下载已取消，可重新点击下载。"; }
         catch (Exception ex) { Status = "下载失败：" + ex.Message; }
@@ -418,7 +450,7 @@ internal sealed class CefInstaller
     {
         Status = label; Interlocked.Exchange(ref bytes, 0); Interlocked.Exchange(ref total, 0);
         using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("YanjiuBrowser/1.4.1");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("YanjiuBrowser/1.4.2");
         using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token);
         response.EnsureSuccessStatusCode();
         Interlocked.Exchange(ref total, response.Content.Headers.ContentLength ?? 0);
@@ -460,6 +492,31 @@ internal sealed class CefInstaller
             if (!full.StartsWith(Path.GetFullPath(target) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !seen.Add(full)) throw new IOException("安装包路径重复或越界");
             expanded += entry.Length; if (expanded > 2147483648) throw new IOException("解压内容过大");
             Directory.CreateDirectory(Path.GetDirectoryName(full)!); entry.ExtractToFile(full, false);
+        }
+    }
+    internal static void ReplaceBridge(string install, string target, string rollback)
+    {
+        var files = Directory.GetFiles(install, "*", SearchOption.AllDirectories)
+            .OrderBy(p => Path.GetFileName(p) == "verified.json" ? 1 : 0).ToArray();
+        var written = new List<(string Destination, string Backup, bool Existed)>();
+        try
+        {
+            foreach (var file in files)
+            {
+                var relative = Path.GetRelativePath(install, file);
+                var destination = Path.Combine(target, relative); var backup = Path.Combine(rollback, relative);
+                var existed = File.Exists(destination);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                if (existed) { Directory.CreateDirectory(Path.GetDirectoryName(backup)!); File.Copy(destination, backup); }
+                written.Add((destination, backup, existed));
+                File.Copy(file, destination, true);
+            }
+        }
+        catch
+        {
+            foreach (var item in written.AsEnumerable().Reverse())
+                try { if (item.Existed) File.Copy(item.Backup, item.Destination, true); else File.Delete(item.Destination); } catch { }
+            throw;
         }
     }
 }

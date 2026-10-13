@@ -6,14 +6,14 @@ using System.Runtime.Loader;
 using System.Text;
 
 if (args.Length == 0) return 2;
-var root = Path.GetFullPath(args[0]); Directory.CreateDirectory(root);
-if (args.Length > 1 && args[1] == "--mock-host")
+if (args.Any(a => a == "--yanjiu-proxy=--mock-host"))
 {
     Console.WriteLine("{\"Kind\":\"ready\"}");
     string? line;
     while ((line = Console.ReadLine()) != null) Console.WriteLine("{\"Kind\":\"echo\"}");
     return 0;
 }
+var root = Path.GetFullPath(args[0]); Directory.CreateDirectory(root);
 AssemblyLoadContext.Default.Resolving += (_, name) =>
 {
     foreach (var dir in args.Skip(2))
@@ -67,6 +67,27 @@ Check(cancelRejected, "extraction cancellation");
 var instance = Activator.CreateInstance(installer, Path.Combine(root, "never-installed"))!;
 Check(!(bool)installer.GetProperty("Ready")!.GetValue(instance)!, "missing runtime does not claim readiness");
 Check(!Directory.Exists(Path.Combine(root, "never-installed")), "constructor does not download or create runtime");
+var bridgeTarget = Path.Combine(root, "bridge-target"); var bridgeSource = Path.Combine(root, "bridge-source");
+Directory.CreateDirectory(bridgeTarget); Directory.CreateDirectory(bridgeSource);
+File.WriteAllText(Path.Combine(bridgeTarget, "libcef.dll"), "existing-engine");
+File.WriteAllText(Path.Combine(bridgeTarget, "Yanjiu.BrowserHost.dll"), "old-host");
+File.WriteAllText(Path.Combine(bridgeTarget, "verified.json"), "old-marker");
+File.WriteAllText(Path.Combine(bridgeSource, "Yanjiu.BrowserHost.dll"), "new-host");
+File.WriteAllText(Path.Combine(bridgeSource, "verified.json"), "new-marker");
+var replace = installer.GetMethod("ReplaceBridge", BindingFlags.NonPublic | BindingFlags.Static)!;
+replace.Invoke(null, new object[] { bridgeSource, bridgeTarget, Path.Combine(root, "bridge-backup") });
+Check(File.ReadAllText(Path.Combine(bridgeTarget, "libcef.dll")) == "existing-engine" &&
+    File.ReadAllText(Path.Combine(bridgeTarget, "Yanjiu.BrowserHost.dll")) == "new-host", "bridge-only update preserves existing engine");
+File.WriteAllText(Path.Combine(bridgeSource, "Yanjiu.BrowserHost.dll"), "failed-update");
+File.WriteAllText(Path.Combine(bridgeSource, "verified.json"), "failed-marker");
+bool rolledBack = false;
+using (var locked = new FileStream(Path.Combine(bridgeTarget, "verified.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+{
+    try { replace.Invoke(null, new object[] { bridgeSource, bridgeTarget, Path.Combine(root, "bridge-rollback") }); }
+    catch (TargetInvocationException ex) when (ex.InnerException is IOException) { rolledBack = true; }
+}
+Check(rolledBack && File.ReadAllText(Path.Combine(bridgeTarget, "Yanjiu.BrowserHost.dll")) == "new-host" &&
+    File.ReadAllText(Path.Combine(bridgeTarget, "verified.json")) == "new-marker", "locked-file update rolls back components and marker");
 
 // Local mock transport exercises progress and cancellation without accessing the CEF download URL.
 var tcp = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0); tcp.Start();
