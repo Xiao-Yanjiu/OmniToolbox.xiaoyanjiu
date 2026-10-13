@@ -363,8 +363,9 @@ internal sealed class CefPeer : IDisposable
 
 internal sealed class CefInstaller
 {
-    private const string NativeUrl = "https://api.nuget.org/v3-flatcontainer/chromiumembeddedframework.runtime/154.0.34/chromiumembeddedframework.runtime.154.0.34.nupkg";
-    private const string NativeSha512 = "q+JN2HRYhZhHiIYb554G1+RTFfMTyv/4ljbfV50/Ju8V+M+SFfizR482FO9+a7N60LRq0Ulxy+vylVySGkbvAA==";
+    // The base runtime package contains locales/runtime.json only. The RID package includes both binaries and locales.
+    private const string NativeUrl = "https://api.nuget.org/v3-flatcontainer/chromiumembeddedframework.runtime.win-x64/154.0.34/chromiumembeddedframework.runtime.win-x64.154.0.34.nupkg";
+    private const string NativeSha512 = "MnHgTXjzGD4nuaNByVcPCcOnVVDBJ5c/cA4BDVwdm5eBnChDTpaUp/uYpozffVOkvRBjXwCpfmsI8OSdfLH3ig==";
     private const string HostUrl = "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/browser-v1.4.0/BrowserHost.zip";
     private const string HostSha256 = "b802f1bc4b5badc39d1cf068a6c6b0669a86bf900633004c529fc480659f746a";
     private readonly string root;
@@ -397,7 +398,8 @@ internal sealed class CefInstaller
             Extract(host, install, nativeOnly: false, token);
             foreach (var file in new[] { "libcef.dll", "icudtl.dat", "resources.pak", "chrome_elf.dll", "Yanjiu.BrowserHost.exe", "CefSharp.Core.Runtime.dll" })
                 if (!File.Exists(Path.Combine(install, file))) throw new IOException("安装包缺少 " + file);
-            if (!Directory.Exists(Path.Combine(install, "locales"))) throw new IOException("安装包缺少 locales");
+            foreach (var locale in new[] { "zh-CN.pak", "en-US.pak" })
+                if (!File.Exists(Path.Combine(install, "locales", locale))) throw new IOException("安装包缺少 locales/" + locale);
             var hashes = new Dictionary<string, string>();
             foreach (var file in Directory.EnumerateFiles(install, "*", SearchOption.AllDirectories))
             { using var stream = File.OpenRead(file); hashes[Path.GetRelativePath(install, file)] = Convert.ToHexString(await SHA256.HashDataAsync(stream, token)); }
@@ -416,7 +418,7 @@ internal sealed class CefInstaller
     {
         Status = label; Interlocked.Exchange(ref bytes, 0); Interlocked.Exchange(ref total, 0);
         using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("YanjiuBrowser/1.4.0");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("YanjiuBrowser/1.4.1");
         using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token);
         response.EnsureSuccessStatusCode();
         Interlocked.Exchange(ref total, response.Content.Headers.ContentLength ?? 0);
@@ -443,8 +445,9 @@ internal sealed class CefInstaller
             var relative = entry.FullName.Replace('\\', '/');
             if (nativeOnly)
             {
-                const string prefix = "runtimes/win-x64/native/";
-                if (!relative.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                var prefix = new[] { "runtimes/win-x64/native/", "CEF/win-x64/" }
+                    .FirstOrDefault(p => relative.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+                if (prefix == null)
                 {
                     if (relative.Equals("LICENSE.txt", StringComparison.OrdinalIgnoreCase)) relative = "CEF.LICENSE.txt";
                     else continue;

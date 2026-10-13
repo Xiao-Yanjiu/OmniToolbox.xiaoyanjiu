@@ -37,6 +37,17 @@ var good = MakeZip("native.zip", ("runtimes/win-x64/native/libcef.dll", "mock"),
 var output = Path.Combine(root, "extract"); Directory.CreateDirectory(output);
 extract.Invoke(null, new object[] { good, output, true, CancellationToken.None });
 Check(File.ReadAllText(Path.Combine(output, "libcef.dll")) == "mock" && File.Exists(Path.Combine(output, "locales/zh-CN.pak")) && File.Exists(Path.Combine(output, "CEF.LICENSE.txt")), "native architecture and license selection");
+var actualLayout = MakeZip("actual-layout.zip", ("runtimes/win-x64/native/libcef.dll", "native-x64"),
+    ("runtimes/win-x64/native/icudtl.dat", "data"), ("runtimes/win-x64/native/resources.pak", "resources"),
+    ("CEF/win-x64/locales/zh-CN.pak", "zh"), ("CEF/win-x64/locales/en-US.pak", "en"),
+    ("CEF/win-x86/locales/zh-CN.pak", "wrong-architecture"), ("LICENSE.txt", "license"));
+var actualOutput = Path.Combine(root, "actual-layout"); Directory.CreateDirectory(actualOutput);
+extract.Invoke(null, new object[] { actualLayout, actualOutput, true, CancellationToken.None });
+Check(File.ReadAllText(Path.Combine(actualOutput, "libcef.dll")) == "native-x64" &&
+    File.ReadAllText(Path.Combine(actualOutput, "locales/zh-CN.pak")) == "zh" &&
+    File.ReadAllText(Path.Combine(actualOutput, "locales/en-US.pak")) == "en", "official RID package mixed binary/locale layout");
+var nativeUrl = (string)installer.GetField("NativeUrl", BindingFlags.NonPublic | BindingFlags.Static)!.GetRawConstantValue()!;
+Check(nativeUrl.Contains("chromiumembeddedframework.runtime.win-x64/154.0.34/"), "download RID package instead of locales-only base package");
 foreach (var bad in new[] { "../escape.dll", "C:/escape.dll", "normal/../../escape.dll" })
 {
     var path = MakeZip(Guid.NewGuid() + ".zip", (bad, "bad")); bool rejected = false;

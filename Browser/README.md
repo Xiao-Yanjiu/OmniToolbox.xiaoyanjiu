@@ -1,4 +1,4 @@
-# 游戏内浏览器 1.4.0 测试版
+# 游戏内浏览器 1.4.1 测试版
 
 本版将在线入口改为 `Modules/GameWebBrowser.dll`，取消 WebView2 抽帧模式，保留独立 Edge/Chrome 模式，使用 CEF 离屏模式承接原贴图外观。旧配置的 WebView2 选项自动迁移到 CEF。源码由 `Modules/GameWebBrowser.cs` 和 `Browser/Module/CefIntegration.cs` 共同组成，不再将前者作为单文件模块导入。
 
@@ -13,9 +13,9 @@
 ## 下载与隔离
 
 - 固定 CefSharp 154.0.340 / CEF 154.0.34 的匹配版本，不使用浮动 latest。
-- 用户点击按钮后，下载 CefSharp 维护的 `chromiumembeddedframework.runtime` 官方 NuGet 包和本仓库 Release 的 `BrowserHost.zip`。
+- 用户点击按钮后，下载 CefSharp 维护的 `chromiumembeddedframework.runtime.win-x64` NuGet 架构包（包含原生内核及语言资源，约 175 MiB）和本仓库 Release 的 `BrowserHost.zip`。
 - 原生包按 NuGet 公布的 SHA512 校验，桥接包按源码内固定 SHA256 校验。安装文件另保存逐文件 SHA256 清单。
-- 只提取 Windows x64 资源，限制解压大小并拒绝越界路径和重复文件。全部校验后才将临时目录移动为安装目录。
+- 原生 DLL 位于 `runtimes/win-x64/native/`，语言文件位于 `CEF/win-x64/locales/`；两处都映射到安装目录，并验证中文及英文语言文件。只提取 Windows x64 资源，限制解压大小并拒绝越界路径和重复文件。全部校验后才将临时目录移动为安装目录。
 - 辅助进程自带 .NET 运行时；CEF 不加载进游戏。输入通过该进程的标准输入输出传递，没有远程监听端口。
 - 画面只保留最新帧，游戏线程尝试立即取锁，拿不到就使用上一帧；支持最高 2560×1600 网页画面，超过时按显示区域缩放。
 - 关闭窗口或停用模块终止本模块启动的进程树并释放共享画面；登录资料保留。
