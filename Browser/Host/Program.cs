@@ -126,6 +126,7 @@ internal sealed class Page : IDisposable
         browser.Size = new Size(Math.Clamp(initial.Width, 1, 2560), Math.Clamp(initial.Height, 1, 1600));
         browser.RenderHandler = new Renderer(browser, this);
         browser.LifeSpanHandler = new Popups(initial.Id);
+        browser.DisplayHandler = new CursorDisplay(initial.Id);
         browser.Paint += Paint;
         browser.TitleChanged += (_, e) => Program.Emit(new { Kind = "title", Id = initial.Id, Title = e.Title });
         browser.AddressChanged += (_, e) => Program.Emit(new { Kind = "address", Id = initial.Id, Url = e.Address });
@@ -245,6 +246,15 @@ internal sealed class Page : IDisposable
         {
             newBrowser = null!;
             if (Program.ValidUrl(targetUrl)) Program.Emit(new { Kind = "popup", Id = id, Url = targetUrl });
+            return true;
+        }
+    }
+    private sealed class CursorDisplay(string id) : CefSharp.Handler.DisplayHandler
+    {
+        protected override bool OnCursorChange(IWebBrowser chromiumWebBrowser, IBrowser browser, IntPtr cursor,
+            CefSharp.Enums.CursorType type, CefSharp.Structs.CursorInfo customCursorInfo)
+        {
+            Program.Emit(new { Kind = "cursor", Id = id, Cursor = type.ToString() });
             return true;
         }
     }

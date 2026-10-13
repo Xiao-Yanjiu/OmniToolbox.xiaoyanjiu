@@ -875,8 +875,8 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         var x = config.WinX == int.MinValue ? (cw - w) * 0.5f : config.WinX;
         var y = config.WinY == int.MinValue ? (ch - h) * 0.5f : config.WinY;
 
-        win.X = Math.Clamp(x, 0f, MathF.Max(0f, cw - w));
-        win.Y = Math.Clamp(y, 0f, MathF.Max(0f, ch - h));
+        win.X = config.AllowOutsideGameWindow ? x : Math.Clamp(x, 0f, MathF.Max(0f, cw - w));
+        win.Y = config.AllowOutsideGameWindow ? y : Math.Clamp(y, 0f, MathF.Max(0f, ch - h));
         win.W = w;
         win.H = h;
         win.RestoreX = win.X; win.RestoreY = win.Y;
@@ -1551,6 +1551,17 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         ImGui.Spacing();
 
         if (CefMode) { DrawCefSettings(); ImGui.Spacing(); }
+        if (CefMode)
+        {
+            var outside = config.AllowOutsideGameWindow;
+            if (ImGui.Checkbox("允许移出游戏屏幕", ref outside))
+            {
+                config.AllowOutsideGameWindow = outside;
+                if (!outside) foreach (var window in windows.Values) { ClampInsideGame(window, ImGui.GetIO().DisplaySize); ApplyPageRect(window); }
+                SaveOwnConfig(); changed = true;
+            }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("允许拖过游戏画面边缘；超出的部分由游戏画面裁剪。关闭此项可收回窗口。");
+        }
         int removeIndex = -1;
 
         var rowX = ImGui.GetCursorPosX();
@@ -3443,7 +3454,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
     }
 
     // 拖拽中的几何更新（在布局之前调用）
-    private static void ApplyDrag(BrowserWin win)
+    private void ApplyDrag(BrowserWin win)
     {
         if (dragKey != win.Key) return;
         if (dragMove == 0 && dragEdges == 0) return;
@@ -3485,8 +3496,9 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
 
     // 窗口必须**完整**留在游戏客户区（ImGui 坐标 = ds）内，一点都不能越出游戏窗口。
     // 移动时只钳位置；缩放时连尺寸一起钳 —— 边拖出游戏多少，就往回收多少。
-    private static void ClampInsideGame(BrowserWin win, Vector2 ds)
+    private void ClampInsideGame(BrowserWin win, Vector2 ds)
     {
+        if (config.AllowOutsideGameWindow) return;
         // 窗口比游戏客户区还大（异常配置 / 拖缩放越过对面边界）：先把尺寸压回去
         if (win.W > ds.X) win.W = MathF.Max(MinWinW, ds.X);
         if (win.H > ds.Y) win.H = MathF.Max(MinWinH, ds.Y);
@@ -3649,31 +3661,24 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         var favoritesMn = new Vector2(favoritesMx.X - favoritesWidth, btnY0);
         var proxyMx = new Vector2(favoritesMn.X - 4f, btnY1);
         var proxyMn = new Vector2(proxyMx.X - proxyWidth, btnY0);
-        var renderLabel = "CEF";
-        var renderWidth = MathF.Max(44f, ImGui.CalcTextSize(renderLabel).X + 12f);
-        var renderMx = new Vector2(proxyMn.X - 4f, btnY1);
-        var renderMn = new Vector2(renderMx.X - renderWidth, btnY0);
-        var tabsX1 = MathF.Max(tabsX0 + 20f, renderMn.X - 4f);
-        consumed |= IsMouseInRect(renderMn, renderMx);
-        ChromeTextButton(dl, renderMn, renderMx, renderLabel, cDim, cHover);
-        if (IsMouseInRect(renderMn, renderMx))
-            ImGui.SetTooltip("在 OMNI 设置面板的“渲染版本”中选择 CEF 或独立浏览器。");
+        var tabsX1 = MathF.Max(tabsX0 + 20f, proxyMn.X - 4f);
         var proxyHover = IsMouseInRect(proxyMn, proxyMx);
         var proxyClick = proxyHover && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
         consumed |= proxyHover;
         var checkSide = MathF.Min(btnH - 2, 15f);
-        var check = new Vector2(proxyMn.X + 3, (btnY0 + btnY1 - checkSide) / 2);
+        var proxyText = ImGui.CalcTextSize("代理");
+        var check = new Vector2((proxyMn.X + proxyMx.X - checkSide - 4 - proxyText.X) / 2, (btnY0 + btnY1 - checkSide) / 2);
         dl.AddRect(check, check + new Vector2(checkSide), win.UseProxy ? cAccent : cDim, 2, ImDrawFlags.None, 1.2f);
         if (win.UseProxy)
         {
             dl.AddLine(check + new Vector2(3, checkSide * 0.52f), check + new Vector2(checkSide * 0.44f, checkSide - 3), cText, 1.8f);
             dl.AddLine(check + new Vector2(checkSide * 0.44f, checkSide - 3), check + new Vector2(checkSide - 2, 3), cText, 1.8f);
         }
-        dl.AddText(new Vector2(check.X + checkSide + 4, (btnY0 + btnY1 - ImGui.GetFontSize()) / 2), proxyHover ? cText : cDim, "代理");
+        dl.AddText(new Vector2(check.X + checkSide + 4, (btnY0 + btnY1 - proxyText.Y) / 2), proxyHover ? cText : cDim, "代理");
         if (proxyHover && ImGui.IsMouseClicked(ImGuiMouseButton.Right)) ShowBrowserDialog("proxy", win);
         consumed |= IsMouseInRect(addressMn, addressMx);
-        if (ChromeTextButton(dl, addressMn, addressMx, "网址", cText, cHover)) ShowBrowserDialog("address", win);
-        var favoriteClick = ChromeTextButton(dl, favoritesMn, favoritesMx, "收藏", cText, win.FavoritesOpen ? cActive : cHover);
+        if (ChromeTextButton(dl, addressMn, addressMx, "网址", cText, cHover, true)) ShowBrowserDialog("address", win);
+        var favoriteClick = ChromeTextButton(dl, favoritesMn, favoritesMx, "收藏", cText, win.FavoritesOpen ? cActive : cHover, true);
         consumed |= IsMouseInRect(favoritesMn, favoritesMx);
         if (favoriteClick) { win.FavoritesOpen = !win.FavoritesOpen; ApplyPageRect(win); }
 
@@ -3697,8 +3702,8 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             var t  = tabs[i];
             var isAct = i == active;
 
-            var tmn = new Vector2(tx0 + 1f, rowY0 + 2f);
-            var tmx = new Vector2(tx1 - 1f, rowY1 - 1f);
+            var tmn = new Vector2(tx0 + 1f, btnY0);
+            var tmx = new Vector2(tx1 - 1f, btnY1);
 
             // 关标签的小叉占右侧一小块，主体按钮只占左边，两者不重叠
             var cxx   = tmx.X - MathF.Min(13f, (tmx.X - tmn.X) * 0.22f);
@@ -3734,7 +3739,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
 
             dl.PushClipRect(new Vector2(tmn.X + 6f, tmn.Y), new Vector2(bodyX - 3f, tmx.Y), true);
             var tsz = ImGui.CalcTextSize(title);
-            dl.AddText(new Vector2(tmn.X + 6f, (tmn.Y + tmx.Y - tsz.Y) * 0.5f),
+            dl.AddText(new Vector2(MathF.Max(tmn.X + 6f, (tmn.X + 6f + bodyX - 3f - tsz.X) * 0.5f), (tmn.Y + tmx.Y - tsz.Y) * 0.5f),
                        isAct ? cText : cDim, title);
             dl.PopClipRect();
 
@@ -3955,13 +3960,13 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         return cli;
     }
 
-    private static bool ChromeTextButton(ImDrawListPtr dl, Vector2 mn, Vector2 mx, string text, uint color, uint hoverColor)
+    private static bool ChromeTextButton(ImDrawListPtr dl, Vector2 mn, Vector2 mx, string text, uint color, uint hoverColor, bool centered = false)
     {
         bool hovered = IsMouseInRect(mn, mx);
         if (hovered) dl.AddRectFilled(mn, mx, hoverColor, 4);
         dl.PushClipRect(mn, mx, true);
         var measured = ImGui.CalcTextSize(text);
-        dl.AddText(new Vector2(mn.X + 5, (mn.Y + mx.Y - measured.Y) / 2), color, text);
+        dl.AddText(new Vector2(centered ? MathF.Max(mn.X + 2, (mn.X + mx.X - measured.X) / 2) : mn.X + 5, (mn.Y + mx.Y - measured.Y) / 2), color, text);
         dl.PopClipRect();
         return hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
     }
@@ -3981,7 +3986,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         wgcKbOwnerKey = "";
         wgcMouseOwnerKey = "";
         foreach (var window in windows.Values) window.InputRowHeight = 0;
-        win.InputRowHeight = OmniScale(kind == "address" || kind == "favorite" ? 94 : 78);
+        win.InputRowHeight = kind == "address" ? ImGui.GetFrameHeight() + ImGui.GetStyle().WindowPadding.Y * 2 : OmniScale(kind == "favorite" ? 94 : 78);
         ApplyPageRect(win);
         FocusGameNoRestore();
     }
@@ -3992,6 +3997,12 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         { CloseBrowserInput(); return; }
         using var theme = new ComicStyleScope();
         bool inlineAddress = true;
+        if (dialogKind == "address")
+        {
+            var height = ImGui.GetFrameHeight() + ImGui.GetStyle().WindowPadding.Y * 2;
+            if (dialogError.Length > 0) height += ImGui.GetStyle().ItemSpacing.Y + ImGui.CalcTextSize(dialogError, false, MathF.Max(120, owner.W - ChromePad * 2 - ImGui.GetStyle().WindowPadding.X * 2)).Y;
+            if (MathF.Abs(owner.InputRowHeight - height) > 0.5f) { owner.InputRowHeight = height; ApplyPageRect(owner); }
+        }
         ImGui.SetNextWindowPos(new Vector2(owner.X + ChromePad, owner.Y + ChromePad + TabRowH + NavRowH), ImGuiCond.Always);
         ImGui.SetNextWindowSize(new Vector2(owner.W - ChromePad * 2, owner.InputRowHeight), ImGuiCond.Always);
         ImGui.PushStyleColor(ImGuiCol.WindowBg, GetSkin().Background with { W = 1 });
@@ -4006,9 +4017,10 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 ImGui.TextWrapped("示例：127.0.0.1:7890 或 socks5://127.0.0.1:1080。应用后重载当前窗口标签；不同连接方式分别保存登录状态。");
             if (dialogKind == "favorite")
             { ImGui.SetNextItemWidth(-1); ImGui.InputTextWithHint("##favoriteName", "收藏名称（可留空）", ref dialogName, 128); }
-            ImGui.SetNextItemWidth(inlineAddress ? MathF.Max(120, ImGui.GetContentRegionAvail().X - 110) : -1);
+            var actionLabel = dialogKind == "favorite" ? "添加收藏" : dialogKind == "proxy" ? "应用并使用代理" : "前往";
+            var buttonsWidth = ImGui.CalcTextSize(actionLabel).X + ImGui.CalcTextSize("取消").X + ImGui.GetStyle().FramePadding.X * 4 + ImGui.GetStyle().ItemSpacing.X * 2;
+            ImGui.SetNextItemWidth(inlineAddress ? MathF.Max(120, ImGui.GetContentRegionAvail().X - buttonsWidth) : -1);
             bool enter = ImGui.InputTextWithHint("##browserAddress", dialogKind == "proxy" ? "代理地址" : "https://example.com", ref dialogAddress, 2048, ImGuiInputTextFlags.EnterReturnsTrue);
-            if (dialogError.Length > 0) ImGui.TextWrapped(dialogError);
             if (inlineAddress) ImGui.SameLine();
             if (ImGui.Button(dialogKind == "favorite" ? "添加收藏" : dialogKind == "proxy" ? "应用并使用代理" : "前往") || enter)
             {
@@ -4044,6 +4056,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             }
             ImGui.SameLine();
             if (ImGui.Button("取消")) { CloseBrowserInput(); }
+            if (dialogError.Length > 0) ImGui.TextWrapped(dialogError);
         }
         ImGui.End();
         if (!open || ImGui.IsKeyPressed(ImGuiKey.Escape)) CloseBrowserInput();
@@ -4062,7 +4075,12 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         dl.PushClipRect(mn, mx, true);
         dl.AddText(mn + new Vector2(5, 4), text, "收藏夹");
         float y = mn.Y + row;
-        if (ChromeTextButton(dl, new Vector2(mn.X, y), new Vector2(mx.X, y + row), "+ 收藏当前网页", text, hover)) AddFavorite(current);
+        string currentUrl = "";
+        bool canFavorite = current != null && TryWebUrl(current.Url, out currentUrl);
+        bool alreadyFavorite = canFavorite && config.Favorites.Any(f => BookmarkKey(f.Url) == currentUrl);
+        var favoriteLabel = alreadyFavorite ? "已收藏当前网页" : canFavorite ? "+ 收藏当前网页" : "暂无可收藏网页";
+        if (ChromeTextButton(dl, new Vector2(mn.X, y), new Vector2(mx.X, y + row), favoriteLabel, alreadyFavorite || !canFavorite ? dim : text, hover) && canFavorite && !alreadyFavorite) AddFavorite(current);
+        if (IsMouseInRect(new Vector2(mn.X, y), new Vector2(mx.X, y + row))) ImGui.SetTooltip(alreadyFavorite ? "当前网页已在下方收藏列表中" : canFavorite ? currentUrl : "等待网页地址");
         y += row + 8;
         if (ChromeTextButton(dl, new Vector2(mn.X, y), new Vector2(mx.X, y + row), "+ 手动添加网页", text, hover)) ShowBrowserDialog("favorite", win);
         y += row + 8;
@@ -5432,6 +5450,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
     private class Config
     {
         public int RenderingBackend { get; set; } = 0;
+        public bool AllowOutsideGameWindow { get; set; } = false;
         public string BrowserPath { get; set; } = "";
         public List<PageEntry> Pages { get; set; } = new List<PageEntry>();
         public List<FavoriteEntry> Favorites { get; set; } = new();

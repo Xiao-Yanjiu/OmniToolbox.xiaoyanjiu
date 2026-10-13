@@ -76,6 +76,7 @@ public sealed unsafe partial class GameWebBrowser
             if (!m.TryGetProperty("Id", out var id)) return;
             var tab = win.TabsSnapshot().FirstOrDefault(t => t.Cef?.Id == id.GetString());
             if (tab == null) return;
+            if (kind == "cursor" && tab.Cef != null) tab.Cef.Cursor = m.GetProperty("Cursor").GetString() ?? "Pointer";
             if (kind == "title") tab.Title = m.GetProperty("Title").GetString() ?? "";
             if (kind == "address") tab.Url = m.GetProperty("Url").GetString() ?? tab.Url;
             if (kind == "navigation")
@@ -152,6 +153,7 @@ public sealed unsafe partial class GameWebBrowser
         var tab = win.ActiveTabSafe(); var frame = tab?.Cef;
         if (frame == null) return;
         var inside = mouse.X >= win.PageX && mouse.Y >= win.PageY + win.InputRowHeight && mouse.X < win.PageX + win.PageW && mouse.Y < win.PageY + win.PageH;
+        if (inside) ImGui.SetMouseCursor(CefCursor(frame.Cursor));
         var io = ImGui.GetIO();
         var modifiers = CefModifiers();
         var x = (int)((mouse.X - win.PageX) * frame.RequestWidth / MathF.Max(1, win.PageW));
@@ -204,6 +206,19 @@ public sealed unsafe partial class GameWebBrowser
 
         return m;
     }
+    private static ImGuiMouseCursor CefCursor(string cursor) => cursor switch
+    {
+        "IBeam" or "VerticalText" => ImGuiMouseCursor.TextInput,
+        "Hand" => ImGuiMouseCursor.Hand,
+        "EastResize" or "WestResize" or "EastWestResize" or "ColumnResize" => ImGuiMouseCursor.ResizeEw,
+        "NorthResize" or "SouthResize" or "NorthSouthResize" or "RowResize" => ImGuiMouseCursor.ResizeNs,
+        "NortheastResize" or "SouthwestResize" or "NortheastSouthwestResize" => ImGuiMouseCursor.ResizeNesw,
+        "NorthwestResize" or "SoutheastResize" or "NorthwestSoutheastResize" => ImGuiMouseCursor.ResizeNwse,
+        "Move" or "MiddlePanning" => ImGuiMouseCursor.ResizeAll,
+        "NotAllowed" or "NoDrop" => ImGuiMouseCursor.NotAllowed,
+        "None" => ImGuiMouseCursor.None,
+        _ => ImGuiMouseCursor.Arrow,
+    };
     private void CefKeyboard(BrowserWin? owner)
     {
         var tab = owner?.ActiveTabSafe();
@@ -268,6 +283,7 @@ public sealed unsafe partial class GameWebBrowser
         public int RequestWidth, RequestHeight, Width, Height, MouseX = int.MinValue, MouseY;
         public IntPtr Texture, Srv;
         public bool Inside;
+        public string Cursor = "Pointer";
         public readonly bool[] Buttons = new bool[3];
         public readonly int[] Clicks = { 1, 1, 1 };
         public CefSurface()
@@ -392,9 +408,9 @@ internal sealed class CefInstaller
     // The base runtime package contains locales/runtime.json only. The RID package includes both binaries and locales.
     private const string NativeUrl = "https://api.nuget.org/v3-flatcontainer/chromiumembeddedframework.runtime.win-x64/154.0.34/chromiumembeddedframework.runtime.win-x64.154.0.34.nupkg";
     private const string NativeSha512 = "MnHgTXjzGD4nuaNByVcPCcOnVVDBJ5c/cA4BDVwdm5eBnChDTpaUp/uYpozffVOkvRBjXwCpfmsI8OSdfLH3ig==";
-    private const string HostUrl = "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/browser-v1.4.5/BrowserHost.zip";
-    private const string HostSha256 = "2f46b760773e4019d5bad0d66b5fa9020062a6303ff94b1963206083fe407ad1";
-    private const string HostDllSha256 = "879026cd00e37c1ba42ee973cbab45c814830d0609d31954db36a5e3e710cb96";
+    private const string HostUrl = "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/browser-v1.4.6/BrowserHost.zip";
+    private const string HostSha256 = "b324d5dfd5ea1542e009100080ad0346ce24af1517df07dc946bf6ea385982c8";
+    private const string HostDllSha256 = "fabf9dd637a2bb9ef9b3999b23165e827d86e9894274898a06d2c2b8bae19957";
     private readonly string root;
     private CancellationTokenSource? cancel;
     public volatile bool Busy;
@@ -466,7 +482,7 @@ internal sealed class CefInstaller
     {
         Status = label; Interlocked.Exchange(ref bytes, 0); Interlocked.Exchange(ref total, 0);
         using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("YanjiuBrowser/1.4.5");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("YanjiuBrowser/1.4.6");
         using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token);
         response.EnsureSuccessStatusCode();
         Interlocked.Exchange(ref total, response.Content.Headers.ContentLength ?? 0);
