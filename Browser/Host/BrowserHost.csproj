@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>Yanjiu.BrowserHost</AssemblyName>
+    <Version>1.4.0</Version>
+  </PropertyGroup>
+  <!-- Reference only the binding packages. Do not restore the CEF native dependency. -->
+  <ItemGroup>
+    <Reference Include="CefSharp"><HintPath>$(CefManagedPath)/cefsharp.common.netcore/runtimes/win-x64/lib/net6.0/CefSharp.dll</HintPath></Reference>
+    <Reference Include="CefSharp.Core"><HintPath>$(CefManagedPath)/cefsharp.common.netcore/runtimes/win-x64/lib/net6.0/CefSharp.Core.dll</HintPath></Reference>
+    <Reference Include="CefSharp.Core.Runtime"><HintPath>$(CefManagedPath)/cefsharp.common.netcore/runtimes/win-x64/lib/net6.0/CefSharp.Core.Runtime.dll</HintPath></Reference>
+    <Reference Include="CefSharp.OffScreen"><HintPath>$(CefManagedPath)/cefsharp.offscreen.netcore/lib/net6.0-windows7.0/CefSharp.OffScreen.dll</HintPath></Reference>
+    <Content Include="$(CefManagedPath)/cefsharp.common.netcore/runtimes/win-x64/lib/net6.0/Ijwhost.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="Ijwhost.dll" />
+    <Content Include="$(CefManagedPath)/cefsharp.common.netcore/runtimes/win-x64/native/CefSharp.BrowserSubprocess.Core.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="CefSharp.BrowserSubprocess.Core.dll" />
+    <Content Include="$(CefManagedPath)/cefsharp.common.netcore/runtimes/win-x64/native/CefSharp.BrowserSubprocess.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="CefSharp.BrowserSubprocess.dll" />
+  </ItemGroup>
+</Project>

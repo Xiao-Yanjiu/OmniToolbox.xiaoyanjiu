@@ -15,11 +15,11 @@
       "InternalName": "GameWebBrowser",
       "Name": "游戏内浏览器",
       "Author": "小烟酒",
-      "Description": "支持 WebView2 抽帧与 Edge/Chrome 原生浏览器，在 OMNI 面板选择渲染版本；共用网页、宏命令、代理和收藏，抽帧窗口支持遮挡、拖动缩放、文字拖选与编辑快捷键。",
-      "Version": "1.3.1",
-      "MinimumOmniVersion": "1.1.6.5",
-      "File": "Modules/GameWebBrowser.cs",
-      "Sha256": "8760ed5c0ab67773019d0447b16620a500cf3fba9160f96dc20ab778ec9a270c"
+      "Description": "CEF 游戏内浏览器：沿用原贴图外观，用户点击下载内核并查看实时进度；保留独立 Edge/Chrome 模式，共用网页、宏命令、代理和收藏。",
+      "Version": "1.4.0",
+      "MinimumOmniVersion": "1.1.6.6",
+      "File": "Modules/GameWebBrowser.dll",
+      "Sha256": "4080c0981a8ae7bd6ea8b8222fbcfa1306ea1ff5f99ff3d6628332588972bc1b"
     },
     {
       "InternalName": "ChatToQQ",

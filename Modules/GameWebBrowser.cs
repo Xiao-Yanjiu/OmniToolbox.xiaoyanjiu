@@ -26,7 +26,7 @@ using Vector4 = System.Numerics.Vector4;
 
 namespace OmniToolbox.LocalModules;
 
-public sealed unsafe class GameWebBrowser : ModuleBase
+public sealed unsafe partial class GameWebBrowser : ModuleBase
 {
     public override ModuleInfo Info { get; } = new()
     {
@@ -314,12 +314,14 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         public Wv2Pending? Pending;
         public IntPtr NewWindowArgs, NewWindowDeferral;
 
-        public bool Ready => Wv2Controller != IntPtr.Zero && Wv2Core != IntPtr.Zero;
+        public CefSurface? Cef;
+        public bool Ready => Cef != null || (Wv2Controller != IntPtr.Zero && Wv2Core != IntPtr.Zero);
     }
 
     // 一个「浏览器窗口」：一个盖在游戏上的无边框宿主窗口 + 一排标签 + 全套 ImGui 自绘外壳
     private sealed class BrowserWin
     {
+        public CefPeer? Cef;
         public string Key      = "";     // 宏命令，窗口唯一键
         public string PageName = "";
 
@@ -511,19 +513,13 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         var activationToken = watchCts.Token;
         _ = Task.Run(() => WatchLoop(activationToken));
 
-        // 自动检测 WebView2 运行时：后台跑，延迟一点避免和模块加载抢时间。
-        // 本类声明为 unsafe，而 unsafe 上下文里不允许出现 await/async（CS4004），
-        // 所以这里用同步 Sleep 起延时线程，不能用 Task.Delay + await。
-        _ = Task.Run(() =>
-        {
-
-            if (!RepositoryMode && !activationToken.IsCancellationRequested) { EnsureWv2Thread(); Wv2Post(() => { if (!activationToken.IsCancellationRequested && !RepositoryMode) { EnsureWv2Loader(out _); StartWv2Probe(); } }); }
-        });
     }
 
     protected override void OnDisable()
     {
         browserKeyboardCapture = false;
+        CefKeyboard(null);
+        cefInstaller?.Cancel();
         try { DalamudServices.Framework.Update -= BlockBrowserGameKeys; } catch { }
         WgcForwardKeys(wgcKeyboardCore, false);
         wgcKbOwnerKey = "";
@@ -578,6 +574,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                 var json     = File.ReadAllText(path);
                 var loaded   = JsonSerializer.Deserialize<Config>(json);
                 if (loaded != null) config = loaded;
+                if (config.RenderingBackend != 1) config.RenderingBackend = 0;
                 texRenderOn = config.TextureRender;   // 静态镜像（见 TextureModeActive）
             }
         }
@@ -677,7 +674,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
             try
             {
                 if (Environment.TickCount64 < focusGameUntilMs) FocusGameNoRestore();
-                Wv2ProbeRetryTick();
+                if (!RepositoryMode && !CefMode) Wv2ProbeRetryTick();
             }
             catch {   }
 
@@ -1203,6 +1200,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     // 把某个窗口重新拉出来（宏命令再次按下时）
     private void ShowWinAtGame(BrowserWin win)
     {
+        if (CefMode) { win.Visible = true; win.Closed = false; Wv2ApplyActiveTab(win); return; }
         win.Visible = true;
         win.Closed  = false;
 
@@ -1283,6 +1281,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
             repositoryBrowser?.Toggle(JsonSerializer.Serialize(page));
             return;
         }
+        if (CefMode && !CefCanOpen()) return;
         var key = NormalizeCommand(page.Command);
         if (key.Length == 0) return;
 
@@ -1418,6 +1417,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     // 完全隐藏，游戏里不留任何痕迹，也不会出现在任务栏。
     private void Wv2HideWin(BrowserWin win)
     {
+        if (CefMode) { foreach (var t in win.TabsSnapshot()) win.Cef?.Send(new { Kind = "visible", Id = t.Cef?.Id, Focus = false }); return; }
         // 先打标记：下次 ApplyHostGeometry 会补一次 SWP_SHOWWINDOW 把窗口显回来
         win.HostShown = 0;
         Wv2Post(() =>
@@ -1435,6 +1435,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     // 新开一个标签页；同一个窗口的标签共用 Environment（Cookie / 登录态共享）
     private void OpenTab(BrowserWin win, string url, bool activate, IntPtr popupArgs = default, IntPtr popupDeferral = default)
     {
+        if (CefMode && win.TabCount >= 16) { statusMessage = "每个 CEF 窗口最多打开 16 个标签。"; return; }
         var tab = new BrowserTab
         {
             Win     = win,
@@ -1445,6 +1446,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         };
         win.AddTab(tab, activate);
         win.LaunchStartMs = Environment.TickCount64;
+        if (CefMode) { CefOpenTab(win, tab); return; }
 
         if (win.EnvReady) Wv2Post(() => Wv2CreateController(win, tab));
         else              StartEnv(win);
@@ -1490,6 +1492,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     private void ClosePage(PageEntry page)
     {
         if (RepositoryMode) { repositoryBrowser?.Close(page.Command); return; }
+        if (CefMode && !CefCanOpen()) return;
         var key = NormalizeCommand(page.Command);
         if (key.Length == 0) return;
         if (!windows.TryGetValue(key, out var win)) return;
@@ -1535,7 +1538,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         var changed = false;
         var backend = config.RenderingBackend;
         ImGui.SetNextItemWidth(OmniScale(260));
-        if (ImGui.Combo("渲染版本", ref backend, "抽帧渲染（WebView2）\0浏览器原生（Edge / Chrome）\0"))
+        if (ImGui.Combo("渲染版本", ref backend, "CEF 游戏内浏览器\0独立浏览器（Edge / Chrome）\0"))
         {
             OnDisable();
             config.RenderingBackend = backend;
@@ -1544,9 +1547,10 @@ public sealed unsafe class GameWebBrowser : ModuleBase
             OnEnable();
             changed = true;
         }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("切换会关闭当前浏览器窗口。网页、宏命令、代理和收藏共用；两种浏览器的登录资料分别保存。");
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("切换会关闭当前浏览器窗口。网页、宏命令、代理和收藏共用；各内核的登录资料分别保存。");
         ImGui.Spacing();
 
+        if (CefMode) { DrawCefSettings(); ImGui.Spacing(); }
         int removeIndex = -1;
 
         var rowX = ImGui.GetCursorPosX();
@@ -2698,6 +2702,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     // 只让活动标签可见：同一个窗口里的标签共用一块客户区，切换就是显隐互换
     private void Wv2ApplyActiveTab(BrowserWin win)
     {
+        if (CefMode) { foreach (var t in win.TabsSnapshot()) win.Cef?.Send(new { Kind = "visible", Id = t.Cef?.Id, Focus = win.Visible && t == win.ActiveTabSafe() }); return; }
         var tabs   = win.TabsSnapshot();
         var active = win.ActiveIndex;
         for (var i = 0; i < tabs.Length; i++)
@@ -2710,6 +2715,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
     private void Wv2Navigate(BrowserTab tab, string url)
     {
+        if (tab.Cef != null) { tab.Url = url; CefCommand(tab, "navigate", url); return; }
         var core = tab.Wv2Core;
         if (core == IntPtr.Zero) return;
         tab.Url = url;
@@ -2719,6 +2725,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     // 37 / 38 / 28 = ICoreWebView2 元数据里的 GoBack / GoForward / Reload（已按 _wv2_all.txt 核对）
     private void Wv2GoBack(BrowserTab tab)
     {
+        if (tab.Cef != null) { CefCommand(tab, "back"); return; }
         var core = tab.Wv2Core;
         if (core == IntPtr.Zero) return;
         Wv2Post(() => { try { Fn<DlgNoArg>(core, 37)(core); } catch {   } });
@@ -2726,6 +2733,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
     private void Wv2GoForward(BrowserTab tab)
     {
+        if (tab.Cef != null) { CefCommand(tab, "forward"); return; }
         var core = tab.Wv2Core;
         if (core == IntPtr.Zero) return;
         Wv2Post(() => { try { Fn<DlgNoArg>(core, 38)(core); } catch {   } });
@@ -2733,6 +2741,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
 
     private void Wv2Reload(BrowserTab tab)
     {
+        if (tab.Cef != null) { CefCommand(tab, "reload"); return; }
         var core = tab.Wv2Core;
         if (core == IntPtr.Zero) return;
         Wv2Post(() => { try { Fn<DlgNoArg>(core, 28)(core); } catch {   } });
@@ -2744,6 +2753,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     // 关掉一个标签页。控制器必须在泵线程上销毁，这里只摘引用。
     private void Wv2CloseTab(BrowserTab tab)
     {
+        if (tab.Cef != null) { CefCommand(tab, "close"); tab.Cef.Dispose(); tab.Cef = null; tab.Win?.RemoveTab(tab); return; }
         var win  = tab.Win;
         var ctrl = tab.Wv2Controller;
         var core = tab.Wv2Core;
@@ -2779,6 +2789,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     // 关掉整个窗口：所有标签 + 宿主子窗口 + Environment
     private void Wv2CloseWin(BrowserWin win)
     {
+        if (CefMode) { win.Visible = false; win.Closed = true; win.Cef?.Dispose(); win.Cef = null; foreach (var t in win.TakeAllTabs()) { t.Cef?.Dispose(); t.Cef = null; } ResetDragIfMine(win); return; }
         win.Visible = false;
         win.Closed  = true;
 
@@ -2790,6 +2801,8 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         win.EnvCreating    = false;
 
         var tabs = win.TakeAllTabs();
+        win.Cef?.Dispose(); win.Cef = null;
+        foreach (var cefTab in tabs) { cefTab.Cef?.Dispose(); cefTab.Cef = null; }
 
         foreach (var t in tabs)
         {
@@ -3148,9 +3161,9 @@ public sealed unsafe class GameWebBrowser : ModuleBase
                     kbIo.WantTextInput = true;
                     ImGui.SetNextFrameWantCaptureKeyboard(true);
                 }
-                WgcForwardKeys(kbWin?.ActiveTabSafe()?.Wv2Core ?? IntPtr.Zero, kbWin != null);
+                if (CefMode) CefKeyboard(kbWin); else WgcForwardKeys(kbWin?.ActiveTabSafe()?.Wv2Core ?? IntPtr.Zero, kbWin != null);
             }
-            else { browserKeyboardCapture = false; WgcForwardKeys(wgcKeyboardCore, false); }
+            else { browserKeyboardCapture = false; if (CefMode) CefKeyboard(null); else WgcForwardKeys(wgcKeyboardCore, false); }
         }
         catch (Exception e) { browserKeyboardCapture = false; Wv2Log("DrawChrome 异常: " + e); }
         DrawBrowserDialog();
@@ -3289,6 +3302,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     // 取回来只写一个 bool，游戏线程读它来画按钮的亮/灰。
     private void PollNavFlags()
     {
+        if (CefMode) return;
         var now = Environment.TickCount64;
         if (now < navPollNextMs) return;
         navPollNextMs = now + 250;
@@ -3368,12 +3382,12 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         // 宿主是无边框顶层窗口，不会自己跟着游戏跑 ⇒ 每帧同步一次它的屏幕位置。
         // 游戏窗口被拖动/改大小、或上面刚改了几何，宿主都会立刻跟上；
         // 方法内部有脏检查，几何没变时不会真的去调 SetWindowPos。
-        ApplyHostGeometry(win);
+        if (!CefMode) ApplyHostGeometry(win);
 
         // 贴图渲染：每帧向抓帧池要一帧（池是自由线程的，游戏线程直接轮询是安全的）。
         // 拿到的新画面会做成本帧的 SRV，DrawChromeContent 里按贴图画出来。
         // 内部有失败计数：启动 5 秒还一帧都没有 ⇒ 自动回退原生窗口（保证浏览器永远能用）。
-        WgcPollFrame(win);
+        if (CefMode) CefPoll(win); else WgcPollFrame(win);
 
         var mn = new Vector2(win.X, win.Y);
         var mx = new Vector2(win.X + win.W, win.Y + win.H);
@@ -3635,7 +3649,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         var favoritesMn = new Vector2(favoritesMx.X - favoritesWidth, btnY0);
         var proxyMx = new Vector2(favoritesMn.X - 4f, btnY1);
         var proxyMn = new Vector2(proxyMx.X - proxyWidth, btnY0);
-        var renderLabel = TextureModeActive(win) ? "抽帧" : "原生";
+        var renderLabel = "CEF";
         var renderWidth = MathF.Max(44f, ImGui.CalcTextSize(renderLabel).X + 12f);
         var renderMx = new Vector2(proxyMn.X - 4f, btnY1);
         var renderMn = new Vector2(renderMx.X - renderWidth, btnY0);
@@ -3643,7 +3657,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         consumed |= IsMouseInRect(renderMn, renderMx);
         ChromeTextButton(dl, renderMn, renderMx, renderLabel, cDim, cHover);
         if (IsMouseInRect(renderMn, renderMx))
-            ImGui.SetTooltip("在 OMNI 设置面板的“渲染版本”下拉框中选择抽帧或仓库原生浏览器。");
+            ImGui.SetTooltip("在 OMNI 设置面板的“渲染版本”中选择 CEF 或独立浏览器。");
         var proxyHover = IsMouseInRect(proxyMn, proxyMx);
         var proxyClick = proxyHover && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
         consumed |= proxyHover;
@@ -3853,7 +3867,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
         // 网页才点得动、滚得动。放在 consumed 判断之前 —— 外壳自己吃掉的点击
         // （标签条、导航条按钮）不该转发给网页；网页画面区域本身不在 consumed 里。
         // 同样只归「鼠标下最上面那个窗口」：被压着的窗口不该收到鼠标（转发也别做）
-        if (wgcMouseOwnerKey == win.Key || (uiInputOn && !consumed)) WgcForwardMouse(win, io.MousePos);
+        if (wgcMouseOwnerKey == win.Key || (uiInputOn && !consumed)) { if (CefMode) CefMouse(win, io.MousePos); else WgcForwardMouse(win, io.MousePos); }
 
         // ================= 拖拽 / 缩放热区 =================
         if (!uiInputOn) return;        // 被压在下面的窗口：不响应鼠标（见 IsMouseInRect 注释）
@@ -4771,6 +4785,7 @@ public sealed unsafe class GameWebBrowser : ModuleBase
     // ---- 贴图绘制：把抓到的一帧画进外壳的「网页画面」区域 ----
     private void DrawPageTexture(ImDrawListPtr dl, BrowserWin win, Vector2 pmn, Vector2 pmx)
     {
+        if (CefMode) { var surface = win.ActiveTabSafe()?.Cef; if (surface != null && surface.Srv != IntPtr.Zero) dl.AddImageRounded(new ImTextureID(surface.Srv), pmn, pmx, Vector2.Zero, Vector2.One, 0xFFFFFFFF, 4); else dl.AddText(pmn + new Vector2(12, 12), ImGui.GetColorU32(ImGuiCol.TextDisabled), win.CapFailReason.Length > 0 ? win.CapFailReason : "CEF 正在加载网页…"); return; }
         if (config.TextureRender && !win.CapFailed && win.CapSrv != IntPtr.Zero)
         {
             // 圆角跟外壳那圈描边对齐（见 DrawChromeContent 的 rad * 0.45f），
@@ -5882,6 +5897,7 @@ internal sealed unsafe class RepositoryNativeBrowser
                 var json     = File.ReadAllText(path);
                 var loaded   = JsonSerializer.Deserialize<Config>(json);
                 if (loaded != null) config = loaded;
+
             }
         }
         catch {   }
@@ -5889,7 +5905,7 @@ internal sealed unsafe class RepositoryNativeBrowser
 
         if ((config.Proxy ?? "").Length == 0)
             foreach (var p in config.Pages)
-                if ((p.Proxy ?? "").Trim().Length > 0) { config.Proxy = p.Proxy.Trim(); break; }
+                if ((p.Proxy ?? "").Trim().Length > 0) { config.Proxy = (p.Proxy ?? "").Trim(); break; }
         foreach (var p in config.Pages)
             if ((p.Proxy ?? "").Trim().Length > 0) { p.UseProxy = true; p.Proxy = ""; }
     }
