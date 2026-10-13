@@ -184,8 +184,8 @@ public sealed unsafe partial class GameWebBrowser
         if ((CefGetKeyState(20) & 1) != 0) m |= 1;
         if ((CefGetKeyState(144) & 1) != 0) m |= 256;
         if ((GetAsyncKeyState(91) & 0x8000) != 0 || (GetAsyncKeyState(92) & 0x8000) != 0) m |= 128;
-        
-        
+
+
         return m;
     }
     private void CefKeyboard(BrowserWin? owner)
