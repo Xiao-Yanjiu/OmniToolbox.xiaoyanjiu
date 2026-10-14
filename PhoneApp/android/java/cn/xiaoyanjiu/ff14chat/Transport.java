@@ -40,7 +40,7 @@ final class Transport {
   conn.setSSLSocketFactory(ssl.getSocketFactory());
   // Certificate identity is bound to the SHA-256 pin confirmed during device authorization.
   conn.setHostnameVerifier((host,session)->host.equals(url.getHost()));
-  conn.setInstanceFollowRedirects(false);conn.setConnectTimeout(4500);conn.setReadTimeout(path.startsWith("/poll")?14000:15000);
+  conn.setInstanceFollowRedirects(false);conn.setConnectTimeout(4500);conn.setReadTimeout(path.equals("/stream")&&body!=null&&body.optString("action").equals("start")?200000:path.startsWith("/poll")?14000:15000);
   if(!token.isEmpty())conn.setRequestProperty("Authorization","Bearer "+token);
   if(path.startsWith("/poll"))pollConnection=conn;
   try{

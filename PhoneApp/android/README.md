@@ -1,4 +1,4 @@
-# 狒狒食饲 Android App
+# 狒狒食柿 Android App
 
 当前源码版本：0.3.43（versionCode 32）；包名：`cn.xiaoyanjiu.ff14chat`。
 Java 源码在 `java/`，WebView 界面在 `assets/`，Android 资源在 `res/`。

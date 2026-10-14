@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using Windows.Graphics.Capture;
+using Windows.Graphics.DirectX;
+using Windows.Graphics.DirectX.Direct3D11;
+using Windows.Graphics.Imaging;
+using Windows.Storage.Streams;
+[ComImport,Guid("3628E81B-3CAC-4C60-B7F4-23CE0E0C3356"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] interface ICaptureInterop { [PreserveSig] int CreateForWindow(nint hwnd,ref Guid iid,out nint result); [PreserveSig] int CreateForMonitor(nint monitor,ref Guid iid,out nint result); }
+class Program {
+[StructLayout(LayoutKind.Sequential)] struct Rect{public int Left,Top,Right,Bottom;}
+[StructLayout(LayoutKind.Sequential)] struct Point{public int X,Y;}
+[DllImport("user32.dll")] static extern bool GetClientRect(nint window,out Rect result);
+[DllImport("user32.dll")] static extern bool GetWindowRect(nint window,out Rect result);
+[DllImport("user32.dll")] static extern bool ClientToScreen(nint window,ref Point point);
+[DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(nint window,int attribute,out Rect result,int size);
+[DllImport("kernel32.dll")] static extern uint SetThreadExecutionState(uint state);
+[DllImport("combase.dll")] static extern int WindowsCreateString([MarshalAs(UnmanagedType.LPWStr)] string value,int length,out nint result);
+[DllImport("combase.dll")] static extern int WindowsDeleteString(nint value);
+[DllImport("combase.dll")] static extern int RoGetActivationFactory(nint name,ref Guid iid,out nint factory);
+static GraphicsCaptureItem CaptureWindow(nint hwnd){string name="Windows.Graphics.Capture.GraphicsCaptureItem";Marshal.ThrowExceptionForHR(WindowsCreateString(name,name.Length,out var hstring));nint factory=0,item=0;object? interop=null;try{var iid=typeof(ICaptureInterop).GUID;Marshal.ThrowExceptionForHR(RoGetActivationFactory(hstring,ref iid,out factory));interop=Marshal.GetObjectForIUnknown(factory);var itemId=new Guid("79C3F95B-31F7-4EC2-A464-632EF5D30760");Marshal.ThrowExceptionForHR(((ICaptureInterop)interop).CreateForWindow(hwnd,ref itemId,out item));return WinRT.MarshalInspectable<GraphicsCaptureItem>.FromAbi(item);}finally{if(item!=0)Marshal.Release(item);if(interop!=null)Marshal.ReleaseComObject(interop);if(factory!=0)Marshal.Release(factory);WindowsDeleteString(hstring);}}
+
+[DllImport("d3d11.dll")] static extern int D3D11CreateDevice(nint adapter,uint type,nint software,uint flags,nint levels,uint count,uint sdk,out nint device,out uint level,out nint context);
+[DllImport("d3d11.dll")] static extern int CreateDirect3D11DeviceFromDXGIDevice(nint dxgi,out nint device);
+static async Task Main(string[] args){
+ if(args.Length!=1||!int.TryParse(args[0],out int pid))return;System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+ var process=Process.GetProcessById(pid);if(process.ProcessName!="ffxiv_dx11")throw new InvalidOperationException("Only the FFXIV game window may be captured.");
+ var hwnd=process.MainWindowHandle;if(hwnd==0)throw new InvalidOperationException("Game window is unavailable.");if(!GraphicsCaptureSession.IsSupported())throw new InvalidOperationException("Window capture is not supported on this Windows version.");
+ Marshal.ThrowExceptionForHR(D3D11CreateDevice(0,1,0,0x20,0,0,7,out var native,out _,out var context));var guid=new Guid("54ec77fa-1377-44e6-8c32-88fd5f44c84c");Marshal.ThrowExceptionForHR(Marshal.QueryInterface(native,ref guid,out var dxgi));Marshal.ThrowExceptionForHR(CreateDirect3D11DeviceFromDXGIDevice(dxgi,out var abi));var device=WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(abi);Marshal.Release(abi);Marshal.Release(dxgi);Marshal.Release(context);Marshal.Release(native);
+ var item=CaptureWindow(hwnd);var size=item.Size;using var pool=Direct3D11CaptureFramePool.CreateFreeThreaded(device,DirectXPixelFormat.B8G8R8A8UIntNormalized,2,size);using var session=pool.CreateCaptureSession(item);session.IsCursorCaptureEnabled=false;
+ var done=new TaskCompletionSource();item.Closed+=(_,_)=>done.TrySetResult();int busy=0;long last=0;var stdout=Console.OpenStandardOutput();
+ pool.FrameArrived+=async (sender,_)=>{if(Interlocked.Exchange(ref busy,1)!=0)return;Direct3D11CaptureFrame? frame=null;try{frame=sender.TryGetNextFrame();if(frame==null)return;long now=Environment.TickCount64;if(now-last<100)return;last=now;if(frame.ContentSize.Width!=size.Width||frame.ContentSize.Height!=size.Height){size=frame.ContentSize;frame.Dispose();frame=null;sender.Recreate(device,DirectXPixelFormat.B8G8R8A8UIntNormalized,2,size);return;}using var bitmap=await SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface);using var stream=new InMemoryRandomAccessStream();var props=new BitmapPropertySet{{"ImageQuality",new BitmapTypedValue(0.7f,Windows.Foundation.PropertyType.Single)}};var encoder=await BitmapEncoder.CreateAsync(BitmapEncoder.JpegEncoderId,stream,props);encoder.SetSoftwareBitmap(bitmap);var varPoint=new Point();if(!GetClientRect(hwnd,out var client)||!ClientToScreen(hwnd,ref varPoint)||client.Right<=0||client.Bottom<=0)throw new InvalidOperationException("Game client area is unavailable.");if(DwmGetWindowAttribute(hwnd,9,out var bounds,Marshal.SizeOf<Rect>())!=0&&!GetWindowRect(hwnd,out bounds))throw new InvalidOperationException("Game window bounds are unavailable.");int left=Math.Clamp(varPoint.X-bounds.Left,0,bitmap.PixelWidth-1),top=Math.Clamp(varPoint.Y-bounds.Top,0,bitmap.PixelHeight-1),width=Math.Min(client.Right,bitmap.PixelWidth-left),height=Math.Min(client.Bottom,bitmap.PixelHeight-top);double scale=Math.Min(1d,Math.Min(1280d/width,1920d/height));uint scaledWidth=(uint)Math.Max(1,Math.Round(bitmap.PixelWidth*scale)),scaledHeight=(uint)Math.Max(1,Math.Round(bitmap.PixelHeight*scale)),x=(uint)Math.Round(left*scale),y=(uint)Math.Round(top*scale);encoder.BitmapTransform.ScaledWidth=scaledWidth;encoder.BitmapTransform.ScaledHeight=scaledHeight;encoder.BitmapTransform.Bounds=new BitmapBounds{X=x,Y=y,Width=Math.Min((uint)Math.Max(1,Math.Round(width*scale)),scaledWidth-x),Height=Math.Min((uint)Math.Max(1,Math.Round(height*scale)),scaledHeight-y)};await encoder.FlushAsync();if(stream.Size>4*1024*1024)return;stream.Seek(0);using var reader=new DataReader(stream.GetInputStreamAt(0));await reader.LoadAsync((uint)stream.Size);var bytes=new byte[(int)stream.Size];reader.ReadBytes(bytes);await stdout.WriteAsync(BitConverter.GetBytes(bytes.Length));await stdout.WriteAsync(bytes);await stdout.FlushAsync();}catch(Exception e){Console.Error.WriteLine(e.Message);done.TrySetResult();}finally{frame?.Dispose();Interlocked.Exchange(ref busy,0);}};
+ SetThreadExecutionState(0x80000003);session.StartCapture();await done.Task;device.Dispose();
+ }
+}

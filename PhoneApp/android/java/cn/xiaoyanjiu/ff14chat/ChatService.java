@@ -55,7 +55,7 @@ public class ChatService extends Service {
   nm.createNotificationChannel(new NotificationChannel("chat","悄悄话与 @ 提醒",NotificationManager.IMPORTANCE_HIGH));
  }
  private PendingIntent open(){return PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);}
- private Notification connection(){return new Notification.Builder(this,"connection").setSmallIcon(android.R.drawable.ic_dialog_email).setContentTitle("狒狒食饲").setContentText(state).setContentIntent(open()).setOngoing(true).setOnlyAlertOnce(true).build();}
+ private Notification connection(){return new Notification.Builder(this,"connection").setSmallIcon(android.R.drawable.ic_dialog_email).setContentTitle("狒狒食柿").setContentText(state).setContentIntent(open()).setOngoing(true).setOnlyAlertOnce(true).build();}
  private void update(String text){if(text.equals(state))return;state=text;getSystemService(NotificationManager.class).notify(1,connection());}
  @Override public int onStartCommand(Intent intent,int flags,int startId){
   if(getSharedPreferences("receiver",0).getBoolean("paused",false)){stopSelf();return START_NOT_STICKY;}
@@ -90,8 +90,8 @@ public class ChatService extends Service {
     JSONObject entry=batch.getJSONObject(i);long id=entry.optLong("id");if(id<=committedAfter)continue;
     if(store.put(entry))fresh.add(entry);committedAfter=id;
    }store.commit();after=committedAfter;}catch(Exception e){store.rollback();throw e;}}
-   for(JSONObject entry:fresh)if(!first&&!visible&&entry.optBoolean("notify")&&!entry.optBoolean("outgoing"))notifyMessage(entry);
-   JSONArray notices=response.optJSONArray("notices");if(notices!=null)for(int i=0;i<notices.length();i++){JSONObject entry=notices.getJSONObject(i);long id=entry.optLong("id");if(id<=noticeCursor)continue;noticeCursor=id;if(noticesReady&&!visible&&!entry.optBoolean("externalPush"))notifyMessage(entry);}noticesReady=true;persistReceiver();
+   for(JSONObject entry:fresh)if(!first&&entry.optBoolean("notify")&&!entry.optBoolean("outgoing"))notifyMessage(entry);
+   JSONArray notices=response.optJSONArray("notices");if(notices!=null)for(int i=0;i<notices.length();i++){JSONObject entry=notices.getJSONObject(i);long id=entry.optLong("id");if(id<=noticeCursor)continue;noticeCursor=id;if(noticesReady&&(visible||!entry.optBoolean("externalPush")))notifyMessage(entry);}noticesReady=true;persistReceiver();
    if(!response.optBoolean("hasMore")&&!response.optBoolean("historyLoading"))first=false;failures=0;connectionError="";lastProgress=android.os.SystemClock.elapsedRealtime();update((response.optBoolean("hasMore")||response.optBoolean("historyLoading"))?"已连接 · 加载游戏聊天历史…":"已连接 · 游戏聊天历史已同步");
    JSONArray routes=response.optJSONArray("routes");if(routes!=null)synchronized(LOCK){store.begin();try{for(int i=0;i<routes.length();i++){JSONObject route=routes.getJSONObject(i);store.routes(route.optLong("id"),route.optJSONArray("tabs"),true);}store.commit();}catch(Exception e){store.rollback();throw e;}}
    routesPending=response.optBoolean("hasMoreRoutes");routeAfter=routesPending?response.optLong("nextRouteAfter"):0;
