@@ -4,7 +4,7 @@
 
 个人 QQ 已改为 NapCat 4.18.38 官方 Windows Node 包，包含 QQ 运行组件，无需申请 LLBot 授权或填写签名地址。首次点击准备 QQ 服务（约 118 MB，下载后校验 SHA-256），再点击机器人 QQ 扫码登录；请用机器人账号扫码。二维码直接显示在模块面板，也可点击查看登录码打开 PNG。可选填机器人 QQ 号，填后会核对扫码账号。恢复登录和随模块恢复 QQ 不自动下载程序；首次使用需先准备。离线推送单选 WxPusher 或 Server酱，QQ 提醒独立设置并与所选推送同时发送；群同步和白名单 # 回复游戏配置保留，旧后端登录凭证不能迁移，首次需重新扫码。APK 0.3.39 可使用原签名覆盖升级。
 
-在 Omni 在线模块中安装并启用“手机app支持”。下载 [小烟酒 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.41)，在手机填写电脑可访问的地址与端口，提交验证码，再由电脑模块确认设备授权。路由器转发需由用户配置；默认端口 18765。
+在 Omni 在线模块中安装并启用“手机app支持”。下载 [小烟酒 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.42)，在手机填写电脑可访问的地址与端口，提交验证码，再由电脑模块确认设备授权。路由器转发需由用户配置；默认端口 18765。
 
 使用个人云推送时，WxPusher、Server酱及 QQ 的凭据由用户自行设置。QQ 使用本地 NapCat 服务，不使用 LLBot 审核或签名服务。模块自动生成仅本机有效的接口密码，不要求用户填写；QQ 原生组件只运行在独立子进程，不加载进游戏。QQ 账号自己的登录验证或风控仍可能要求手机确认，不能承诺永不掉线。
 
@@ -58,3 +58,15 @@ NapCat 的运行文件校验后只读，账号数据保存在模块配置目录�
 - QQ 到游戏按机器人、群与消息编号持久去重，重连重建接收时间边界，不回补断线旧消息。先持久认领，再校验原始发送时间，最后排入游戏线程；游戏未登录、连接换代或排队过久时丢弃，绝不在下次启动重发。为确保不回放，进程退出前已认领但尚未发送的消息也不补发。协议字段依据 [OneBot 消息事件](https://github.com/botuniverse/onebot-11/blob/master/event/message.md) 和 [get_msg 接口](https://github.com/botuniverse/onebot-11/blob/master/api/public.md)。
 
 新增回归：`tests/QQSyncRegression/Regression.csproj` 参数为模块 DLL、Omni DLL 目录、Dalamud DLL 目录、测试输出目录。验证持久防重放、原始时间、空选频道、实时新消息和实际聊天载荷唤醒；不发送任何真实 QQ 或游戏消息。界面回归覆盖页面导航、卡片操作及实际状态确认。真实国服列表、现场 QQ 消息和手机后台表现仍需实际使用验证。
+
+## 0.3.42
+
+- 招募列表改用当前 SDK 的公开 `CrossRealmListingSegmentPacket` 与 `AgentLookingForGroup.RequestCategoryListings`，不调用打开游戏招募面板，也不再读取列表 UI 节点。仅在请求窗口内观察接收数据，不改写数据包，原接收函数始终执行；模块停用时清理 Hook。角色离线清空缓存。
+- 明确区分收到空数据包和未收到返回。分段数据在接收静默 350 毫秒后合并，超时返回真实错误；当前接口没有公开最终分段标志，慢网络下仍需实际验证列表完整性。未初始化的原生接口直接报错，不以打开面板兜底。
+- 游戏列表按实际返回的批次本地分类和每页 20 条分页，每 15 秒请求刷新；分类数量仅表示该次服务器返回，不宣称获取了服务器全部历史或跨页数据。缓存只作为上次结果显示，刷新期间不能点选旧条目。选择具体招募的详情、参加和悄悄话仍走游戏实际操作。
+- 游戏/国服招募板统一紧凑任务、职能、品级、招募人和描述布局，分类仅显示真实图标或文字与单份计数；底部操作固定，分类栏支持触摸横向滚动及鼠标拖动。国服服务器没有品级字段时留空；模式值从返回帖子识别后传给公开筛选接口，尚未返回的类型暂不可选择。
+- 游戏主题使用灰黑渐变、金色边缘、圆角和阴影，重现截图的视觉结构；图标/符号通过游戏端资源传输，不打包游戏资源。样式由本项目独立编写，不能保证和游戏像素完全一致。
+- 聊天栏与频道按钮随模式改变文字。通讯贝/跨服贝加入滑动序列，默认汇总两类贝，菜单可选具体贝或返回全部。频道栏与标题分开，圆角更紧凑；页面菜单和频道下拉互斥。
+- 模块编译及 UI、招募解析、缓存/空包/取消/过期回归通过；未向真实服务器发请求或发送 QQ/游戏消息。无面板请求、国服筛选返回和长期游戏运行仍需实际使用验证。
+
+公开 API 参考：[Dalamud 招募接收服务](https://github.com/goatcorp/Dalamud/blob/master/Dalamud/Plugin/Services/IPartyFinderGui.cs)、[FFXIVClientStructs 招募请求](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/UI/Agent/AgentLookingForGroup.cs)。

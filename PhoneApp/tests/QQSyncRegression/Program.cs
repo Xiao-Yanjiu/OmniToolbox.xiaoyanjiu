@@ -45,6 +45,22 @@ var observe=phone.GetMethod("ObserveRecruitmentFailure",BindingFlags.Instance|Bi
 Check(failure.Task.IsCompletedSuccessfully&&elapsed.ElapsedMilliseconds<200,"real IChatMessage error payload wakes a pending recruitment immediately");
 var ordinary=new TaskCompletionSource<string>();Set("recruitmentFailure",ordinary);chatProxy.Values["get_LogKind"]=Enum.Parse(enumType,"Say");observe.Invoke(instance,[chatProxy]);Check(!ordinary.Task.IsCompleted,"a player quoting the same error text cannot cancel recruitment");
 
+// Direct recruitment cache tests do not install a native hook or issue game requests.
+var cacheType=phone.GetNestedType("DirectBoardCache")!;var listingType=phone.GetNestedType("DirectListing")!;
+var cache=Activator.CreateInstance(cacheType)!;
+object Listing(ulong id,long expires){var row=Activator.CreateInstance(listingType)!;listingType.GetField("id")!.SetValue(row,id);listingType.GetField("expires")!.SetValue(row,expires);return row;}
+void CacheCall(string method,params object[] values)=>cacheType.GetMethod(method)!.Invoke(cache,values);
+Array Rows(params object[] values){var result=Array.CreateInstance(listingType,values.Length);for(int i=0;i<values.Length;i++)result.SetValue(values[i],i);return result;}
+bool Complete(long now)=>(bool)cacheType.GetMethod("Complete")!.Invoke(cache,[now])!;
+Array Snapshot(long now)=>(Array)cacheType.GetMethod("Snapshot")!.Invoke(cache,[now])!;
+CacheCall("Begin",1000L);Check(!Complete(2000L),"missing recruitment response is not mistaken for an empty board");
+CacheCall("Packet",Rows(Listing(11,10000)),1100L);Check(!Complete(1300L),"waits for fragmented recruitment response to settle");
+CacheCall("Packet",Rows(Listing(12,10000),Listing(11,10000)),1300L);Check(Complete(1700L)&&Snapshot(1700L).Length==2,"received segments are merged and duplicate listing IDs are removed");
+CacheCall("Begin",2000L);Check(Snapshot(2100L).Length==2,"previous complete data remains available while a refresh is pending");CacheCall("Packet",Rows(),2100L);Check(Complete(2500L)&&Snapshot(2500L).Length==0,"an actual empty packet clears the previous board");
+CacheCall("Begin",3000L);CacheCall("Packet",Rows(Listing(13,3500)),3100L);Complete(3450L);Check(Snapshot(3501L).Length==0,"expired recruitment entries are removed locally");
+CacheCall("Begin",4000L);CacheCall("Cancel");CacheCall("Packet",Rows(Listing(14,10000)),4100L);Check(!Complete(4500L),"cancelled board requests cannot publish late packets");
+CacheCall("Clear");Check(Snapshot(4500L).Length==0&&(long)cacheType.GetProperty("UpdatedAt")!.GetValue(cache)! == 0,"logout clears recruitment data from the previous character");
+
 File.Delete(path);Console.WriteLine(checks+" checks passed; no QQ or game messages sent.");
 
 public class ChatProxy:DispatchProxy{public Dictionary<string,object> Values=new();protected override object? Invoke(MethodInfo? method,object?[]? args){if(method!=null&&Values.TryGetValue(method.Name,out var value))return value;return method?.ReturnType.IsValueType==true?Activator.CreateInstance(method.ReturnType):null;}}
