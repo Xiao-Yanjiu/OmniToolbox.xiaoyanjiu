@@ -1,7 +1,7 @@
 {
   "versionCode": 34,
   "versionName": "0.3.43",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.43/%E7%8B%92%E7%8B%92%E9%A3%9F%E9%A5%B2.apk",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.43/FeifeiShisi.apk",
   "sha256": "5f344f1660ffc2d439f1d7a15ecd73e8099815812ea5efa7ffebca4cc37b18b4",
   "size": 2344076,
   "notes": "App 改名狒狒食饲，请同时更新狒狒食饲《服务端》至 0.3.43。修复改名、宏图标、蓝色高亮、配色和导航长按排序；招募查看不主动打开游戏窗口，筛选与国服异步读取调整。服务端推送和下载改折叠，移除旧 QQ 模块。原签名覆盖安装保留账号。参加仍需游戏确认，真实国服返回需实际使用验证。"
