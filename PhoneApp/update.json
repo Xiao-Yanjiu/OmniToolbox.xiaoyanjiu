@@ -1,8 +1,8 @@
 {
-  "versionCode": 35,
-  "versionName": "0.3.44",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.44/FeifeiShisi.apk",
-  "sha256": "7b974b34f12df9b3a4c04eedcabdb3c8e2b97095eb976eac557378b113a56b2b",
-  "size": 2356743,
-  "notes": "改名狒狒食柿，原签名保留授权。请同步更新狒狒食柿《服务端》至0.3.44。修复招募跟随主题、灰色选中、浅色文字和自动翻译图标颜色；国服实时招募和App内提醒调整。加入角色基础页面、物品查询及仅游戏窗口串流的全屏/小窗/分屏。完整铭牌三维、装备和部队详情尚未完成；串流为JPEG约10FPS，尺寸切换与恢复需实机验证。"
+  "versionCode": 36,
+  "versionName": "0.3.45",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.45/FeifeiShisi.apk",
+  "sha256": "b8976949970fb93939a62a692d4a39cef1ea2f4e380c3b735187ead74ea96772",
+  "size": 2360773,
+  "notes": "请同步更新服务端至0.3.45。游戏主题普通文字与发送按钮改灰色；删除指定角色资料入口；库存按游戏排序保留空位，角色四分页、货币五分类。串流横向尺寸、横屏全屏、小窗缩放和App内可调分屏。角色模型、按键及国服实时列表验证仍待完成。"
 }
