@@ -1,14 +1,14 @@
 # 小烟酒手机 App / 手机app支持
 
-手机支持模块版本 0.3.40，APK 版本 0.3.40（versionCode 31）。APK 软件名为“小烟酒”，Android 包名 `cn.xiaoyanjiu.ff14chat`。
+手机支持模块版本 0.3.41，APK 版本 0.3.41（versionCode 32）。APK 软件名为“小烟酒”，Android 包名 `cn.xiaoyanjiu.ff14chat`。
 
 个人 QQ 已改为 NapCat 4.18.38 官方 Windows Node 包，包含 QQ 运行组件，无需申请 LLBot 授权或填写签名地址。首次点击准备 QQ 服务（约 118 MB，下载后校验 SHA-256），再点击机器人 QQ 扫码登录；请用机器人账号扫码。二维码直接显示在模块面板，也可点击查看登录码打开 PNG。可选填机器人 QQ 号，填后会核对扫码账号。恢复登录和随模块恢复 QQ 不自动下载程序；首次使用需先准备。离线推送单选 WxPusher 或 Server酱，QQ 提醒独立设置并与所选推送同时发送；群同步和白名单 # 回复游戏配置保留，旧后端登录凭证不能迁移，首次需重新扫码。APK 0.3.39 可使用原签名覆盖升级。
 
-在 Omni 在线模块中安装并启用“手机app支持”。下载 [小烟酒 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.40)，在手机填写电脑可访问的地址与端口，提交验证码，再由电脑模块确认设备授权。路由器转发需由用户配置；默认端口 18765。
+在 Omni 在线模块中安装并启用“手机app支持”。下载 [小烟酒 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.41)，在手机填写电脑可访问的地址与端口，提交验证码，再由电脑模块确认设备授权。路由器转发需由用户配置；默认端口 18765。
 
 使用个人云推送时，WxPusher、Server酱及 QQ 的凭据由用户自行设置。QQ 使用本地 NapCat 服务，不使用 LLBot 审核或签名服务。模块自动生成仅本机有效的接口密码，不要求用户填写；QQ 原生组件只运行在独立子进程，不加载进游戏。QQ 账号自己的登录验证或风控仍可能要求手机确认，不能承诺永不掉线。
 
-- `../Modules/PhoneChat/0.3.40/PhoneChat.cs`：可在 Omni 使用的单文件模块。
+- `../Modules/PhoneChat/0.3.41/PhoneChat.cs`：可在 Omni 使用的单文件模块。
 - `android/`：APK 对应源码、资源、构建脚本和说明。
 - `third_party/NapCat/`：当前 QQ 后端的官方来源、固定版本校验值和许可说明。`third_party/LLBot/` 留作旧版本记录，不再加载。`third_party/Lagrange-V1/` 留作旧发布版本的对应源码，当前模块不再加载。
 - `LICENSE` / `../Modules/PhoneChat.LICENSE`：本功能 GPL-3.0-or-later 许可证。
@@ -46,3 +46,15 @@ NapCat 的运行文件校验后只读，账号数据保存在模块配置目录�
 - 在线状态图标直接随实时状态提供，图标获取失败不会中断字体或其他图标下载，资源下载使用单独队列，不阻塞发送和招募操作；模块端口服务与提醒权限改为折叠栏。
 
 回归测试：`tests/PhoneUiRegression.cjs`（Playwright，通过 `PLAYWRIGHT_MODULE`、`YANJIU_BROWSER` 指定依赖和浏览器，`YANJIU_TEST_OUTPUT` 指定截图目录）；`tests/RecruitmentParsingRegression/Regression.csproj` 参数为模块 DLL、Omni DLL 目录、Dalamud DLL 目录。解析夹具检验公开接口签名适配，不模拟实际游戏成功。真实国服服务、游戏队伍操作、手机安装与长期后台连接尚需实际使用验证。
+
+## 0.3.41
+
+- 点击左上角标题滑出页面栏：账号设置、聊天消息、招募频道、队伍信息、应用设置。主要页面为独立页面；招募详情和明确确认操作仍使用详情弹窗。
+- 账号卡片显示命名连接、游戏角色和区服、连接地址、可选国服身份与频道状态；连接、断开、重载和国服/新人加入退出都在卡片中。附加国服授权由电脑端确认，保留普通设备令牌，不要求再次扫码或丢弃普通连接。
+- 国服招募区分未连接、未授权、加载失败与真正的空列表；等待公开客户端现有加载任务结束，检查返回错误和有效选中帖子。当前本机 0.3.40 实际接口返回未连接/未授权，未验证已登录国服服务器的真实招募列表。
+- 游戏“无法获取招募者的情报。”来自实际系统 `ErrorMessage`（编号 60），在实时处理和被宿主处理的聊天事件中监听并立即唤醒挂起的招募请求，不再等待默认 8 秒超时。
+- 频道操作后用短期 100ms 状态检测，客户端按状态版本轮询，避免状态在轮询开始前已改变仍等待旧超时；账号页短期快速读取收到的状态，服务器未确认前不会显示加入成功。
+- QQ 同步首次不选频道；旧版默认组合/全选组合迁移为空并停用同步，自定义选择保留。游戏到 QQ 仅由实时事件入队，不扫描聊天历史。国服事件过滤旧时间并按消息编号去重。
+- QQ 到游戏按机器人、群与消息编号持久去重，重连重建接收时间边界，不回补断线旧消息。先持久认领，再校验原始发送时间，最后排入游戏线程；游戏未登录、连接换代或排队过久时丢弃，绝不在下次启动重发。为确保不回放，进程退出前已认领但尚未发送的消息也不补发。协议字段依据 [OneBot 消息事件](https://github.com/botuniverse/onebot-11/blob/master/event/message.md) 和 [get_msg 接口](https://github.com/botuniverse/onebot-11/blob/master/api/public.md)。
+
+新增回归：`tests/QQSyncRegression/Regression.csproj` 参数为模块 DLL、Omni DLL 目录、Dalamud DLL 目录、测试输出目录。验证持久防重放、原始时间、空选频道、实时新消息和实际聊天载荷唤醒；不发送任何真实 QQ 或游戏消息。界面回归覆盖页面导航、卡片操作及实际状态确认。真实国服列表、现场 QQ 消息和手机后台表现仍需实际使用验证。

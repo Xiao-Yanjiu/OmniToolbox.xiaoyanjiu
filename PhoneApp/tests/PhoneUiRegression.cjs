@@ -2,7 +2,8 @@ const fs=require('fs'),vm=require('vm'),assert=require('assert'),path=require('p
 const output=process.env.YANJIU_TEST_OUTPUT;if(output)fs.mkdirSync(output,{recursive:true});
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const root=path.resolve(__dirname,'..','..');
-const html=fs.readFileSync(root+'/PhoneApp/android/assets/index.html','utf8');
+let html=fs.readFileSync(root+'/PhoneApp/android/assets/index.html','utf8');
+const pages=fs.readFileSync(root+'/PhoneApp/android/assets/pages.js','utf8'),css=fs.readFileSync(root+'/PhoneApp/android/assets/pages.css','utf8');new vm.Script(pages,{filename:'pages.js'});html=html.replace('<script src="pages.js"></script>','<script>'+pages+'</script>').replace('<link rel="stylesheet" href="pages.css">','<style>'+css+'</style>');
 for(const [i,match] of [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].entries())new vm.Script(match[1],{filename:'phone-script-'+i});
 console.log('PASS all embedded scripts parse');
 (async()=>{
@@ -48,13 +49,13 @@ await page.evaluate(d=>boardResult('open',true,d),board);if(output)await page.sc
 await page.locator('.boardRecruitRow').click();assert.deepEqual(await page.evaluate(()=>calls.slice(-2)),[['listing','board-test','12345'],['open',0,'']]);
 await page.evaluate(d=>recruitmentResult('open',true,d),details);await page.evaluate(()=>closeRecruitment());await page.evaluate(()=>recruitmentResult('close',true,{ok:true}));assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['board','read','board-test',0]);
 await page.evaluate(d=>boardResult('read',true,d),board);await page.locator('#boardNext').click();assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['board','next','board-test',0]);await page.evaluate(d=>boardResult('next',true,d),board);
-await page.evaluate(()=>closeBoard());assert.equal(await page.locator('#boardDialog').evaluate(n=>n.open),true);await page.evaluate(()=>boardResult('close',true,{ok:true}));assert.equal(await page.locator('#boardDialog').evaluate(n=>n.open),false);
+await page.evaluate(()=>closeBoard());assert.equal(await page.locator('#boardDialog').evaluate(n=>n.open),false);await page.evaluate(()=>boardResult('close',true,{ok:true}));assert.equal(await page.locator('#boardDialog').evaluate(n=>n.open),false);
 console.log('PASS recruitment board, game pagination and child detail close synchronization');
-await page.evaluate(()=>{Phone.accounts=()=>JSON.stringify([{id:'saved-one',name:'测试昵称',alias:'12345',address:'https://test.invalid:18765',active:false}]);Phone.switchAccount=id=>calls.push(['account',id]);openAccounts()});await page.getByRole('button',{name:'连接',exact:true}).click();assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['account','saved-one']);assert.match(await page.locator('#accountsList').textContent(),/测试昵称.*12345/);
+await page.evaluate(()=>{Phone.accounts=()=>JSON.stringify([{id:'saved-one',name:'测试昵称',worldAuthorized:true,alias:'12345',address:'https://test.invalid:18765',active:false}]);Phone.switchAccount=id=>calls.push(['account',id]);openAccounts()});await page.getByRole('button',{name:'连接设备',exact:true}).click();assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['account','saved-one']);assert.match(await page.locator('#accountsList').textContent(),/测试昵称.*12345/);
 console.log('PASS account selector displays identity and selects saved authorization');
 
-await page.evaluate(()=>document.querySelectorAll('dialog[open]').forEach(d=>d.close()));
-assert.deepEqual(await page.locator('.top button').allTextContents(),['队伍','招募','频道','设置']);
+await page.evaluate(()=>{document.querySelectorAll('dialog[open]').forEach(d=>d.close());navigatePage('chat')});
+assert.deepEqual(await page.locator('.top button').allTextContents(),['☰ 聊天消息','频道']);
 assert.equal(await page.locator('#connectionActions').getByRole('button',{name:'连接设备',exact:true,includeHidden:true}).count(),1);
 assert.equal(await page.locator('#connectionActions').getByRole('button',{name:/切换账号|重新连接|队员招募/,includeHidden:true}).count(),0);
 console.log('PASS requested toolbar order and consolidated connection menu');
@@ -62,7 +63,7 @@ await page.evaluate(()=>{snapshot.messages=fixture.messages;current='channel:新
 assert.equal(await page.locator('.recruitLink').count(),0);await page.locator('.inlineRecruitText').click();assert.equal(await page.locator('#boardDialog').evaluate(n=>n.open),true);await page.evaluate(()=>{boardResult('open',true,{ok:true,open:true,viewId:'board-test',rows:[],categories:[],canNext:false,canPrevious:false});closeBoard();boardResult('close',true,{ok:true})});
 await page.evaluate(()=>{openRecruitment(101);recruitmentResult('open',false,{error:'招募已取消'});closeRecruitment()});assert.equal(await page.locator('#recruitDialog').evaluate(n=>n.open),false);
 console.log('PASS inline recruitment text and closing a cancelled recruitment without getting stuck');
-await page.evaluate(()=>{Phone.worldBoard=(...args)=>calls.push(['world',...args]);openRecruitBoard();boardResult('open',true,{ok:true,open:true,viewId:'board-test',rows:[],categories:[],canNext:false,canPrevious:false});selectBoardMode('world')});assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['world','open','',0]);
+await page.evaluate(()=>{Phone.worldBoard=(...args)=>calls.push(['world',...args]);openRecruitBoard();boardResult('open',true,{ok:true,open:true,viewId:'board-test',rows:[],categories:[],canNext:false,canPrevious:false});selectBoardMode('world');boardResult('close',true,{ok:true})});assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['world','open','',0]);
 const worldPost={postId:'11111111-1111-4111-8111-111111111111',title:'国服招募回归',content:'招募内容',leader:'队长',alias:'9',slots:[[19,24]],world:'测试世界'};
 await page.evaluate(p=>worldBoardResult('open',true,{rows:[p],offset:0,hasMore:false,pageSize:10}),worldPost);await page.locator('#boardRows .boardRecruitRow').click();assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['world','select',worldPost.postId,0]);await page.evaluate(p=>worldBoardResult('select',true,{rows:[p],selected:p,offset:0}),worldPost);assert.equal(await page.locator('#worldPostDialog').evaluate(n=>n.open),true);await page.evaluate(()=>{closeWorldPost();closeBoard()});
 console.log('PASS game/world recruitment board switching and shared post selection');
@@ -76,8 +77,23 @@ console.log('PASS optional world authorization does not require a world account 
 
 
 await page.evaluate(()=>{document.querySelectorAll('dialog[open]').forEach(d=>d.close());Phone.requestPairNamed=(...args)=>calls.push(['pairNamed',...args]);Phone.accounts=()=>JSON.stringify([{id:'ordinary',label:'普通游戏账号',name:'',alias:'',address:'https://test.invalid:18765',active:true}]);openAccounts()});
-assert.match(await page.locator('#accountsList').textContent(),/普通游戏账号/);assert.doesNotMatch(await page.locator('#accountsList').textContent(),/国服/);await page.getByRole('button',{name:'添加新账号',exact:true}).click();await page.locator('#newAccountName').fill('主账号');await page.locator('#connectionHost').fill('192.168.1.10');await page.locator('#connectionPort').fill('18765');await page.getByRole('button',{name:'请求授权',exact:true}).click();assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['pairNamed','192.168.1.10',18765,'主账号']);
+assert.match(await page.locator('#accountsList').textContent(),/普通游戏账号/);assert.doesNotMatch(await page.locator('#accountsList').textContent(),/测试昵称|12345/);assert.match(await page.locator('#accountsList').textContent(),/未附加授权/);await page.getByRole('button',{name:'＋ 添加账号',exact:true}).click();await page.locator('#newAccountName').fill('主账号');await page.locator('#connectionHost').fill('192.168.1.10');await page.locator('#connectionPort').fill('18765');await page.getByRole('button',{name:'请求授权',exact:true}).click();assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['pairNamed','192.168.1.10',18765,'主账号']);
 console.log('PASS named connection authorization works without a world-channel identity');
 
+
+await page.evaluate(()=>{Phone.cancelPair();document.getElementById('manualPairDialog').close();navigatePage('chat')});
+await page.locator('#pageMenuButton').click();assert.equal(await page.locator('#pageDrawer').getAttribute('aria-hidden'),'false');assert.deepEqual(await page.locator('#pageDrawer nav button').allTextContents(),['账号设置','聊天消息','招募频道','队伍信息','应用设置']);
+await page.locator('#pageDrawer').getByRole('button',{name:'账号设置',exact:true}).click();assert.deepEqual(await page.evaluate(()=>appPageState()),{page:'accounts',drawerOpen:false});for(const id of ['accountsDialog','boardDialog','partyDialog','appearanceDialog'])assert.equal(await page.locator('#'+id).evaluate(n=>n.tagName),'SECTION');
+assert.equal(await page.locator('#accountsList .accountCard').count(),1);for(const name of ['连接设备','断开连接','重载数据','加入国服','退出国服','加入新人','退出新人'])assert.equal(await page.locator('#accountsList').getByRole('button',{name,exact:true}).count(),1);
+await page.evaluate(()=>navigatePage('settings'));assert.equal(await page.locator('#appearanceDialog').isVisible(),true);assert.equal(await page.locator('dialog[open]').count(),0);await page.evaluate(()=>handleAppBack());assert.equal(await page.evaluate(()=>appPageState().page),'chat');
+console.log('PASS drawer page navigation, independent sections, account card controls and Android back');
+await page.evaluate(()=>{navigatePage('recruit',{mode:'world'});worldBoardResult('open',false,{error:'该账号未附加国服授权'})});assert.match(await page.locator('#boardRows').textContent(),/未附加国服授权/);assert.doesNotMatch(await page.locator('#boardRows').textContent(),/当前没有国服招募/);await page.locator('#boardRows').getByRole('button',{name:'查看账号权限',exact:true}).click();assert.equal(await page.evaluate(()=>appPageState().page),'accounts');
+console.log('PASS world permission/load failures are distinct from an empty recruitment list');
+
+
+await page.evaluate(()=>{window.liveJoined=false;fixture.worldJoined=false;fixture.worldAuthorized=true;snapshot=fixture;Phone.accounts=()=>JSON.stringify([{id:'fast-status',label:'状态账号',worldAuthorized:true,address:'https://test.invalid:18765',active:true,paused:false}]);Phone.statusSnapshot=()=>JSON.stringify({state:'已连接',worldAuthorized:true,worldJoined:liveJoined,noviceJoined:false});Phone.send=(...args)=>calls.push(['send',...args]);navigatePage('accounts');accountAction('fast-status','worldJoin')});assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['send','频道操作','','国服加入']);assert.match(await page.locator('#accountsList').textContent(),/正在加入国服/);await page.evaluate(()=>{liveJoined=true;sent(true,'请求已提交')});assert.match(await page.locator('#accountsList').textContent(),/国服 已加入/);assert.doesNotMatch(await page.locator('#accountsList').textContent(),/正在加入国服/);
+console.log('PASS membership cards wait for actual status and quickly reflect confirmed join');
+
+if(output){await page.evaluate(()=>{fixture.worldAuthorized=true;fixture.gameAccount={name:'测试角色',world:'测试世界',job:19,level:100,loggedIn:true};snapshot=fixture;Phone.accounts=()=>JSON.stringify([{id:'card-main',label:'主账号',gameName:'测试角色',world:'测试世界',name:'测试昵称',alias:'9',worldAuthorized:true,address:'https://test.invalid:18765',active:true,paused:false},{id:'card-alt',label:'备用账号',gameName:'测试角色二',world:'测试世界',address:'https://other.invalid:18765',active:false,paused:false}]);navigatePage('accounts');updatePref('theme','white');accountsChanged()});await page.screenshot({path:path.join(output,'accounts-light.png')});await page.evaluate(()=>{updatePref('theme','black');openPageDrawer()});await page.waitForTimeout(220);await page.screenshot({path:path.join(output,'navigation-dark.png')})}
 assert.deepEqual(errors,[]);await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});

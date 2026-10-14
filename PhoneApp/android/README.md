@@ -1,6 +1,6 @@
 # 小烟酒 Android App
 
-当前源码版本：0.3.40（versionCode 31）；包名：`cn.xiaoyanjiu.ff14chat`。
+当前源码版本：0.3.41（versionCode 32）；包名：`cn.xiaoyanjiu.ff14chat`。
 Java 源码在 `java/`，WebView 界面在 `assets/`，Android 资源在 `res/`。
 
 使用 PowerShell 7 运行 `build.ps1`。设置环境变量 `YANJIU_BUILD_TOOLS` 为本地构建工具目录。
