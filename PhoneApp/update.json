@@ -1,8 +1,8 @@
 {
-  "versionCode": 32,
-  "versionName": "0.3.41",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.41/Xiaoyanjiu.apk",
-  "sha256": "320a19ca787f48843a7fa19c03fb40849eee7011d22ebe21f3a32b7cfcb1a5a6",
-  "size": 2331595,
-  "notes": "请同时升级手机支持模块至 0.3.41。侧边导航、独立页面及账号卡片；加快国服加入退出状态反馈和招募失效提示；QQ 仅同步新信息，默认不全选频道，防止重启重发旧消息。沿用原签名可覆盖安装。实际游戏和国服招募需使用验证。"
+  "versionCode": 33,
+  "versionName": "0.3.42",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.42/Xiaoyanjiu.apk",
+  "sha256": "647634fe59d5e1564768b382a20f895fd656d6a20a895cba34bcfdc1f4873765",
+  "size": 2339914,
+  "notes": "请同时更新手机支持模块至 0.3.42。招募列表改为游戏网络数据读取，不主动打开游戏招募面板；分类计数去重、横向滑动、底部固定及紧凑布局。应用设置选择游戏主题。修复频道按钮文字、通讯贝滑动与默认汇总，频道栏圆角分隔。沿用原签名覆盖安装保留账号。无面板原生请求与国服服务器筛选仍需实际使用验证，未初始化接口报错且不以打开面板兜底。"
 }
