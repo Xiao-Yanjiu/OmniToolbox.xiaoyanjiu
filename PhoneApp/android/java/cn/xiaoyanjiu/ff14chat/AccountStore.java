@@ -1,0 +1,24 @@
+package cn.xiaoyanjiu.ff14chat;
+
+import android.content.Context;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.AtomicFile;
+import org.json.*;
+import java.io.*;
+import java.security.*;
+import javax.crypto.*;
+import javax.crypto.spec.GCMParameterSpec;
+
+/** Paired connections only. Credentials stay encrypted on this phone. */
+final class AccountStore {
+ private static String lastSaved="";
+ private static SecretKey key()throws Exception{KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);if(!store.containsAlias("Yanjiu.Accounts")){KeyGenerator generator=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");generator.init(new KeyGenParameterSpec.Builder("Yanjiu.Accounts",KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());generator.generateKey();}return (SecretKey)store.getKey("Yanjiu.Accounts",null);}
+ private static AtomicFile file(Context c){return new AtomicFile(new File(c.getFilesDir(),"accounts.enc"));}
+ private static JSONArray read(Context c)throws Exception{AtomicFile file=file(c);if(!file.getBaseFile().exists())return new JSONArray();byte[] bytes=file.readFully();return new JSONArray(AccountCipher.decrypt(bytes,key()));}
+ private static void write(Context c,JSONArray accounts)throws Exception{byte[] encrypted=AccountCipher.encrypt(accounts.toString(),key());AtomicFile file=file(c);FileOutputStream stream=file.startWrite();try{stream.write(encrypted);file.finishWrite(stream);}catch(Exception e){file.failWrite(stream);throw e;}}
+ private static String id(String url,String pin)throws Exception{byte[] bytes=MessageDigest.getInstance("SHA-256").digest((url+"|"+pin).getBytes("UTF-8"));StringBuilder out=new StringBuilder();for(byte b:bytes)out.append(String.format("%02x",b&255));return out.toString();}
+ static synchronized void remember(Context c,JSONObject identity){try{android.content.SharedPreferences pair=c.getSharedPreferences("pair",0);String url=pair.getString("url",""),pin=pair.getString("pin",""),token=pair.getString("token","");if(url.isEmpty()||pin.length()!=64||token.length()!=64)return;String alias=identity==null?"":identity.optString("alias"),name=identity==null?"":identity.optString("name");String signature=url+pin+token+alias+name;if(signature.equals(lastSaved))return;String key=id(url,pin);JSONArray accounts=read(c);JSONObject record=null;for(int i=0;i<accounts.length();i++)if(key.equals(accounts.getJSONObject(i).optString("id")))record=accounts.getJSONObject(i);if(record==null){record=new JSONObject();accounts.put(record);}record.put("id",key).put("url",url).put("pin",pin).put("token",token);if(!alias.isEmpty())record.put("alias",alias);if(!name.isEmpty())record.put("name",name);write(c,accounts);lastSaved=signature;}catch(Exception ignored){}}
+ static synchronized String list(Context c){try{JSONArray source=read(c),safe=new JSONArray();String url=c.getSharedPreferences("pair",0).getString("url","");for(int i=0;i<source.length();i++){JSONObject a=source.getJSONObject(i);safe.put(new JSONObject().put("id",a.getString("id")).put("name",a.optString("name","已授权连接")).put("alias",a.optString("alias")).put("address",a.getString("url")).put("active",url.equals(a.getString("url"))));}return safe.toString();}catch(Exception e){return "[]";}}
+ static synchronized void select(Context c,String selected)throws Exception{JSONArray source=read(c);for(int i=0;i<source.length();i++){JSONObject a=source.getJSONObject(i);if(selected.equals(a.optString("id"))){c.getSharedPreferences("pair",0).edit().putString("url",a.getString("url")).putString("pin",a.getString("pin")).putString("token",a.getString("token")).apply();c.getSharedPreferences("receiver",0).edit().putBoolean("paused",false).apply();return;}}throw new IOException("未找到已授权账号");}
+}

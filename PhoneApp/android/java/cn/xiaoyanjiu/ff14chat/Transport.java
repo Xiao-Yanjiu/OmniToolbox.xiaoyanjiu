@@ -16,12 +16,14 @@ final class Transport {
   try{if(conn.getResponseCode()!=200)throw new IOException("电脑模块不支持手动授权，请更新模块");try(InputStream stream=conn.getInputStream()){byte[] buffer=new byte[2048];int total=0,n;while((n=stream.read(buffer))!=-1){total+=n;if(total>8192)throw new IOException("授权响应无效");}}if(pin[0].length()!=64)throw new IOException("未取得服务器证书");return pin[0];}finally{conn.disconnect();}
  }
  private static volatile HttpsURLConnection pollConnection;
- static void cancelPoll(){HttpsURLConnection connection=pollConnection;if(connection!=null)connection.disconnect();}
+ private static final java.util.concurrent.atomic.AtomicInteger pollGeneration=new java.util.concurrent.atomic.AtomicInteger();
+ static void cancelPoll(){pollGeneration.incrementAndGet();HttpsURLConnection connection=pollConnection;if(connection!=null)connection.disconnect();}
  static JSONObject request(Context context,String path,JSONObject body) throws Exception {
   android.content.SharedPreferences p=context.getSharedPreferences("pair",0);
   return call(p.getString("url",""),p.getString("pin",""),p.getString("token",""),path,body);
  }
  static JSONObject call(String address,String pin,String token,String path,JSONObject body) throws Exception {
+  int generation=pollGeneration.get();
   URL url=new URL(address+path);
   if(!url.getProtocol().equals("https")||pin.length()!=64)throw new IOException("配对信息无效");
   TrustManager[] trust={new X509TrustManager(){
@@ -38,7 +40,7 @@ final class Transport {
   conn.setSSLSocketFactory(ssl.getSocketFactory());
   // Certificate identity is bound to the SHA-256 pin confirmed during device authorization.
   conn.setHostnameVerifier((host,session)->host.equals(url.getHost()));
-  conn.setInstanceFollowRedirects(false);conn.setConnectTimeout(12000);conn.setReadTimeout(32000);
+  conn.setInstanceFollowRedirects(false);conn.setConnectTimeout(4500);conn.setReadTimeout(path.startsWith("/poll")?14000:15000);
   if(!token.isEmpty())conn.setRequestProperty("Authorization","Bearer "+token);
   if(path.startsWith("/poll"))pollConnection=conn;
   try{
@@ -52,7 +54,8 @@ final class Transport {
    if(code!=200)throw new IOException(result.optString("error","请求失败："+code));return result;
   }catch(SSLHandshakeException e){
    Throwable cause=e;while(cause!=null){if(cause.getMessage()!=null&&cause.getMessage().contains("证书与扫码内容不一致"))throw new Unauthorized("电脑服务已重启或证书不匹配，请重新扫码确认");cause=cause.getCause();}throw e;
-  }finally{if(pollConnection==conn)pollConnection=null;conn.disconnect();}
+  }catch(IOException e){if(path.startsWith("/poll")&&generation!=pollGeneration.get())throw new Reconnecting();throw e;}finally{if(pollConnection==conn)pollConnection=null;conn.disconnect();}
  }
+ static final class Reconnecting extends IOException {}
  static final class Unauthorized extends IOException {Unauthorized(String message){super(message);}}
 }
