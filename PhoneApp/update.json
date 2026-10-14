@@ -1,8 +1,8 @@
 {
-  "versionCode": 36,
-  "versionName": "0.3.45",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.45/FeifeiShisi.apk",
-  "sha256": "b8976949970fb93939a62a692d4a39cef1ea2f4e380c3b735187ead74ea96772",
-  "size": 2360773,
-  "notes": "请同步更新服务端至0.3.45。游戏主题普通文字与发送按钮改灰色；删除指定角色资料入口；库存按游戏排序保留空位，角色四分页、货币五分类。串流横向尺寸、横屏全屏、小窗缩放和App内可调分屏。角色模型、按键及国服实时列表验证仍待完成。"
+  "versionCode": 37,
+  "versionName": "0.3.46",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.46/FeifeiShisi.apk",
+  "sha256": "cb533b228ceb2060ef1a037b7dd5b068360f5fffb12ac0685bf29113dbeb465d",
+  "size": 2365014,
+  "notes": "0.3.46验证版，请同步更新服务端，需Omni 1.1.6.7。加入真实角色预览纹理、旋转缩放及游戏按键双摇杆；输入限定当前授权串流会话和前台游戏窗口，断连或授权撤销释放。实时招募改用公开SDK投影，与固定招募合并。编译、源码兼容和模拟回归已通过，真实游戏图像、按键与实时列表核对仍在进行。"
 }

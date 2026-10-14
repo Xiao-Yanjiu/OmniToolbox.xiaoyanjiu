@@ -65,11 +65,11 @@
       "InternalName": "PhoneChat",
       "Name": "狒狒食柿《服务端》",
       "Author": "小烟酒",
-      "Description": "设备授权连接手机，同步聊天、招募与队伍；保存账号、物品查询和角色基础资料。游戏窗口画面预览支持全屏、小窗和分屏；铭牌三维图像等完整资料仍在完善。",
-      "Version": "0.3.45",
-      "MinimumOmniVersion": "1.1.6.6",
-      "File": "Modules/PhoneChat/0.3.45/PhoneChat.cs",
-      "Sha256": "985276de4189f5fbfb121045c1c4e13aa98e82a52fbc2dc5b1da61a69e781dcf"
+      "Description": "狒狒食柿服务端：统一设备授权的聊天、招募、角色与库存同步；仅游戏窗口串流，支持全屏、小窗、分屏和授权按键。0.3.46验证版加入角色模型纹理及公开SDK实时招募投影，实机检查仍在进行。",
+      "Version": "0.3.46",
+      "MinimumOmniVersion": "1.1.6.7",
+      "File": "Modules/PhoneChat/0.3.46/PhoneChat.cs",
+      "Sha256": "26b809c7704ea520f436a48a2bc65ceaf926edbd1fb9c757a1dd61c8b220d4d9"
     }
   ]
 }
