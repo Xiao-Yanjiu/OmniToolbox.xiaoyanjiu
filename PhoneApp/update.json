@@ -1,8 +1,8 @@
 {
-  "versionCode": 33,
-  "versionName": "0.3.42",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.42/Xiaoyanjiu.apk",
-  "sha256": "647634fe59d5e1564768b382a20f895fd656d6a20a895cba34bcfdc1f4873765",
-  "size": 2339914,
-  "notes": "请同时更新手机支持模块至 0.3.42。招募列表改为游戏网络数据读取，不主动打开游戏招募面板；分类计数去重、横向滑动、底部固定及紧凑布局。应用设置选择游戏主题。修复频道按钮文字、通讯贝滑动与默认汇总，频道栏圆角分隔。沿用原签名覆盖安装保留账号。无面板原生请求与国服服务器筛选仍需实际使用验证，未初始化接口报错且不以打开面板兜底。"
+  "versionCode": 34,
+  "versionName": "0.3.43",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.43/%E7%8B%92%E7%8B%92%E9%A3%9F%E9%A5%B2.apk",
+  "sha256": "5f344f1660ffc2d439f1d7a15ecd73e8099815812ea5efa7ffebca4cc37b18b4",
+  "size": 2344076,
+  "notes": "App 改名狒狒食饲，请同时更新狒狒食饲《服务端》至 0.3.43。修复改名、宏图标、蓝色高亮、配色和导航长按排序；招募查看不主动打开游戏窗口，筛选与国服异步读取调整。服务端推送和下载改折叠，移除旧 QQ 模块。原签名覆盖安装保留账号。参加仍需游戏确认，真实国服返回需实际使用验证。"
 }

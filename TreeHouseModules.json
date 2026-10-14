@@ -63,13 +63,13 @@
     },
     {
       "InternalName": "PhoneChat",
-      "Name": "手机app支持",
+      "Name": "狒狒食饲《服务端》",
       "Author": "小烟酒",
-      "Description": "手机 App 游戏风格招募板与主题；列表直接接收游戏招募数据，不主动打开面板；频道和通讯贝切换、授权账号、QQ 新消息同步与去重。",
-      "Version": "0.3.42",
+      "Description": "狒狒食饲 App 服务端：手机招募详情、账号改名、游戏宏图标、频道同步及 QQ 新消息同步；推送与下载栏目折叠。",
+      "Version": "0.3.43",
       "MinimumOmniVersion": "1.1.6.6",
-      "File": "Modules/PhoneChat/0.3.42/PhoneChat.cs",
-      "Sha256": "01bde1eaa9ad9935eeda2d872a3eddce52109c359aae0ddf8f2da56bbc74d39c"
+      "File": "Modules/PhoneChat/0.3.43/PhoneChat.cs",
+      "Sha256": "79b0b48b9f3f320d724aad3f92a075efd14d0d6b2b0bfc95d73e589fa1ed57dc"
     }
   ]
 }
