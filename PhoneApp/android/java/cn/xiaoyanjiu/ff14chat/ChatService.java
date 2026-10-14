@@ -55,7 +55,7 @@ public class ChatService extends Service {
   nm.createNotificationChannel(new NotificationChannel("chat","悄悄话与 @ 提醒",NotificationManager.IMPORTANCE_HIGH));
  }
  private PendingIntent open(){return PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);}
- private Notification connection(){return new Notification.Builder(this,"connection").setSmallIcon(android.R.drawable.ic_dialog_email).setContentTitle("小烟酒").setContentText(state).setContentIntent(open()).setOngoing(true).setOnlyAlertOnce(true).build();}
+ private Notification connection(){return new Notification.Builder(this,"connection").setSmallIcon(android.R.drawable.ic_dialog_email).setContentTitle("狒狒食饲").setContentText(state).setContentIntent(open()).setOngoing(true).setOnlyAlertOnce(true).build();}
  private void update(String text){if(text.equals(state))return;state=text;getSystemService(NotificationManager.class).notify(1,connection());}
  @Override public int onStartCommand(Intent intent,int flags,int startId){
   if(getSharedPreferences("receiver",0).getBoolean("paused",false)){stopSelf();return START_NOT_STICKY;}

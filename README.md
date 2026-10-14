@@ -4,7 +4,7 @@
 
 ## 小烟酒手机 App
 
-- **手机app支持**（PhoneChat）— 需 Omni 1.1.6.6 或更新版本。
+- **狒狒食饲《服务端》**（PhoneChat）— 需 Omni 1.1.6.6 或更新版本。
 - [下载小烟酒 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.36)
 - 配置、对应源码和第三方许可见 [PhoneApp](PhoneApp/README.md)。
 
@@ -15,7 +15,6 @@
  
 - **游戏内浏览器**（GameWebBrowser）— DLL 模块，CEF 游戏内贴图浏览器与独立 Edge/Chrome 两种模式；沿用原窗口外观，共用网页、宏命令、代理和收藏，内核由用户点击下载并显示实时进度。详见 [浏览器说明](Browser/README.md)。
  
-- **游戏聊天同步 QQ**（ChatToQQ）— 同步游戏和 Omni 国服频道聊天到 QQ 群，支持国服悄悄话、频道 @ 提醒及回复，内置游戏面板与群内帮助；需要 Omni 1.1.6.6 或更新版本
  
 - **自动丢垃圾**（AutoDiscardJunk）— 三栏（黑名单 / 背包 / 白名单）管理随身背包，黑名单物品自动丢弃，HQ 与普通物品分开管理
  

@@ -22,16 +22,6 @@
       "Sha256": "dade5502592956a1e6b1c322335647afc5578bf8c41fb5703dcc599851896349"
     },
     {
-      "InternalName": "ChatToQQ",
-      "Name": "游戏聊天同步 QQ",
-      "Author": "小烟酒",
-      "Description": "同步游戏与 Omni 国服频道聊天到 QQ 群；支持国服悄悄话、频道 @ 提醒与回复，内置游戏面板和群内帮助，消息分行显示并过滤重复通知。",
-      "Version": "1.5.0",
-      "MinimumOmniVersion": "1.1.6.6",
-      "File": "Modules/ChatToQQ.cs",
-      "Sha256": "e7c61c18a2dac158ee35d59b93ce82bcc5ab2866ec08a2f361ebf907e12b682e"
-    },
-    {
       "InternalName": "AutoDiscardJunk",
       "Name": "自动丢垃圾",
       "Author": "小烟酒",

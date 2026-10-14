@@ -62,7 +62,7 @@ final class AppUpdater {
  }
  private void download(String url,String hash,long size,int version){
   if(!busy.compareAndSet(false,true))return;
-  progress=new ProgressDialog(activity);progress.setTitle("下载小烟酒更新");progress.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);progress.setMax(100);progress.setCancelable(false);progress.show();
+  progress=new ProgressDialog(activity);progress.setTitle("下载狒狒食饲更新");progress.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);progress.setMax(100);progress.setCancelable(false);progress.show();
   new Thread(()->{File part=new File(activity.getCacheDir(),"update.part"),apk=new File(activity.getCacheDir(),"update.apk");try{
    HttpURLConnection c=open(url,true);MessageDigest digest=MessageDigest.getInstance("SHA-256");long total=0;int last=-1;
    try(InputStream in=c.getInputStream();OutputStream out=new FileOutputStream(part)){byte[] buf=new byte[32768];int n;while((n=in.read(buf))!=-1){if(closed)throw new IOException("下载已取消");total+=n;if(total>size)throw new IOException("安装包大小不符");out.write(buf,0,n);digest.update(buf,0,n);int pct=(int)(total*100/size);if(pct!=last){last=pct;post(()->progress.setProgress(pct));}}}finally{c.disconnect();}
@@ -76,9 +76,9 @@ final class AppUpdater {
  }
  private void install(){try{
   if(!activity.getPackageManager().canRequestPackageInstalls()){
-   new AlertDialog.Builder(activity).setTitle("允许安装更新").setMessage("请在系统设置允许小烟酒安装应用，返回后继续安装。").setNegativeButton("稍后",null).setPositiveButton("前往设置",(d,w)->{try{pendingInstall=true;activity.startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+activity.getPackageName())));}catch(Exception e){pendingInstall=false;message("无法打开安装权限设置");}}).show();return;
+   new AlertDialog.Builder(activity).setTitle("允许安装更新").setMessage("请在系统设置允许狒狒食饲安装应用，返回后继续安装。").setNegativeButton("稍后",null).setPositiveButton("前往设置",(d,w)->{try{pendingInstall=true;activity.startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+activity.getPackageName())));}catch(Exception e){pendingInstall=false;message("无法打开安装权限设置");}}).show();return;
   }
-  Uri uri=Uri.parse("content://"+activity.getPackageName()+".updates/update.apk");Intent intent=new Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);intent.setClipData(ClipData.newRawUri("小烟酒更新",uri));activity.startActivity(intent);
+  Uri uri=Uri.parse("content://"+activity.getPackageName()+".updates/update.apk");Intent intent=new Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);intent.setClipData(ClipData.newRawUri("狒狒食饲更新",uri));activity.startActivity(intent);
  }catch(Exception e){message("无法打开安装程序，请检查系统安装权限");}}
  void resume(){if(pendingInstall){pendingInstall=false;if(activity.getPackageManager().canRequestPackageInstalls())install();}}
 }

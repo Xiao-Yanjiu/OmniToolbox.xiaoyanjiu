@@ -32,13 +32,13 @@ try{& "$jdk/bin/jar.exe" uf "$build/unsigned.apk" classes.dex;Check 'dex package
 & "$buildTools/zipalign.exe" -f 4 "$build/unsigned.apk" "$build/aligned.apk";Check 'zipalign'
 $key=$env:YANJIU_KEYSTORE
 if([string]::IsNullOrWhiteSpace($key)){
- Copy-Item -LiteralPath "$build/aligned.apk" -Destination (Join-Path $artifact '小烟酒-unsigned.apk') -Force
- Write-Output "Unsigned APK: $artifact/小烟酒-unsigned.apk"
+ Copy-Item -LiteralPath "$build/aligned.apk" -Destination (Join-Path $artifact '狒狒食饲-unsigned.apk') -Force
+ Write-Output "Unsigned APK: $artifact/狒狒食饲-unsigned.apk"
 }else{
  if(!(Test-Path -LiteralPath $key)){throw 'Signing keystore not found'}
  if([string]::IsNullOrWhiteSpace($env:YANJIU_KEYSTORE_PASSWORD) -or [string]::IsNullOrWhiteSpace($env:YANJIU_KEY_ALIAS)){throw 'Set signing password and alias environment variables'}
  if([string]::IsNullOrWhiteSpace($env:YANJIU_KEY_PASSWORD)){$env:YANJIU_KEY_PASSWORD=$env:YANJIU_KEYSTORE_PASSWORD}
- $apk=Join-Path $artifact '小烟酒.apk'
+ $apk=Join-Path $artifact '狒狒食饲.apk'
  & "$jdk/bin/java.exe" -jar "$buildTools/lib/apksigner.jar" sign --ks $key --ks-key-alias $env:YANJIU_KEY_ALIAS --ks-pass env:YANJIU_KEYSTORE_PASSWORD --key-pass env:YANJIU_KEY_PASSWORD --out $apk "$build/aligned.apk";Check 'APK sign'
  & "$jdk/bin/java.exe" -jar "$buildTools/lib/apksigner.jar" verify --verbose $apk;Check 'APK verify'
  Write-Output "APK: $apk"
