@@ -75,11 +75,11 @@
       "InternalName": "PhoneChat",
       "Name": "手机app支持",
       "Author": "小烟酒",
-      "Description": "配合小烟酒 Android App 同步游戏与 Omni 聊天；招募文字入口、游戏与国服招募板、小队操作、命名授权账号；离线推送单选，QQ 提醒独立并行。",
-      "Version": "0.3.40",
+      "Description": "手机 App 独立页面和账号卡片；快速同步频道加入退出，实时招募失效反馈；QQ 自选频道仅同步新消息并防止重启重发。",
+      "Version": "0.3.41",
       "MinimumOmniVersion": "1.1.6.6",
-      "File": "Modules/PhoneChat/0.3.40/PhoneChat.cs",
-      "Sha256": "541c35ac281f3499251f2936eb445f30aa101bac3828e7ca94b359a01f214270"
+      "File": "Modules/PhoneChat/0.3.41/PhoneChat.cs",
+      "Sha256": "86e23d1a8a0ee107aaf868661ecbc5cfdd73f3fdc3af15834bec74e0623269b9"
     }
   ]
 }
