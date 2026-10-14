@@ -2,3 +2,6 @@
 Modules/*.cs -text
 TreeHouseModules.json -text
 Modules/*.dll binary
+
+Modules/PhoneChat/**/*.cs -text
+TreeHouseModulesOnline.json -text
