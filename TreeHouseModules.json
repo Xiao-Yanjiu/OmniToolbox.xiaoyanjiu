@@ -65,11 +65,11 @@
       "InternalName": "PhoneChat",
       "Name": "狒狒食柿《服务端》",
       "Author": "小烟酒",
-      "Description": "狒狒食柿0.3.58验证版：加密UDP视频、GPU直接采集、丢包降码率和控制板布局修复。需同步更新App与StreamHost组件；公网映射UDP18766，原TCP端口不变。保留TCP和CPU兼容选项。",
-      "Version": "0.3.58",
+      "Description": "狒狒食柿0.3.59：串流TCP/UDP模式统一由服务端配置；合并必要组件下载，简化面板和显卡同行布局。配套App新增令牌授权的脱机国服聊天与招募、持续错误提示和竖屏控制调整。需同步更新App，沿用StreamHost0.3.58。",
+      "Version": "0.3.59",
       "MinimumOmniVersion": "1.1.6.8",
-      "File": "Modules/PhoneChat/0.3.58/PhoneChat.cs",
-      "Sha256": "3506294eb83c83e80439eb30b5c25ecca76af1fa3921a978446362d545a24aa5"
+      "File": "Modules/PhoneChat/0.3.59/PhoneChat.cs",
+      "Sha256": "dfc59470a5f04b20a86ebfc85c2d7414c55010500adf48df46aaebf83b0aefdb"
     }
   ]
 }

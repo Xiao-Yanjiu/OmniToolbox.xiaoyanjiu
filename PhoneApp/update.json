@@ -1,8 +1,8 @@
 {
-  "versionCode": 45,
-  "versionName": "0.3.58",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.58/FeifeiShisi.apk",
-  "sha256": "1b09c0627f6a8afe4b6265007659ee906890c1f7bfff13a4371740bd4e390bd0",
-  "size": 2385421,
-  "notes": "0.3.58验证版：修复竖屏控制板重叠；新增加密UDP视频、GPU直接采集和丢包降码率。需同时更新App、服务端和StreamHost组件。公网额外映射UDP18766，TCP端口不变；可选择TCP兼容。GPU已在NVIDIA实测，AMD/Intel实体机与手机端到端延迟待验证。"
+  "versionCode": 46,
+  "versionName": "0.3.59",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.59/FeifeiShisi.apk",
+  "sha256": "73268d74a7a1b5fdaf8c89466627ad5d02daa33b0c60c3ae42cbf04ba953d682",
+  "size": 2393677,
+  "notes": "0.3.59：新增国服频道（脱机使用），手动填写OST_令牌，支持聊天、提及及招募详情评论；令牌按账号加密保存，不生成令牌。串流模式/IP/端口改为跟随服务端，TCP无需额外端口，UDP在服务端配置；合并组件下载，简化面板，竖屏摇杆置于下方，错误持续显示。需同步更新服务端0.3.59，StreamHost保持0.3.58。"
 }
