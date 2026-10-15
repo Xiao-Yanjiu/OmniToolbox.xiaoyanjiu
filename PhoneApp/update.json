@@ -1,8 +1,8 @@
 {
-  "versionCode": 40,
-  "versionName": "0.3.53",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.53/FeifeiShisi.apk",
-  "sha256": "ec568b8f9fdfd114c690b8a2087aa4a334c3be5ebd7b425d877057d371e168d7",
-  "size": 2373132,
-  "notes": "0.3.53验证版：删除角色下人物预览，不再打开游戏角色框。修复H.264解码有帧率但网页根背景遮挡视频的问题；改进视频启动尺寸变化、高精度限帧、最新帧采集与缓冲复用。本机采集短测约55FPS，手机显示及端到端延迟待更新验证。请同时更新服务端，并在串流设置点击下载硬件串流组件；已有FFmpeg继续使用。"
+  "versionCode": 41,
+  "versionName": "0.3.54",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.54/FeifeiShisi.apk",
+  "sha256": "de282f61534713485da4bfb0e02c152dc4a036f82cc17f13b3f0f8426d2cb114",
+  "size": 2377228,
+  "notes": "0.3.54验证版：修复鼠标重复注入、绝对坐标回拉、网络旧指令重放与全屏页面覆盖。串流默认只看，点击控制启用；隐藏或切换模式退出控制。增加游戏自动置前与输入焦点清理。请同时更新App和服务端；沿用0.3.53硬件组件和已有FFmpeg。真实手机及实体键鼠修复效果待验证。"
 }
