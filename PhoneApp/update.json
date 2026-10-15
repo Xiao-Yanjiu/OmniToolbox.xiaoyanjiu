@@ -1,8 +1,8 @@
 {
-  "versionCode": 43,
-  "versionName": "0.3.56",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.56/FeifeiShisi.apk",
-  "sha256": "017a7e1c45e2ff3c4c58957ceea950d633e420dc5b1259421694b289b19235cb",
+  "versionCode": 44,
+  "versionName": "0.3.57",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.57/FeifeiShisi.apk",
+  "sha256": "2fd897051846a1a5fb87a25c2adcfc1e31403b13a8788ba8598928adf4cd2519",
   "size": 2381327,
-  "notes": "App 0.3.56验证版：小窗标题栏压成单行并置于视频外；缩放条移到视频下方，小窗映射面板不再挡住画面。触屏模式隐藏指针，鼠标模式保留位置、不在新手势时回中，并忽略操作时的迟到反馈。本次仅更新App，服务端保持0.3.55，硬件串流组件及FFmpeg不变。"
+  "notes": "App 0.3.57验证版：修复手机白色鼠标指针在手势结束后又移动一次，移除本地预测和收尾二次校正，仅按电脑真实位置显示；移动确认后及时刷新，状态请求合并不积压。显示反馈不修改相对输入坐标，不产生额外鼠标输入。本次仅更新App，服务端保持0.3.55，硬件组件和FFmpeg不变。"
 }
