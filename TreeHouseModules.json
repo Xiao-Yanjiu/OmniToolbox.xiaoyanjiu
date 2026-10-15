@@ -65,11 +65,11 @@
       "InternalName": "PhoneChat",
       "Name": "狒狒食柿《服务端》",
       "Author": "小烟酒",
-      "Description": "狒狒食柿0.3.54验证版：修复重复鼠标事件、旧指令积压和绝对坐标回拉；默认只看，显式启用手机控制；支持启动置前，修复全屏页面覆盖。需同时更新App；沿用0.3.53硬件组件。",
-      "Version": "0.3.54",
+      "Description": "狒狒食柿0.3.55验证版：自动控制，映射面板透明可隐藏，放大全屏摇杆，新增鼠标左右键、滚轮和手机输入法；支持视频有限重连及停止后游戏置前。需同时更新App；沿用0.3.53硬件组件。",
+      "Version": "0.3.55",
       "MinimumOmniVersion": "1.1.6.8",
-      "File": "Modules/PhoneChat/0.3.54/PhoneChat.cs",
-      "Sha256": "6b4ee98172d4d482d71767c391866854d5fde3d7660413b67e60d09b29672ef2"
+      "File": "Modules/PhoneChat/0.3.55/PhoneChat.cs",
+      "Sha256": "ba7becacab05e7e0537413e458c63e73822c0af8dd1614f1bd407d87c5a08636"
     }
   ]
 }
