@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Diagnostics;
+using System.Buffers;
 using System.Runtime.InteropServices;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
@@ -12,6 +13,7 @@ using System.Threading.Channels;
 class Program {
 [StructLayout(LayoutKind.Sequential)] struct Rect{public int Left,Top,Right,Bottom;}
 [StructLayout(LayoutKind.Sequential)] struct Point{public int X,Y;}
+[DllImport("user32.dll")]static extern bool SetProcessDpiAwarenessContext(nint value);
 [DllImport("user32.dll")] static extern bool GetClientRect(nint window,out Rect result);
 [DllImport("user32.dll")] static extern bool GetWindowRect(nint window,out Rect result);
 [DllImport("user32.dll")] static extern bool ClientToScreen(nint window,ref Point point);
@@ -25,11 +27,11 @@ static GraphicsCaptureItem CaptureWindow(nint hwnd){string name="Windows.Graphic
 [DllImport("d3d11.dll")] static extern int D3D11CreateDevice(nint adapter,uint type,nint software,uint flags,nint levels,uint count,uint sdk,out nint device,out uint level,out nint context);
 [DllImport("d3d11.dll")] static extern int CreateDirect3D11DeviceFromDXGIDevice(nint dxgi,out nint device);
 static async Task Main(string[] args){
- try{await Run(args);}catch(Exception e){Console.Error.WriteLine(e.Message);Environment.ExitCode=1;}
+ try{Console.SetError(new StreamWriter(Console.OpenStandardError(),new System.Text.UTF8Encoding(false)){AutoFlush=true});await Run(args);}catch(Exception e){Console.Error.WriteLine(e.Message);Environment.ExitCode=1;}
 }
 static async Task Run(string[] args){
  if(args.Length!=5||!int.TryParse(args[0],out int pid)||!int.TryParse(args[1],out int fps)||fps is not (10 or 30 or 60)||!int.TryParse(args[2],out int bitrate)||bitrate is not (2000000 or 8000000 or 20000000))throw new Exception("Invalid stream configuration");
- System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+ SetProcessDpiAwarenessContext((nint)(-4));
  var adapters=StreamAdapters.List();var adapter=args[3]=="auto"?adapters.FirstOrDefault():adapters.FirstOrDefault(a=>a.Id==args[3]);if(adapter==null)throw new Exception("所选显卡不存在或不支持硬件编码，请在模块设置重新选择");
  var process=Process.GetProcessById(pid);if(process.ProcessName!="ffxiv_dx11")throw new Exception("Only FFXIV may be captured");var hwnd=process.MainWindowHandle;if(hwnd==0||!GraphicsCaptureSession.IsSupported())throw new Exception("游戏窗口采集不可用");
  using var device=CreateDevice(adapter.Index);await Capture(hwnd,device,adapter,fps,bitrate,args[4]);
@@ -39,19 +41,24 @@ static unsafe IDirect3DDevice CreateDevice(int index){nint factory=0,selected=0,
 static async Task Capture(nint hwnd,IDirect3DDevice device,StreamAdapters.Adapter adapter,int fps,int bitrate,string executable){
  var item=CaptureWindow(hwnd);var size=item.Size;if(!GetClientRect(hwnd,out var client)||!GetWindowRect(hwnd,out var outer))throw new Exception("游戏窗口尺寸不可用");var origin=new Point();ClientToScreen(hwnd,ref origin);if(DwmGetWindowAttribute(hwnd,9,out var bounds,Marshal.SizeOf<Rect>())!=0)bounds=outer;
  int x=Math.Max(0,origin.X-bounds.Left),y=Math.Max(0,origin.Y-bounds.Top),width=Math.Min(client.Right,size.Width-x)&~1,height=Math.Min(client.Bottom,size.Height-y)&~1;if(width<2||height<2)throw new Exception("游戏窗口客户区无效");
+ double scale=Math.Min(1d,Math.Min(3840d/width,2160d/height));int encodedWidth=(int)(width*scale)&~1,encodedHeight=(int)(height*scale)&~1;string resize=scale<1?$",scale={encodedWidth}:{encodedHeight}":"";
  var start=new ProcessStartInfo(executable){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};void Add(params string[] values){foreach(var v in values)start.ArgumentList.Add(v);}
  Add("-hide_banner","-loglevel","error","-init_hw_device",$"d3d11va=selected:{adapter.Index}");if(adapter.Vendor==0x8086)Add("-init_hw_device","qsv=encoder@selected");
- Add("-filter_hw_device",adapter.Vendor==0x8086?"encoder":"selected","-f","rawvideo","-pixel_format","bgra","-video_size",$"{size.Width}x{size.Height}","-framerate",fps.ToString(),"-i","pipe:0","-an","-vf",$"crop={width}:{height}:{x}:{y},format=nv12,hwupload","-c:v",adapter.Encoder,"-b:v",bitrate.ToString(),"-maxrate",bitrate.ToString(),"-bufsize",Math.Max(100000,bitrate/fps*2).ToString(),"-bf","0","-g",fps.ToString());
+ Add("-filter_hw_device",adapter.Vendor==0x8086?"encoder":"selected","-f","rawvideo","-pixel_format","bgra","-video_size",$"{size.Width}x{size.Height}","-framerate",fps.ToString(),"-i","pipe:0","-an","-vf",$"crop={width}:{height}:{x}:{y}{resize},format=nv12,hwupload","-c:v",adapter.Encoder,"-b:v",bitrate.ToString(),"-maxrate",bitrate.ToString(),"-bufsize",Math.Max(100000,bitrate/fps*2).ToString(),"-bf","0","-g",fps.ToString());
  if(adapter.Vendor==0x10de)Add("-preset","p1","-tune","ull","-rc-lookahead","0","-zerolatency","1","-delay","0");else if(adapter.Vendor==0x1002)Add("-usage","ultralowlatency","-quality","speed");else Add("-async_depth","1","-look_ahead","0");
  Add("-bsf:v","h264_metadata=aud=insert","-flush_packets","1","-f","h264","pipe:1");
- using var encoder=new Process{StartInfo=start};if(!encoder.Start())throw new Exception("无法启动硬件编码器");Console.Error.WriteLine($"H264 adapter={adapter.Name}; encoder={adapter.Encoder}; size={width}x{height}; fps={fps}; bitrate={bitrate}");
- var errors=encoder.StandardError.ReadToEndAsync();using var lifetime=new CancellationTokenSource();var done=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var raw=Channel.CreateBounded<byte[]>(new BoundedChannelOptions(1){FullMode=BoundedChannelFullMode.DropOldest,SingleReader=true,SingleWriter=true});
- var writer=Task.Run(async()=>{try{await foreach(var bytes in raw.Reader.ReadAllAsync(lifetime.Token))await encoder.StandardInput.BaseStream.WriteAsync(bytes,lifetime.Token);}catch(Exception e){if(!lifetime.IsCancellationRequested)Console.Error.WriteLine(e.Message);}finally{done.TrySetResult();}});
+ using var encoder=new Process{StartInfo=start};if(!encoder.Start())throw new Exception("无法启动硬件编码器");Console.Error.WriteLine($"H264 adapter={adapter.Name}; encoder={adapter.Encoder}; size={encodedWidth}x{encodedHeight}; fps={fps}; bitrate={bitrate}");
+ var errors=encoder.StandardError.ReadToEndAsync();using var lifetime=new CancellationTokenSource();var done=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var raw=Channel.CreateBounded<FramePixels>(new BoundedChannelOptions(1){FullMode=BoundedChannelFullMode.DropOldest,SingleReader=true,SingleWriter=true},p=>p.Dispose());var captured=Channel.CreateBounded<Direct3D11CaptureFrame>(new BoundedChannelOptions(1){FullMode=BoundedChannelFullMode.DropOldest,SingleReader=true,SingleWriter=true},f=>f.Dispose());
+ var writer=Task.Run(async()=>{try{await foreach(var pixels in raw.Reader.ReadAllAsync(lifetime.Token)){using(pixels)await encoder.StandardInput.BaseStream.WriteAsync(pixels.Bytes.AsMemory(0,pixels.Length),lifetime.Token);}}catch(Exception e){if(!lifetime.IsCancellationRequested)Console.Error.WriteLine(e.Message);}finally{done.TrySetResult();}});
  var packets=Task.Run(async()=>{try{await SendAccessUnits(encoder.StandardOutput.BaseStream,Console.OpenStandardOutput(),lifetime.Token);}catch(Exception e){if(!lifetime.IsCancellationRequested)Console.Error.WriteLine(e.Message);}finally{done.TrySetResult();}});
- using var pool=Direct3D11CaptureFramePool.CreateFreeThreaded(device,DirectXPixelFormat.B8G8R8A8UIntNormalized,2,size);using var session=pool.CreateCaptureSession(item);session.IsCursorCaptureEnabled=false;item.Closed+=(_,_)=>done.TrySetResult();int busy=0;long last=0;
- pool.FrameArrived+=async(sender,_)=>{if(Interlocked.Exchange(ref busy,1)!=0)return;try{using var frame=sender.TryGetNextFrame();if(frame==null)return;long now=Environment.TickCount64;if(now-last<1000d/fps)return;last=now;if(frame.ContentSize.Width!=size.Width||frame.ContentSize.Height!=size.Height)throw new Exception("游戏窗口尺寸改变，请重新开始串流");using var bitmap=await SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface);var bytes=new byte[checked(size.Width*size.Height*4)];bitmap.CopyToBuffer(bytes.AsBuffer());raw.Writer.TryWrite(bytes);}catch(Exception e){Console.Error.WriteLine(e.Message);done.TrySetResult();}finally{Interlocked.Exchange(ref busy,0);}};
- try{SetThreadExecutionState(0x80000003);session.StartCapture();var exited=encoder.WaitForExitAsync();await Task.WhenAny(done.Task,exited);if(exited.IsCompleted)throw new Exception("硬件编码器退出："+await errors);}finally{lifetime.Cancel();raw.Writer.TryComplete();try{if(!encoder.HasExited)encoder.Kill(true);}catch{}await Task.WhenAll(writer,packets);SetThreadExecutionState(0x80000000);}
+ using var pool=Direct3D11CaptureFramePool.CreateFreeThreaded(device,DirectXPixelFormat.B8G8R8A8UIntNormalized,3,size);using var session=pool.CreateCaptureSession(item);session.IsCursorCaptureEnabled=false;item.Closed+=(_,_)=>done.TrySetResult();long arrivals=0,reads=0,readTicks=0;var clock=new FrameClock(fps,Stopwatch.Frequency);long metricsStart=Stopwatch.GetTimestamp();
+ using var metrics=new Timer(_=>{double elapsed=(Stopwatch.GetTimestamp()-metricsStart)/(double)Stopwatch.Frequency;Console.Error.WriteLine($"H264 stats source={Interlocked.Read(ref arrivals)/Math.Max(.001,elapsed):F1} readback={Interlocked.Read(ref reads)/Math.Max(.001,elapsed):F1} readback_ms={Interlocked.Read(ref readTicks)*1000d/Stopwatch.Frequency/Math.Max(1,Interlocked.Read(ref reads)):F2}");},null,2000,2000);
+ pool.FrameArrived+=(sender,_)=>{try{var frame=sender.TryGetNextFrame();if(frame==null)return;Interlocked.Increment(ref arrivals);if(!captured.Writer.TryWrite(frame))frame.Dispose();}catch(Exception e){Console.Error.WriteLine(e.Message);done.TrySetResult();}};
+ var readback=Task.Run(async()=>{try{await foreach(var frame in captured.Reader.ReadAllAsync(lifetime.Token)){using(frame){long now=Stopwatch.GetTimestamp();if(!clock.Accept(now))continue;if(frame.ContentSize.Width!=size.Width||frame.ContentSize.Height!=size.Height)throw new Exception("游戏窗口尺寸改变，请重新开始串流");long begin=Stopwatch.GetTimestamp();using var bitmap=await SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface);var pixels=new FramePixels(checked(size.Width*size.Height*4));try{bitmap.CopyToBuffer(pixels.Bytes.AsBuffer(0,pixels.Length));if(!raw.Writer.TryWrite(pixels))pixels.Dispose();}catch{pixels.Dispose();throw;}Interlocked.Increment(ref reads);Interlocked.Add(ref readTicks,Stopwatch.GetTimestamp()-begin);}}}catch(Exception e){if(!lifetime.IsCancellationRequested)Console.Error.WriteLine(e.Message);}finally{done.TrySetResult();}});
+
+ try{SetThreadExecutionState(0x80000003);session.StartCapture();var exited=encoder.WaitForExitAsync();await Task.WhenAny(done.Task,exited);if(!exited.IsCompleted)await Task.WhenAny(exited,Task.Delay(100));if(exited.IsCompleted)throw new Exception("硬件编码器退出："+await errors);}finally{lifetime.Cancel();captured.Writer.TryComplete();raw.Writer.TryComplete();try{if(!encoder.HasExited)encoder.Kill(true);}catch{}await Task.WhenAll(writer,packets,readback);while(captured.Reader.TryRead(out var stale))stale.Dispose();while(raw.Reader.TryRead(out var pixels))pixels.Dispose();double seconds=(Stopwatch.GetTimestamp()-metricsStart)/(double)Stopwatch.Frequency;Console.Error.WriteLine($"H264 stats source={arrivals/Math.Max(.001,seconds):F1} readback={reads/Math.Max(.001,seconds):F1} readback_ms={readTicks*1000d/Stopwatch.Frequency/Math.Max(1,reads):F2}");SetThreadExecutionState(0x80000000);}
 }
+sealed class FramePixels:IDisposable {public byte[] Bytes{get;}public int Length{get;}bool disposed;public FramePixels(int length){Length=length;Bytes=ArrayPool<byte>.Shared.Rent(length);}public void Dispose(){if(disposed)return;disposed=true;ArrayPool<byte>.Shared.Return(Bytes);}}
 // AUD boundaries produce independently framed Annex-B access units; never cut at pipe read boundaries.
 internal static async Task SendAccessUnits(Stream input,Stream output,CancellationToken ct){
  var pending=new List<byte>();var buffer=new byte[65536];int scan=0;bool aud=false;
