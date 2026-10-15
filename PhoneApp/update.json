@@ -1,8 +1,8 @@
 {
-  "versionCode": 47,
-  "versionName": "0.3.60",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.60/FeifeiShisi.apk",
-  "sha256": "912d47e4e528fde275a72bcb099cc3934af90fb0b37edd806ded5d10e786a803",
-  "size": 2401936,
-  "notes": "0.3.60：按游戏UI参考重做全页游戏主题，统一窗口、字体颜色、阴影、按钮各状态、标签与物品格；Android原生弹窗同步。国服频道改名离线模式，右上角设置配置令牌，聊天和招募复用原页面UI。修复窗口激活并确认实际前台，保留输入保护。需同步更新服务端0.3.60，StreamHost沿用0.3.58。"
+  "versionCode": 48,
+  "versionName": "0.3.61",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.61/FeifeiShisi.apk",
+  "sha256": "96a02addf8f48b6b15975bf821d53404674b6298feb465259d31604f48bbd7e1",
+  "size": 2406029,
+  "notes": "0.3.61：聊天发送按钮恢复灰色；角色页面全部圆角，鞍囊统一灰底；兵装库改为两侧分类，货币一览重排；频道编辑增加保存按钮；游戏招募三个范围一起刷新并补上标签圆角。需同步更新服务端0.3.61，StreamHost沿用0.3.58。"
 }
