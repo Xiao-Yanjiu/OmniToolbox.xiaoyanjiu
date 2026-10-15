@@ -1,8 +1,8 @@
 {
-  "versionCode": 42,
-  "versionName": "0.3.55",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.55/FeifeiShisi.apk",
-  "sha256": "370d54e3ebd46fc85c2c92ca76035d4ad4cb783be446075b8e6a00fa5414d84d",
-  "size": 2381324,
-  "notes": "0.3.55验证版：串流自动控制，控制按钮仅展开映射面板；空白透明且透过触摸。放大全屏摇杆，新增左右鼠标键、滚轮和原生手机输入法（不自动发送聊天）。增加视频有限重连、真实指针反馈和停止后游戏置前。请同时更新App与服务端；沿用0.3.53硬件组件和已有FFmpeg。手机重连及游戏文字接收效果待实机核对。"
+  "versionCode": 43,
+  "versionName": "0.3.56",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.56/FeifeiShisi.apk",
+  "sha256": "017a7e1c45e2ff3c4c58957ceea950d633e420dc5b1259421694b289b19235cb",
+  "size": 2381327,
+  "notes": "App 0.3.56验证版：小窗标题栏压成单行并置于视频外；缩放条移到视频下方，小窗映射面板不再挡住画面。触屏模式隐藏指针，鼠标模式保留位置、不在新手势时回中，并忽略操作时的迟到反馈。本次仅更新App，服务端保持0.3.55，硬件串流组件及FFmpeg不变。"
 }
