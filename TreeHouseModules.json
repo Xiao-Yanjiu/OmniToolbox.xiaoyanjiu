@@ -65,11 +65,11 @@
       "InternalName": "PhoneChat",
       "Name": "狒狒食柿《服务端》",
       "Author": "小烟酒",
-      "Description": "狒狒食柿服务端：统一授权的聊天、招募、角色与库存同步及仅游戏窗口串流。服务端0.3.49配合App 0.3.46：真实角色模型显示、旋转与缩放，国服实时和固定招募及详情，游戏串流M键与停止恢复已实机验证。",
-      "Version": "0.3.49",
-      "MinimumOmniVersion": "1.1.6.7",
-      "File": "Modules/PhoneChat/0.3.49/PhoneChat.cs",
-      "Sha256": "66b8ef6951003cf45cda87ce60015290c9f1d421301dfb80d52d4bfe8be0e634"
+      "Description": "狒狒食柿0.3.50验证版：修正同地址账号分离与删除、货币映射、人物与收藏图标分页、统一库存方格，新增串流帧率码率及触屏/指针模式和控制隐藏。需配合App 0.3.50，新功能实机核对中。",
+      "Version": "0.3.50",
+      "MinimumOmniVersion": "1.1.6.8",
+      "File": "Modules/PhoneChat/0.3.50/PhoneChat.cs",
+      "Sha256": "4a91bfa82c430ea4446643e987f4639fb7f8bcb46c49a26c0b3f832b59040109"
     }
   ]
 }
