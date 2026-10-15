@@ -41,6 +41,18 @@ Check(((Array)snapshotArea.Invoke(rawPhone,[2,11000L])!).Length==0,"expired list
 var findListing=phone.GetMethod("FindDirectListing",BindingFlags.Instance|BindingFlags.NonPublic)!;
 Check(findListing.Invoke(rawPhone,[201UL,1000L])!=null,"password recruitment details resolve from its independent area snapshot");
 Check(findListing.Invoke(rawPhone,[999UL,1000L])==null,"unknown recruitment is not invented");
+var publishArea=phone.GetMethod("PublishDirectArea",BindingFlags.Instance|BindingFlags.NonPublic);
+if(publishArea!=null){
+    phone.GetField("directAreaRows",BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(rawPhone,Array.CreateInstance(listingType.MakeArrayType(),0));
+    publishArea.Invoke(rawPhone,[0,lists.GetValue(0)!]);
+    var counts=(int?[])phone.GetMethod("DirectAreaCounts",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(rawPhone,[1000L])!;
+    Check(counts[0]==1&&counts[1]==null&&counts[2]==null,"first successful area is retained even before other areas respond; unknown counts are not fake zero");
+    publishArea.Invoke(rawPhone,[2,Array.CreateInstance(listingType,0)]);
+    counts=(int?[])phone.GetMethod("DirectAreaCounts",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(rawPhone,[1000L])!;
+    Check(counts[0]==1&&counts[1]==null&&counts[2]==0,"empty successful password response does not clear the populated public response");
+    publishArea.Invoke(rawPhone,[1,lists.GetValue(1)!]);
+    Check(((Array)snapshotArea.Invoke(rawPhone,[0,1000L])!).Length==1,"later area refresh preserves previously successful area rows");
+}
 Console.WriteLine(checks+" parsing checks passed. No game calls executed.");
 public class Message{public Recruitment? Recruitment{get;set;}}
 public class Recruitment{public ulong ListingID{get;set;}public string DutyName{get;set;}="";public string Comment{get;set;}="";}
