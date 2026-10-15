@@ -80,7 +80,7 @@ public class MainActivity extends Activity {
  private void applyTheme(String value){ui.post(()->{try{
   String theme=new JSONObject(value).optString("theme","black");boolean light=theme.equals("white")||theme.equals("yellow")||theme.equals("grey");
   int color=android.graphics.Color.parseColor(theme.equals("white")?"#f6f7fb":theme.equals("yellow")?"#f6e8bd":theme.equals("grey")?"#e2e5e9":theme.equals("game")?"#313031":"#15181f");
-  root.setBackgroundColor(color);getWindow().setStatusBarColor(color);getWindow().setNavigationBarColor(color);web.setBackgroundColor(color);
+  root.setBackgroundColor(color);getWindow().setStatusBarColor(color);getWindow().setNavigationBarColor(color);web.setBackgroundColor(hardwarePlayer!=null&&hardwarePlayer.view.getVisibility()==android.view.View.VISIBLE?android.graphics.Color.TRANSPARENT:color);
   if(Build.VERSION.SDK_INT>=30)getWindow().getInsetsController().setSystemBarsAppearance(light?android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS:0,android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
   else getWindow().getDecorView().setSystemUiVisibility(light?android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR:0);
  }catch(Exception ignored){}});}

@@ -1,0 +1,5 @@
+package cn.xiaoyanjiu.ff14chat;
+public class VideoPacketQueueRegression {
+ static void check(boolean b,String message){if(!b)throw new AssertionError(message);System.out.println("PASS "+message);}
+ public static void main(String[] args){byte[] key={0,0,0,1,0x65,1},delta={0,0,1,0x41,1};VideoPacketQueue q=new VideoPacketQueue();q.offer(delta);check(q.size()==0,"initial dependent frame ignored");q.offer(key);check(q.poll().reset,"first keyframe flushes decoder");q.offer(delta);check(!q.poll().reset,"normal frame preserves decoder state");q.offer(key);q.offer(delta);q.offer(delta);check(q.size()==3,"client queue bounded to three packets");q.offer(delta);check(q.size()==0,"overflow drops obsolete decode chain");q.offer(delta);check(q.size()==0,"wait for keyframe after overflow");q.offer(key);VideoPacketQueue.Packet recovered=q.poll();check(recovered.reset&&recovered.bytes==key,"new keyframe resets decoder and resumes");q.clear();q.offer(delta);check(q.size()==0,"clear resets keyframe requirement");check(VideoPacketQueue.key(new byte[]{0,0,1,0x65}),"three-byte Annex-B start code supported");}
+}
