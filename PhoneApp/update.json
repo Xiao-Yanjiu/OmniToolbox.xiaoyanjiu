@@ -1,8 +1,8 @@
 {
-  "versionCode": 39,
-  "versionName": "0.3.51",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.51/FeifeiShisi.apk",
-  "sha256": "b72e37e656086f6c5b2e9467a759ccb5590234faa2176bd99adbd5f1c255c9d3",
-  "size": 2377299,
-  "notes": "0.3.51验证版，请同时更新服务端。新增可选H.264硬件编码/手机硬件解码及模块显卡选择；硬件模式默认关闭，需手动安装发布说明中的组件并主动启用。修正鼠标滑动松手误点击、人物移入角色二级栏，分离预览/串流队列并显示准备进度；改进人物拖动调度和屏幕外原生窗口。RTX 3090 Ti实际编码短测约30.2FPS；手机端延迟、原生小窗分屏与人物画面外预览仍待实机验证。"
+  "versionCode": 40,
+  "versionName": "0.3.53",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.53/FeifeiShisi.apk",
+  "sha256": "ec568b8f9fdfd114c690b8a2087aa4a334c3be5ebd7b425d877057d371e168d7",
+  "size": 2373132,
+  "notes": "0.3.53验证版：删除角色下人物预览，不再打开游戏角色框。修复H.264解码有帧率但网页根背景遮挡视频的问题；改进视频启动尺寸变化、高精度限帧、最新帧采集与缓冲复用。本机采集短测约55FPS，手机显示及端到端延迟待更新验证。请同时更新服务端，并在串流设置点击下载硬件串流组件；已有FFmpeg继续使用。"
 }

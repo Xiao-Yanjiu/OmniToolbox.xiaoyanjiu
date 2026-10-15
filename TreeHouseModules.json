@@ -65,11 +65,11 @@
       "InternalName": "PhoneChat",
       "Name": "狒狒食柿《服务端》",
       "Author": "小烟酒",
-      "Description": "狒狒食柿服务端0.3.52：串流设置移到服务端面板的独立折叠栏；新增硬件组件及FFmpeg下载按钮、进度、取消与SHA256校验，完成后自动填写路径。App保持0.3.51。",
-      "Version": "0.3.52",
+      "Description": "狒狒食柿0.3.53验证版：移除人物预览及打开原生角色框的实现；修复H.264显示层遮挡与启动尺寸变化，改进高精度限帧、最新帧采集和缓冲复用。需同时更新App，并在串流设置下载新版硬件组件。",
+      "Version": "0.3.53",
       "MinimumOmniVersion": "1.1.6.8",
-      "File": "Modules/PhoneChat/0.3.52/PhoneChat.cs",
-      "Sha256": "4a73c1b1ae8bda44fcb268da11e6ae3f75e8cd2dd3e711f9fe70f463097821d0"
+      "File": "Modules/PhoneChat/0.3.53/PhoneChat.cs",
+      "Sha256": "11a6d9b34c0b04b50ed08b146fb30ee62927b5c81765f22ffecb7eb8f05ad68a"
     }
   ]
 }
