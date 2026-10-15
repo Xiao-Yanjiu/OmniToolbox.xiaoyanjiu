@@ -24,7 +24,7 @@ final class AppUpdater {
  private ProgressDialog progress;
  AppUpdater(Activity a){activity=a;}
  private void post(Runnable action){ui.post(()->{if(!closed&&!activity.isFinishing()&&!activity.isDestroyed())action.run();});}
- private void message(String value){post(()->new AlertDialog.Builder(activity).setTitle("应用更新").setMessage(value).setPositiveButton("确定",null).show());}
+ private void message(String value){post(()->GameDialogStyle.builder(activity).setTitle("应用更新").setMessage(value).setPositiveButton("确定",null).show());}
  void close(){closed=true;if(progress!=null)progress.dismiss();}
  static boolean allowedUrl(String value,boolean asset) {
   try {URI u=new URI(value);if(!"https".equals(u.getScheme())||u.getPort()!=-1||u.getRawUserInfo()!=null||u.getRawFragment()!=null)return false;
@@ -57,7 +57,7 @@ final class AppUpdater {
    PackageInfo current=activity.getPackageManager().getPackageInfo(activity.getPackageName(),0);
    if(code<=current.versionCode){if(manual)message("当前已是最新版本 "+current.versionName);return;}
    String notes=info.optString("notes","");if(notes.length()>2000)notes=notes.substring(0,2000);final String text="当前版本："+current.versionName+"\n最新版本："+version+"\n下载大小："+String.format(java.util.Locale.ROOT,"%.1f MB",size/1048576.0)+"\n\n"+notes;
-   post(()->new AlertDialog.Builder(activity).setTitle("发现新版本").setMessage(text).setNegativeButton("稍后",null).setPositiveButton("下载更新",(d,w)->download(url,hash,size,code)).show());
+   post(()->GameDialogStyle.builder(activity).setTitle("发现新版本").setMessage(text).setNegativeButton("稍后",null).setPositiveButton("下载更新",(d,w)->download(url,hash,size,code)).show());
   }catch(Exception e){if(manual)message("检查更新失败，请检查网络后重试。\n"+e.getMessage());}finally{busy.set(false);}},"App-update-check").start();
  }
  private void download(String url,String hash,long size,int version){
@@ -76,7 +76,7 @@ final class AppUpdater {
  }
  private void install(){try{
   if(!activity.getPackageManager().canRequestPackageInstalls()){
-   new AlertDialog.Builder(activity).setTitle("允许安装更新").setMessage("请在系统设置允许狒狒食柿安装应用，返回后继续安装。").setNegativeButton("稍后",null).setPositiveButton("前往设置",(d,w)->{try{pendingInstall=true;activity.startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+activity.getPackageName())));}catch(Exception e){pendingInstall=false;message("无法打开安装权限设置");}}).show();return;
+   GameDialogStyle.builder(activity).setTitle("允许安装更新").setMessage("请在系统设置允许狒狒食柿安装应用，返回后继续安装。").setNegativeButton("稍后",null).setPositiveButton("前往设置",(d,w)->{try{pendingInstall=true;activity.startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+activity.getPackageName())));}catch(Exception e){pendingInstall=false;message("无法打开安装权限设置");}}).show();return;
   }
   Uri uri=Uri.parse("content://"+activity.getPackageName()+".updates/update.apk");Intent intent=new Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);intent.setClipData(ClipData.newRawUri("狒狒食柿更新",uri));activity.startActivity(intent);
  }catch(Exception e){message("无法打开安装程序，请检查系统安装权限");}}
