@@ -1,8 +1,8 @@
 {
-  "versionCode": 46,
-  "versionName": "0.3.59",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.59/FeifeiShisi.apk",
-  "sha256": "73268d74a7a1b5fdaf8c89466627ad5d02daa33b0c60c3ae42cbf04ba953d682",
-  "size": 2393677,
-  "notes": "0.3.59：新增国服频道（脱机使用），手动填写OST_令牌，支持聊天、提及及招募详情评论；令牌按账号加密保存，不生成令牌。串流模式/IP/端口改为跟随服务端，TCP无需额外端口，UDP在服务端配置；合并组件下载，简化面板，竖屏摇杆置于下方，错误持续显示。需同步更新服务端0.3.59，StreamHost保持0.3.58。"
+  "versionCode": 47,
+  "versionName": "0.3.60",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.60/FeifeiShisi.apk",
+  "sha256": "912d47e4e528fde275a72bcb099cc3934af90fb0b37edd806ded5d10e786a803",
+  "size": 2401936,
+  "notes": "0.3.60：按游戏UI参考重做全页游戏主题，统一窗口、字体颜色、阴影、按钮各状态、标签与物品格；Android原生弹窗同步。国服频道改名离线模式，右上角设置配置令牌，聊天和招募复用原页面UI。修复窗口激活并确认实际前台，保留输入保护。需同步更新服务端0.3.60，StreamHost沿用0.3.58。"
 }

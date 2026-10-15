@@ -65,11 +65,11 @@
       "InternalName": "PhoneChat",
       "Name": "狒狒食柿《服务端》",
       "Author": "小烟酒",
-      "Description": "狒狒食柿0.3.59：串流TCP/UDP模式统一由服务端配置；合并必要组件下载，简化面板和显卡同行布局。配套App新增令牌授权的脱机国服聊天与招募、持续错误提示和竖屏控制调整。需同步更新App，沿用StreamHost0.3.58。",
-      "Version": "0.3.59",
+      "Description": "狒狒食柿0.3.60：窗口激活增加同进程握手与实际前台确认，保留物理按键及非前台输入保护。配套App重做全页FF14原生主题，国服频道改为离线模式、右上角令牌设置及共享聊天/招募UI。需同步更新App，StreamHost沿用0.3.58。",
+      "Version": "0.3.60",
       "MinimumOmniVersion": "1.1.6.8",
-      "File": "Modules/PhoneChat/0.3.59/PhoneChat.cs",
-      "Sha256": "dfc59470a5f04b20a86ebfc85c2d7414c55010500adf48df46aaebf83b0aefdb"
+      "File": "Modules/PhoneChat/0.3.60/PhoneChat.cs",
+      "Sha256": "23cda56c10583a65bda45523d5a9e39681939636405725e78c2d05e7fd51be8f"
     }
   ]
 }
