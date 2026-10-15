@@ -60,16 +60,7 @@ body[data-theme=game] input[type=radio]{border-radius:50%}
 body[data-theme=game] input:is([type=checkbox],[type=radio]):checked{background:linear-gradient(#fff2a7,#efbd3b);border-color:#b9a270;box-shadow:inset 0 0 0 2px #917a45,0 0 3px #f4cf6c66}
 body[data-theme=game] input[type=range]{accent-color:#c8b884}
 body[data-theme=game] :is(.tabs,#characterTabs,.inventoryTabs,#officeTabs){background:transparent!important;border:0!important;border-radius:0!important;box-shadow:none!important;gap:1px}
-body[data-theme=game] :is(.profileTabs,.inventoryTabs,#characterTabs) button{
- clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%);border-radius:0!important;
- background:linear-gradient(#656565 0,#505050 45%,#343434 49%,#383838 90%,#262626)!important;border:1px solid #191919!important;
- color:#dddcd7!important;box-shadow:inset 0 1px 0 #8d8d87,inset 0 -1px 0 #585752!important;position:relative;min-height:27px;
-}
-body[data-theme=game] :is(.profileTabs,.inventoryTabs,#characterTabs) button.on{
- background:linear-gradient(#333333,#212121 70%,#373737)!important;color:#f1eee4!important;
- border-color:#87764f!important;box-shadow:inset 0 0 0 1px #a88c52!important;
-}
-body[data-theme=game] :is(.profileTabs,.inventoryTabs,#characterTabs) button.on:before{content:"";position:absolute;left:3px;bottom:3px;width:5px;height:5px;background:#ffe592;box-shadow:0 0 4px #e8b431}
+body[data-theme=game] :is(.inventoryTabs,#characterTabs) button{clip-path:none;border-radius:999px!important;min-height:27px}
 body[data-theme=game] :is(#tabs .tab,#officeTabs .tab){border:1px solid #252525!important;border-radius:0!important;background:var(--xiv-button)!important;color:#dddcd7!important;box-shadow:inset 0 1px 0 #ffffff35!important}
 body[data-theme=game] :is(#tabs .tab.on,#officeTabs .tab.on){background:linear-gradient(#6c6b65,#494944)!important;color:#fff7df!important;border-color:#938469!important}
 body[data-theme=game] :is(#tabs .tab:first-child,#officeTabs .tab:first-child){border-radius:7px 0 0 7px!important}
@@ -79,11 +70,11 @@ body[data-theme=game] :is(.composer textarea,.composer input){background:#252525
 body[data-theme=game] :is(.name,.inlineRecruitText){border:0!important;box-shadow:none!important;background:transparent!important;border-radius:0!important;text-shadow:0 1px 1px #0007}
 body[data-theme=game] .time{color:#a5a39d}
 body[data-theme=game] .name:active{color:#fff0be!important;text-decoration:underline}
-body[data-theme=game] :is(#send,#officeSend,#gameStreamStart,.recruitActions #recruitJoin):not(:disabled){
+body[data-theme=game] :is(#gameStreamStart,.recruitActions #recruitJoin):not(:disabled){
  background:var(--xiv-gold)!important;border:1px solid #d4bb7e!important;color:#fffbe9!important;
  box-shadow:inset 0 1px 0 #fff4c8,inset 0 -1px 2px #755729,0 1px 3px #000a!important;text-shadow:0 1px 2px #6c5125;
 }
-body[data-theme=game] :is(#send,#officeSend,#gameStreamStart,.recruitActions #recruitJoin):not(:disabled):active{background:linear-gradient(#8f7139,#bb974d)!important;box-shadow:inset 0 2px 4px #60451d,0 0 0 1px #e7d199!important}
+body[data-theme=game] :is(#gameStreamStart,.recruitActions #recruitJoin):not(:disabled):active{background:linear-gradient(#8f7139,#bb974d)!important;box-shadow:inset 0 2px 4px #60451d,0 0 0 1px #e7d199!important}
 body[data-theme=game] :is(#boardDialog,.worldBoardUI){color:#deddd8!important;background:#313031!important}
 body[data-theme=game] :is(#boardDialog,.worldBoardUI) .boardFilters button{border-radius:3px!important;background:var(--xiv-button)!important;color:#deddd8!important}
 body[data-theme=game] :is(#boardDialog,.worldBoardUI) .boardFilters button.on{border:1px solid #d2b87b!important;box-shadow:inset 0 0 0 1px #4d4127,0 0 2px #e5c77c!important}
@@ -131,8 +122,16 @@ body[data-theme=game] button:active{transform:none!important;filter:none!importa
 body[data-theme=game] .prefSection h3{font-weight:400;color:#bcbab4}
 
 body[data-theme=game] .inventoryTotals{color:#fff0d2;text-shadow:0 0 2px #ff9e4d,0 0 4px #da722b;font-weight:600}
-body[data-theme=game] #characterContent[data-section=saddlebag]{background:linear-gradient(#24313c,#202b36)!important;border:1px solid #101a22;border-radius:5px;box-shadow:inset 0 1px 1px #ffffff15,0 1px 4px #0008}
-body[data-theme=game] #characterContent[data-section=saddlebag] .inventoryContainer{background:transparent!important}
-body[data-theme=game] #characterContent[data-section=saddlebag] .inventorySlot{background:linear-gradient(#41484e,#353d44)!important;border-color:#29333c!important;box-shadow:inset 0 1px 1px #ffffff0b,0 1px 0 #777d8266!important}
-
 body[data-theme=game] button.on:not(:where(.name,.inlineRecruitText,.boardRecruitRow)){border-color:#bda46b!important;box-shadow:inset 0 0 0 1px #4d4127,0 0 2px #e5c77c70!important}
+
+body[data-theme=game] #boardAreas{gap:2px}
+body[data-theme=game] #boardDialog #boardAreas button{border-radius:0!important}
+body[data-theme=game] #boardDialog #boardAreas button:first-child{border-radius:999px 0 0 999px!important}
+body[data-theme=game] #boardDialog #boardAreas button:last-child{border-radius:0 999px 999px 0!important}
+body[data-theme=game] #characterContent .armouryCategories button{border-radius:4px!important;background:transparent!important;box-shadow:none!important;border-color:transparent!important}
+body[data-theme=game] #characterContent .armouryCategories button.on{background:linear-gradient(#59564c,#38362f)!important;border-color:#d2b87b!important;box-shadow:inset 0 0 0 1px #4d4127!important}
+body[data-theme=game] .armouryPanel{background:linear-gradient(#383738,#2c2b2c);border-color:#5c5b57;box-shadow:inset 0 1px 1px #ffffff30,0 2px 5px #0009}
+body[data-theme=game] #characterContent .currencyTabs button{border-radius:5px!important}
+
+body[data-theme=game] :is(#send,#officeSend):not(:disabled){background:var(--xiv-button)!important;color:var(--xiv-text)!important;border:1px solid #252525!important;box-shadow:inset 0 1px 1px #ffffff42,inset 0 -1px 1px #ffffff18,0 1px 2px #000b!important;text-shadow:0 1px 1px #000c}
+body[data-theme=game] :is(#send,#officeSend):not(:disabled):active{background:var(--xiv-pressed)!important;box-shadow:inset 0 2px 3px #0009,0 0 0 1px #e0c98d80!important}

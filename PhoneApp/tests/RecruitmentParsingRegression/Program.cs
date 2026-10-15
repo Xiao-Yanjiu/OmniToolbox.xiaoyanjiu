@@ -32,6 +32,15 @@ phone.GetField("worldLivePosts",BindingFlags.NonPublic|BindingFlags.Instance)!.S
 var liveRows=(object[])phone.GetMethod("WorldLiveRows",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(rawPhone,null)!;
 Check(liveRows.Length==2,"SDK realtime posts remain visible without a game party-finder listing and preserve multiple posts by one author");
 using(var rowsJson=JsonDocument.Parse(JsonSerializer.Serialize(liveRows))){Check(rowsJson.RootElement[0].GetProperty("postId").GetString()==realPostID.ToString()&&rowsJson.RootElement[0].GetProperty("content").GetString()=="测试","SDK realtime post retains its exact detail ID and content");}
+var listingType=phone.GetNestedType("DirectListing")!;var lists=Array.CreateInstance(listingType.MakeArrayType(),3);
+for(int area=0;area<3;area++){var list=Array.CreateInstance(listingType,area+1);for(int i=0;i<=area;i++){var row=Activator.CreateInstance(listingType)!;listingType.GetField("id")!.SetValue(row,(ulong)(100*area+i+1));listingType.GetField("expires")!.SetValue(row,10000L);list.SetValue(row,i);}lists.SetValue(list,area);}
+phone.GetField("directAreaRows",BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(rawPhone,lists);
+var snapshotArea=phone.GetMethod("DirectAreaSnapshot",BindingFlags.Instance|BindingFlags.NonPublic)!;
+for(int area=0;area<3;area++)Check(((Array)snapshotArea.Invoke(rawPhone,[area,1000L])!).Length==area+1,"independent server area "+area+" retains its own complete count without inferring join flags");
+Check(((Array)snapshotArea.Invoke(rawPhone,[2,11000L])!).Length==0,"expired listings disappear from all area counts");
+var findListing=phone.GetMethod("FindDirectListing",BindingFlags.Instance|BindingFlags.NonPublic)!;
+Check(findListing.Invoke(rawPhone,[201UL,1000L])!=null,"password recruitment details resolve from its independent area snapshot");
+Check(findListing.Invoke(rawPhone,[999UL,1000L])==null,"unknown recruitment is not invented");
 Console.WriteLine(checks+" parsing checks passed. No game calls executed.");
 public class Message{public Recruitment? Recruitment{get;set;}}
 public class Recruitment{public ulong ListingID{get;set;}public string DutyName{get;set;}="";public string Comment{get;set;}="";}

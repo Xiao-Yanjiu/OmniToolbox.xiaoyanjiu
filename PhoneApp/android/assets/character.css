@@ -63,3 +63,32 @@ body.streamFullscreen #app,body.streamFullscreen #wallpaper{visibility:hidden!im
 #gameStreamViewport.stream-split.controlsExpanded .gameStreamControls{bottom:18px;max-height:calc(100% - 58px);overflow-y:auto}#gameStreamViewport .gameStreamControls #streamControlsHide{position:sticky;top:0;z-index:6}
 
 #streamPage>.characterFooter{flex-wrap:wrap;justify-content:flex-end}#streamPage>.characterFooter #gameStreamStatus{flex:1 0 100%;min-width:0;overflow-wrap:anywhere;white-space:normal}#gameStreamStart,#gameStreamStop{flex:0 0 auto;white-space:nowrap;min-width:90px}#streamErrorPanel{flex:none;padding:12px;border:1px solid #b99459;border-radius:10px;background:var(--panel,#313031);color:var(--ink,#ddd);overflow-wrap:anywhere}#streamErrorPanel[hidden]{display:none}#streamErrorPanel p{font-size:13px;line-height:1.6}#streamErrorPanel pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;max-height:150px;overflow:auto}#streamErrorPanel button{margin:6px 6px 0 0}
+
+/* Armoury preserves every container slot while keeping category controls beside it. */
+.armouryLayout{display:grid;grid-template-columns:40px minmax(0,1fr) 40px;gap:5px;max-width:420px;margin:0 auto;align-items:start}
+.armouryPanel{width:100%;padding:8px;border:1px solid var(--line);border-radius:5px;background:var(--panel)}
+.armouryPanel h3{text-align:center;margin:0 0 8px;font-size:12px}
+.armouryCategories{display:flex;flex-direction:column;gap:5px}
+.armouryCategories button{position:relative;height:43px;width:40px;padding:0;border-radius:4px;color:var(--accent)}
+.armouryCategories button>span{font-size:25px;line-height:29px;display:block;color:#e4d3a1;text-shadow:0 1px 2px #000}
+.armouryCategories small{display:block;font-size:12px;line-height:12px;color:#fff0d2;text-shadow:0 0 2px #ff9e4d,0 0 4px #da722b}
+.currencyTabs{gap:5px;align-items:center}
+.currencyTabs button{width:31px;height:31px;min-height:31px;padding:2px;border-radius:5px}
+.currencyTabs img{width:25px;height:25px;object-fit:contain}
+.currencyTabs span{font-size:19px}
+.currencyHeading{font-size:12px;padding:3px 8px;background:#65615a}
+.currencyGroup h3{margin:5px 0 2px;padding:3px 0;font-size:12px}
+.currencyRows{grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}
+.currencyRows.commonCurrency{grid-template-columns:1fr}
+.currencyRows article{min-width:0;gap:10px;padding:5px 8px}
+.currencyRows strong{font-size:14px;white-space:nowrap}
+.currencyRows img{flex:none;width:30px;height:30px}
+.retiredCurrencies{background:#0003;border:1px solid #20202055;border-radius:5px;padding:3px 6px;margin-top:4px}
+.retiredCurrencies h4{font-size:12px;font-weight:400;color:var(--muted);margin:0}
+.retiredCurrencies .retiredCurrency{background:transparent}
+.currencyRows.tribalCurrency{grid-template-columns:repeat(3,minmax(0,1fr))}
+.tribalCurrency article{gap:5px;padding:5px 2px}
+.tribalCurrency strong{font-size:13px}
+@media(max-width:340px){.armouryLayout{grid-template-columns:33px minmax(0,1fr) 33px;gap:3px}.armouryCategories button{width:33px}.armouryPanel{padding:5px}.armouryPanel .inventoryGrid{gap:3px}}
+
+.armouryCategories svg{display:block;width:29px;height:29px;margin:auto;filter:drop-shadow(0 1px 1px #000)}
