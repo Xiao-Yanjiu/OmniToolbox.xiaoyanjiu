@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+public static unsafe class StreamAdapters {
+ public sealed class Adapter { public string Id {get;set;}="";public string Name {get;set;}="";public uint Vendor {get;set;} public int Index {get;set;} public string Encoder=>Vendor==0x10de?"h264_nvenc":Vendor==0x1002?"h264_amf":Vendor==0x8086?"h264_qsv":""; }
+ [System.Runtime.InteropServices.DllImport("dxgi.dll")] static extern int CreateDXGIFactory1(ref System.Guid iid,out nint factory);
+ static void Release(nint p){if(p!=0)System.Runtime.InteropServices.Marshal.Release(p);}
+ public static Adapter[] List(){var result=new System.Collections.Generic.List<Adapter>();var iid=new System.Guid("770aae78-f26f-4dba-a829-253c83d1b387");System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(CreateDXGIFactory1(ref iid,out var f));try{byte* d=stackalloc byte[312];var enumerate=(delegate* unmanaged[Stdcall]<nint,uint,nint*,int>)(*(nint**)f)[12];for(uint i=0;i<32;i++){nint a=0;int hr=enumerate(f,i,&a);if(hr==unchecked((int)0x887a0002))break;System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(hr);try{var desc=(delegate* unmanaged[Stdcall]<nint,byte*,int>)(*(nint**)a)[10];System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(desc(a,d));uint vendor=*(uint*)(d+256),flags=*(uint*)(d+304);if((flags&2)!=0||vendor is not (0x10de or 0x1002 or 0x8086))continue;result.Add(new Adapter{Id=((ulong)*(long*)(d+296)).ToString("x16"),Name=new string((char*)d),Vendor=vendor,Index=(int)i});}finally{Release(a);}}}finally{Release(f);}return result.ToArray();}
+}

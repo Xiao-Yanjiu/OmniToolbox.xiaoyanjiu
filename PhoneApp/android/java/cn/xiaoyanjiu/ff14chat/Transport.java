@@ -25,6 +25,25 @@ final class Transport {
  }
  static JSONObject call(String address,String pin,String token,String path,JSONObject body) throws Exception {
   int generation=pollGeneration.get();
+  HttpsURLConnection conn=openPinned(address,pin,token,path);conn.setReadTimeout(path.equals("/stream")&&body!=null&&body.optString("action").equals("start")?200000:path.startsWith("/poll")?14000:15000);
+  if(path.startsWith("/poll"))pollConnection=conn;
+  try{
+   if(body!=null){byte[] bytes=body.toString().getBytes("UTF-8");conn.setRequestMethod("POST");conn.setDoOutput(true);conn.setRequestProperty("Content-Type","application/json");conn.setFixedLengthStreamingMode(bytes.length);try(OutputStream out=conn.getOutputStream()){out.write(bytes);}}
+   int code=conn.getResponseCode();InputStream stream=code>=400?conn.getErrorStream():conn.getInputStream();
+   if(stream==null)throw new IOException("服务器返回 "+code);
+   ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[4096];int n;
+   try(InputStream in=stream){while((n=in.read(buffer))!=-1){bytes.write(buffer,0,n);if(bytes.size()>1024*1024)throw new IOException("响应过大");}}
+   JSONObject result=new JSONObject(bytes.toString("UTF-8"));
+   if(code==401)throw new Unauthorized(result.optString("error","请重新配对"));
+   if(code!=200)throw new IOException(result.optString("error","请求失败："+code));return result;
+  }catch(SSLHandshakeException e){
+   Throwable cause=e;while(cause!=null){if(cause.getMessage()!=null&&cause.getMessage().contains("证书与扫码内容不一致"))throw new Unauthorized("电脑服务已重启或证书不匹配，请重新扫码确认");cause=cause.getCause();}throw e;
+  }catch(IOException e){if(path.startsWith("/poll")&&generation!=pollGeneration.get())throw new Reconnecting();throw e;}finally{if(pollConnection==conn)pollConnection=null;conn.disconnect();}
+ }
+ static HttpsURLConnection openVideo(Context context,String session)throws Exception{
+  android.content.SharedPreferences p=context.getSharedPreferences("pair",0);String expected=p.getString("expectedCharacterKey","");JSONObject game=ChatService.gameAccount;if(!expected.isEmpty()&&(game==null||!expected.equals(game.optString("name")+"@"+game.optString("world"))))throw new IOException("电脑当前角色与所选账号不同");if(!session.matches("[a-f0-9]{32}"))throw new IOException("视频会话无效");HttpsURLConnection c=openPinned(p.getString("url",""),p.getString("pin",""),p.getString("token",""),"/stream-video?session="+session);c.setReadTimeout(5000);return c;
+ }
+ private static HttpsURLConnection openPinned(String address,String pin,String token,String path)throws Exception{
   URL url=new URL(address+path);
   if(!url.getProtocol().equals("https")||pin.length()!=64)throw new IOException("配对信息无效");
   TrustManager[] trust={new X509TrustManager(){
@@ -41,21 +60,9 @@ final class Transport {
   conn.setSSLSocketFactory(ssl.getSocketFactory());
   // Certificate identity is bound to the SHA-256 pin confirmed during device authorization.
   conn.setHostnameVerifier((host,session)->host.equals(url.getHost()));
-  conn.setInstanceFollowRedirects(false);conn.setConnectTimeout(4500);conn.setReadTimeout(path.equals("/stream")&&body!=null&&body.optString("action").equals("start")?200000:path.startsWith("/poll")?14000:15000);
+  conn.setInstanceFollowRedirects(false);conn.setConnectTimeout(4500);conn.setReadTimeout(15000);
   if(!token.isEmpty())conn.setRequestProperty("Authorization","Bearer "+token);
-  if(path.startsWith("/poll"))pollConnection=conn;
-  try{
-   if(body!=null){byte[] bytes=body.toString().getBytes("UTF-8");conn.setRequestMethod("POST");conn.setDoOutput(true);conn.setRequestProperty("Content-Type","application/json");conn.setFixedLengthStreamingMode(bytes.length);try(OutputStream out=conn.getOutputStream()){out.write(bytes);}}
-   int code=conn.getResponseCode();InputStream stream=code>=400?conn.getErrorStream():conn.getInputStream();
-   if(stream==null)throw new IOException("服务器返回 "+code);
-   ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[4096];int n;
-   try(InputStream in=stream){while((n=in.read(buffer))!=-1){bytes.write(buffer,0,n);if(bytes.size()>1024*1024)throw new IOException("响应过大");}}
-   JSONObject result=new JSONObject(bytes.toString("UTF-8"));
-   if(code==401)throw new Unauthorized(result.optString("error","请重新配对"));
-   if(code!=200)throw new IOException(result.optString("error","请求失败："+code));return result;
-  }catch(SSLHandshakeException e){
-   Throwable cause=e;while(cause!=null){if(cause.getMessage()!=null&&cause.getMessage().contains("证书与扫码内容不一致"))throw new Unauthorized("电脑服务已重启或证书不匹配，请重新扫码确认");cause=cause.getCause();}throw e;
-  }catch(IOException e){if(path.startsWith("/poll")&&generation!=pollGeneration.get())throw new Reconnecting();throw e;}finally{if(pollConnection==conn)pollConnection=null;conn.disconnect();}
+  return conn;
  }
  static final class Reconnecting extends IOException {}
  static final class Unauthorized extends IOException {Unauthorized(String message){super(message);}}
