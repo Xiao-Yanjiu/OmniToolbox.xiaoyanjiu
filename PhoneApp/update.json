@@ -1,8 +1,8 @@
 {
-  "versionCode": 38,
-  "versionName": "0.3.50",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.50/FeifeiShisi.apk",
-  "sha256": "a224a2442b2d06d410bd2607ea7e48a7ed5992d1f0a2712c6450ea6545dd50a7",
-  "size": 2369107,
-  "notes": "0.3.50验证版，请同时更新服务端，需Omni 1.1.6.8。修正同地址账号身份分离并增加删除；修正军票、兵团徽章和制作采集票据；独立人物页、坐骑宠物图标分页、兵装库/物品/鞍囊统一方格；减少模型静止读回并移出主线程图标解码。新增目标10/30/60FPS、2M/8M/20M、触屏/鼠标指针和控制隐藏。60FPS为目标，当前采集实测最高约32.5FPS。回归与构建通过，手机账号和货币数量及未响应改善待实机验证。"
+  "versionCode": 39,
+  "versionName": "0.3.51",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.51/FeifeiShisi.apk",
+  "sha256": "b72e37e656086f6c5b2e9467a759ccb5590234faa2176bd99adbd5f1c255c9d3",
+  "size": 2377299,
+  "notes": "0.3.51验证版，请同时更新服务端。新增可选H.264硬件编码/手机硬件解码及模块显卡选择；硬件模式默认关闭，需手动安装发布说明中的组件并主动启用。修正鼠标滑动松手误点击、人物移入角色二级栏，分离预览/串流队列并显示准备进度；改进人物拖动调度和屏幕外原生窗口。RTX 3090 Ti实际编码短测约30.2FPS；手机端延迟、原生小窗分屏与人物画面外预览仍待实机验证。"
 }
