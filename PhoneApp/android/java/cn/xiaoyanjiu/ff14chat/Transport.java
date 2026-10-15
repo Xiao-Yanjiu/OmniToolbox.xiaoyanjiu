@@ -26,6 +26,7 @@ final class Transport {
  static JSONObject call(String address,String pin,String token,String path,JSONObject body) throws Exception {
   int generation=pollGeneration.get();
   HttpsURLConnection conn=openPinned(address,pin,token,path);conn.setReadTimeout(path.equals("/stream")&&body!=null&&body.optString("action").equals("start")?200000:path.startsWith("/poll")?14000:15000);
+  if(path.equals("/stream-input")||path.equals("/stream-pointer")||path.equals("/stream-control")){conn.setConnectTimeout(1000);conn.setReadTimeout(1500);}
   if(path.startsWith("/poll"))pollConnection=conn;
   try{
    if(body!=null){byte[] bytes=body.toString().getBytes("UTF-8");conn.setRequestMethod("POST");conn.setDoOutput(true);conn.setRequestProperty("Content-Type","application/json");conn.setFixedLengthStreamingMode(bytes.length);try(OutputStream out=conn.getOutputStream()){out.write(bytes);}}

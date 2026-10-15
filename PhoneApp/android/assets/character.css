@@ -46,3 +46,5 @@ body[data-theme=game] h1,body[data-theme=game] h2,body[data-theme=game] h3,body[
 body.hardwareVideo{background:transparent!important}body.hardwareVideo #wallpaper{visibility:hidden}body.hardwareVideo #gameStreamViewport,body.hardwareVideo #gameVideoSurface{background:transparent!important}
 
 html.nativeVideo,html.nativeVideo body{background:transparent!important}html.nativeVideo #wallpaper{visibility:hidden}
+
+body.streamFullscreen #app,body.streamFullscreen #wallpaper{visibility:hidden!important}body.streamFullscreen #gameStreamViewport{visibility:visible;box-sizing:border-box;width:100vw;height:100dvh;margin:0;max-width:none;max-height:none;overflow:hidden}body.streamFullscreen #gameVideoSurface{min-height:0;box-sizing:border-box}body.streamFullscreen #streamOverlayBar{flex:none;z-index:5}#gameStreamViewport .gameStreamControls:not(.inputReady){pointer-events:none}
