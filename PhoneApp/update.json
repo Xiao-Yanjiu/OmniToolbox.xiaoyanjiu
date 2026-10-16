@@ -1,8 +1,8 @@
 {
-  "versionCode": 48,
-  "versionName": "0.3.61",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.61/FeifeiShisi.apk",
-  "sha256": "96a02addf8f48b6b15975bf821d53404674b6298feb465259d31604f48bbd7e1",
-  "size": 2406029,
-  "notes": "0.3.61：聊天发送按钮恢复灰色；角色页面全部圆角，鞍囊统一灰底；兵装库改为两侧分类，货币一览重排；频道编辑增加保存按钮；游戏招募三个范围一起刷新并补上标签圆角。需同步更新服务端0.3.61，StreamHost沿用0.3.58。"
+  "versionCode": 59,
+  "versionName": "0.3.78",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.78/FeifeiShisi.apk",
+  "sha256": "2129b053c8b46b7d2cacb864c1a518b4c6ec6214a4cc239e03c793b8e3f29abf",
+  "size": 2447472,
+  "notes": "0.3.78：新增Omni物品查询/收录与市场板桥接、鱼糕服务端提醒和文件导入导出、灰机Wiki。导航由服务端排序和开关，缺少Omni时不能开启两项物品页面；国服离线聊天/招募共享连接。需同步更新服务端0.3.78，StreamHost沿用0.3.58。"
 }
