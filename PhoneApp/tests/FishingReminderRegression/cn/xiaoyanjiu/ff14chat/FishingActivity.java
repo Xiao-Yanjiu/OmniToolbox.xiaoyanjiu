@@ -1,0 +1,1 @@
+package cn.xiaoyanjiu.ff14chat;public class FishingActivity extends android.app.Activity {}

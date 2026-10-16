@@ -20,7 +20,7 @@ final class Transport {
  static void cancelPoll(){pollGeneration.incrementAndGet();HttpsURLConnection connection=pollConnection;if(connection!=null)connection.disconnect();}
  static JSONObject request(Context context,String path,JSONObject body) throws Exception {
   android.content.SharedPreferences p=context.getSharedPreferences("pair",0);
-  String expected=p.getString("expectedCharacterKey","");if(!expected.isEmpty()&&!path.startsWith("/poll")&&!path.equals("/reload")&&!path.equals("/pair-info")&&!path.equals("/display-assets")&&!path.equals("/icons")){JSONObject game=ChatService.gameAccount;if(game==null||!expected.equals(game.optString("name")+"@"+game.optString("world")))throw new IOException("电脑当前角色与所选账号不同，请在电脑切换角色后重试");}
+  String expected=p.getString("expectedCharacterKey","");if(!expected.isEmpty()&&!path.startsWith("/poll")&&!path.equals("/reload")&&!path.equals("/pair-info")&&!path.equals("/display-assets")&&!path.equals("/icons")&&!path.equals("/fishing-reminders")){JSONObject game=ChatService.gameAccount;if(game==null||!expected.equals(game.optString("name")+"@"+game.optString("world")))throw new IOException("电脑当前角色与所选账号不同，请在电脑切换角色后重试");}
   return call(p.getString("url",""),p.getString("pin",""),p.getString("token",""),path,body);
  }
  static JSONObject call(String address,String pin,String token,String path,JSONObject body) throws Exception {

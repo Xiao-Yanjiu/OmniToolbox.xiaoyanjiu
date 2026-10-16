@@ -1,0 +1,1 @@
+package cn.xiaoyanjiu.ff14chat; class AccountStore{static int reads;static String officeToken(android.content.Context c,String account){reads++;return "OST_UNIT_TEST";}}

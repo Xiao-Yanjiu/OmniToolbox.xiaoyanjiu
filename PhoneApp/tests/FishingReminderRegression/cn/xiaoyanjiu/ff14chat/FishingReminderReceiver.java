@@ -1,0 +1,1 @@
+package cn.xiaoyanjiu.ff14chat;public class FishingReminderReceiver extends android.content.BroadcastReceiver{public void onReceive(android.content.Context c,android.content.Intent i){}}

@@ -1,0 +1,18 @@
+const fs=require('fs'),path=require('path'),assert=require('assert');const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const root=path.resolve(__dirname,'..','..'),script=fs.readFileSync(root+'/PhoneApp/android/assets/fishing-bridge.js','utf8').replace('__NATIVE_PERMISSION__','granted');
+(async()=>{const browser=await chromium.launch({headless:true,executablePath:process.env.YANJIU_BROWSER});const page=await browser.newPage();await page.goto('https://fish.ffmomola.com/',{waitUntil:'networkidle',timeout:45000});
+await page.evaluate(script);
+await page.evaluate(()=>{window.fishingPackets=[];const channel=new MessageChannel();window.nativeFishPort=channel.port1;channel.port1.onmessage=e=>fishingPackets.push(JSON.parse(e.data));channel.port1.start();window.postMessage('ff14-fishing-notifications',location.origin,[channel.port2])});
+await page.waitForFunction(()=>fishingPackets.some(p=>p.action==='sync'),{timeout:15000});
+assert.equal(await page.evaluate(()=>fishingPackets.find(p=>p.action==='sync').rows.length),0);
+await page.evaluate(async()=>{const module=await import([...document.scripts].find(s=>s.type==='module'&&s.src.includes('/assets/index-')).src);const store=Object.values(module).find(v=>v?.getState&&v?.subscribe),repo=Object.values(module).find(v=>v?.getSpotFishList&&v?.getFishWindows);const fish=repo.getSpotFishList().find(f=>repo.getFishCountDown(f).type==='Waiting');window.fishingTestId=fish.id;window.fishingTestName=repo.getFish(fish.itemId).name.chs;store.dispatch({type:'fishing/setFishAlarm',payload:fish.id})});
+await page.waitForFunction(()=>fishingPackets.some(p=>p.action==='sync'&&p.rows.length>0),{timeout:15000});
+const rows=await page.evaluate(()=>fishingPackets.filter(p=>p.action==='sync').at(-1).rows);
+assert(rows.length>0&&rows.length<=64);assert(rows.every(r=>r.at>Date.now()&&r.expires>r.at&&r.key&&r.title&&r.body));assert(rows.some(r=>r.key.endsWith(':before')));assert(rows.some(r=>r.key.endsWith(':start')));
+const name=await page.evaluate(()=>fishingTestName);assert(rows.every(r=>r.title.includes(name)));
+await page.evaluate(()=>new Notification('测试手机提醒',{body:'测试内容'}));await page.waitForFunction(()=>fishingPackets.some(p=>p.action==='notify'));
+assert.equal(await page.evaluate(()=>typeof Phone),'undefined','remote fishing surface has no paired-game Phone bridge');
+await page.evaluate(async()=>{const module=await import([...document.scripts].find(s=>s.type==='module'&&s.src.includes('/assets/index-')).src);Object.values(module).find(v=>v?.getState&&v?.subscribe).dispatch({type:'fishing/setFishUnAlarm',payload:fishingTestId})});
+await page.waitForFunction(()=>fishingPackets.filter(p=>p.action==='sync').at(-1)?.rows.length===0,{timeout:15000});
+console.log('PASS live fish site: adapter discovery, empty queue, actual fish alarm subscription, future/advance/start times and names, notification forwarding and unsubscribe; no Android notification sent');
+await browser.close()})().catch(e=>{console.error(e);process.exit(1)});
