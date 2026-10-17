@@ -65,11 +65,11 @@
       "InternalName": "PhoneChat",
       "Name": "狒狒食柿《服务端》",
       "Author": "小烟酒",
-      "Description": "狒狒食柿0.3.78：Omni物品查询/收录与市场板桥接，鱼糕服务端通知与文件导入导出，灰机Wiki，服务端导航排序/开关及Omni依赖检测；离线国服聊天与招募共享连接。需配套升级App0.3.78。",
-      "Version": "0.3.78",
+      "Description": "狒狒食柿0.3.105：串流鼠标边界、直接手机输入法、全屏/小窗/分屏控件；统一浏览器界面与导航、新增石之家、默认导航排序及招募加载状态。配套App0.3.105；授权登录和游戏招募需实机验证。",
+      "Version": "0.3.105",
       "MinimumOmniVersion": "1.1.7.1",
-      "File": "Modules/PhoneChat/0.3.78/PhoneChat.cs",
-      "Sha256": "228327e07f7f01cf92ea76fa3b95066a231831de221da13ee628a105a8d95d56"
+      "File": "Modules/PhoneChat/0.3.105/PhoneChat.cs",
+      "Sha256": "eeae7832545407cc0b4ac8f412f162b9df8a524bb07dbb84453de63e0ec4c702"
     }
   ]
 }
