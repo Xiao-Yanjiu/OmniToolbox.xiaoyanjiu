@@ -8,14 +8,11 @@ public final class FishingActivity extends Activity {
  WebView web;TextView status;WebMessagePort port;int generation;boolean ready;String error="";
  static boolean trusted(String value){try{Uri u=Uri.parse(value);return "https".equals(u.getScheme())&&"fish.ffmomola.com".equals(u.getHost())&&(u.getPort()==-1||u.getPort()==443)&&u.getUserInfo()==null;}catch(Exception e){return false;}}
  @Override public void onCreate(Bundle state){super.onCreate(state);files=new FishingFiles(this);
-  LinearLayout root=new LinearLayout(this);root.setOrientation(1);root.setBackgroundColor(Color.rgb(49,48,49));LinearLayout bar=new LinearLayout(this);
-  bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(dp(8),dp(4),dp(8),dp(4));
-  button(bar,"‹ 返回",72,()->finish());TextView title=new TextView(this);title.setText("鱼糕");title.setTextSize(15);title.setTextColor(Color.rgb(238,230,208));title.setPadding(dp(10),0,0,0);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-  button(bar,"刷新",56,()->web.reload());button(bar,"手机提醒",80,this::settings);root.addView(bar,new LinearLayout.LayoutParams(-1,dp(48)));
+  FrameLayout root=new FrameLayout(this);root.setBackgroundColor(Color.rgb(49,48,49));root.addView(BrowserToolbar.create(this,"fishing","鱼糕",()->finish(),()->web.reload(),"手机提醒",this::settings),new FrameLayout.LayoutParams(-1,-1));
   getWindow().setStatusBarColor(Color.rgb(49,48,49));getWindow().setNavigationBarColor(Color.rgb(49,48,49));
   if(Build.VERSION.SDK_INT>=30){getWindow().setDecorFitsSystemWindows(false);root.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());android.graphics.Insets ime=insets.getInsets(WindowInsets.Type.ime());v.setPadding(bars.left,bars.top,bars.right,Math.max(bars.bottom,ime.bottom));return WindowInsets.CONSUMED;});}else root.setFitsSystemWindows(true);
-  status=new TextView(this);status.setTextColor(Color.LTGRAY);status.setTextSize(10);status.setSingleLine(true);status.setEllipsize(TextUtils.TruncateAt.END);status.setPadding(dp(12),0,dp(12),dp(5));status.setOnClickListener(v->settings());root.addView(status);
-  web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);root.requestApplyInsets();
+  status=BrowserToolbar.hintSink(this);status.setTextColor(Color.LTGRAY);status.setTextSize(10);status.setSingleLine(true);status.setEllipsize(TextUtils.TruncateAt.END);status.setPadding(dp(12),0,dp(12),dp(5));status.setOnClickListener(v->settings());
+  web=new BrowserToolbar.Content(this);BrowserToolbar.attach(this,root,(BrowserToolbar.Content)web);setContentView(root);root.requestApplyInsets();
   if(Build.VERSION.SDK_INT>=30){WindowInsetsController controller=root.getWindowInsetsController();if(controller!=null)controller.setSystemBarsAppearance(0,WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);}
   WebSettings ws=web.getSettings();ws.setTextZoom(100);ws.setUseWideViewPort(true);ws.setLoadWithOverviewMode(true);ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);ws.setAllowFileAccess(false);ws.setAllowContentAccess(true);ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);ws.setSupportMultipleWindows(false);
   web.setWebChromeClient(new WebChromeClient(){
@@ -67,6 +64,6 @@ public final class FishingActivity extends Activity {
  @Override public void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);files.result(request,result,data);}
  @Override public void onResume(){super.onResume();FishingReminders.schedule(this);FishingServer.flush(this,true);permissionResult();statusHandler.removeCallbacks(statusTick);statusHandler.post(statusTick);}
  @Override public void onPause(){statusHandler.removeCallbacks(statusTick);super.onPause();}
- @Override public void onDestroy(){generation++;files.cancel();statusHandler.removeCallbacks(statusTick);closePort();if(web!=null)web.destroy();super.onDestroy();}
+ @Override public void onDestroy(){BrowserDrawer.close(this);BrowserToolbar.close(this);generation++;files.cancel();statusHandler.removeCallbacks(statusTick);closePort();if(web!=null)web.destroy();super.onDestroy();}
  @Override public void onBackPressed(){if(web.canGoBack())web.goBack();else finish();}
 }

@@ -8,10 +8,10 @@ public final class WikiActivity extends Activity {
  int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
  void button(LinearLayout parent,String text,int width,Runnable action){TextView b=new TextView(this);b.setText(text);b.setTextColor(0xffece7db);b.setTextSize(12);b.setGravity(Gravity.CENTER);b.setContentDescription(text);b.setFocusable(true);GradientDrawable shape=new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{0xff626262,0xff353535});shape.setCornerRadius(dp(16));shape.setStroke(dp(1),0xff757168);b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x44d8c99a),shape,null));b.setOnClickListener(v->action.run());LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(dp(width),dp(34));lp.setMargins(dp(2),0,dp(2),0);parent.addView(b,lp);}
  void external(String url){try{Uri u=Uri.parse(url==null?HOME:url);if(!"https".equals(u.getScheme()))u=Uri.parse(HOME);startActivity(new Intent(Intent.ACTION_VIEW,u));}catch(Exception e){state.setText("无法打开浏览器");}}
- @Override public void onCreate(Bundle saved){super.onCreate(saved);LinearLayout root=new LinearLayout(this);root.setOrientation(1);root.setBackgroundColor(0xff313031);
-  LinearLayout bar=new LinearLayout(this);bar.setPadding(dp(8),dp(4),dp(8),dp(4));bar.setGravity(Gravity.CENTER_VERTICAL);button(bar,"‹ 返回",72,()->onBackPressed());TextView title=new TextView(this);title.setText("灰机Wiki");title.setTextColor(0xffeee6d0);title.setTextSize(15);title.setPadding(dp(8),0,0,0);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));button(bar,"刷新",56,()->web.reload());button(bar,"浏览器",72,()->external(web.getUrl()));root.addView(bar,new LinearLayout.LayoutParams(-1,dp(48)));
-  state=new TextView(this);state.setTextSize(10);state.setTextColor(Color.LTGRAY);state.setPadding(dp(12),0,dp(12),dp(4));root.addView(state);
-  web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));
+ @Override public void onCreate(Bundle saved){super.onCreate(saved);FrameLayout root=new FrameLayout(this);root.setBackgroundColor(0xff313031);
+  root.addView(BrowserToolbar.create(this,"wiki","灰机Wiki",()->finish(),()->web.reload(),"浏览器",()->external(web.getUrl())),new FrameLayout.LayoutParams(-1,-1));
+  state=BrowserToolbar.hintSink(this);state.setTextSize(10);state.setTextColor(Color.LTGRAY);state.setPadding(dp(12),0,dp(12),dp(4));
+  web=new BrowserToolbar.Content(this);BrowserToolbar.attach(this,root,(BrowserToolbar.Content)web);
   getWindow().setStatusBarColor(0xff313031);getWindow().setNavigationBarColor(0xff313031);
   if(Build.VERSION.SDK_INT>=30){getWindow().setDecorFitsSystemWindows(false);root.setOnApplyWindowInsetsListener((v,i)->{android.graphics.Insets b=i.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout()),ime=i.getInsets(WindowInsets.Type.ime());v.setPadding(b.left,b.top,b.right,Math.max(b.bottom,ime.bottom));return WindowInsets.CONSUMED;});}else root.setFitsSystemWindows(true);
   setContentView(root);root.requestApplyInsets();if(Build.VERSION.SDK_INT>=30){WindowInsetsController c=root.getWindowInsetsController();if(c!=null)c.setSystemBarsAppearance(0,WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);}
@@ -28,5 +28,5 @@ public final class WikiActivity extends Activity {
  @Override public void onResume(){super.onResume();handler.post(policy);}
  @Override public void onPause(){handler.removeCallbacks(policy);super.onPause();}
  @Override public void onBackPressed(){if(web!=null&&web.canGoBack())web.goBack();else finish();}
- @Override public void onDestroy(){handler.removeCallbacks(policy);if(web!=null)web.destroy();super.onDestroy();}
+ @Override public void onDestroy(){BrowserDrawer.close(this);BrowserToolbar.close(this);handler.removeCallbacks(policy);if(web!=null)web.destroy();super.onDestroy();}
 }

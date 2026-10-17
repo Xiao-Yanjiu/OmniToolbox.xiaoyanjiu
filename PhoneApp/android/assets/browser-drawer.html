@@ -1,0 +1,5 @@
+<!doctype html><html style="background:transparent!important"><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>__APP_STYLE__</style><link rel="stylesheet" href="pages.css"><link rel="stylesheet" href="theme-game.css"></head><body style="background:transparent!important" data-theme="__THEME__"><button id="pageDrawerBackdrop" aria-label="关闭页面栏"></button><aside id="pageDrawer" aria-label="切换页面"><div class="drawerBrand">狒狒食柿 <small>页面导航</small></div><nav></nav></aside><script>
+const current=__CURRENT_JSON__,rows=__ROWS_JSON__;
+for(const row of rows){const b=document.createElement('button');b.dataset.page=row.id;b.textContent=row.name;b.classList.toggle('on',row.id===current);b.onclick=()=>row.id===current?Drawer.close():Drawer.choose(row.id);document.querySelector('nav').append(b)}
+document.getElementById('pageDrawerBackdrop').onclick=()=>Drawer.close();requestAnimationFrame(()=>document.getElementById('pageDrawer').classList.add('open'));
+</script></body></html>

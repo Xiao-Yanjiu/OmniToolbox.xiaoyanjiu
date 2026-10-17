@@ -92,3 +92,44 @@ body.streamFullscreen #app,body.streamFullscreen #wallpaper{visibility:hidden!im
 @media(max-width:340px){.armouryLayout{grid-template-columns:33px minmax(0,1fr) 33px;gap:3px}.armouryCategories button{width:33px}.armouryPanel{padding:5px}.armouryPanel .inventoryGrid{gap:3px}}
 
 .armouryCategories svg{display:block;width:29px;height:29px;margin:auto;filter:drop-shadow(0 1px 1px #000)}
+
+/* Compact stream bottom toolbar; resize grip fills remaining space. */
+#gameStreamViewport:is(.stream-normal,.stream-full,.stream-floating,.stream-split) #streamOverlayBar{position:relative;inset:auto;order:3;flex:none;display:flex;gap:4px;padding:2px 4px;min-height:28px;height:28px;white-space:nowrap;overflow:hidden}
+#streamOverlayBar>span{display:none}
+#gameStreamViewport #streamOverlayBar button{flex:none;min-width:0;min-height:0;height:24px;padding:2px 6px;font-size:11px;line-height:18px;white-space:nowrap}
+#gameStreamViewport #streamOverlayBar #streamResize{position:static;display:block;order:0;flex:1;align-self:auto;width:auto;height:24px;min-height:0;background:transparent;touch-action:none;box-shadow:none;border:0;cursor:ns-resize}
+#gameStreamViewport.stream-normal #streamResize,#gameStreamViewport.stream-full #streamResize{display:none}
+#gameStreamViewport #gameVideoSurface{order:1;padding:0!important}
+#gameStreamViewport .gameStreamControls{order:2}
+#gameStreamViewport:is(.stream-full,.stream-floating,.stream-split).controlsExpanded .gameStreamControls{bottom:28px}
+#gameStreamViewport #streamMouseCursor{width:11px;height:17px;clip-path:none;box-shadow:none;filter:drop-shadow(0 1px 1px #0008);background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='17' viewBox='0 0 11 17'%3E%3Cpath d='M1 1v12l3-3 3 6 2-1-3-6h4Z' fill='white' stroke='black' stroke-width='1' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat}
+
+#gameStreamViewport.stream-floating.controlsExpanded .gameStreamControls{bottom:auto}
+
+/* Explicit mode layout, independent from inherited normal-page sizing. */
+#gameStreamViewport.stream-full{display:flex!important;flex-direction:column!important;align-items:stretch;width:100vw!important;height:100dvh!important;min-width:0;min-height:0}
+#gameStreamViewport.stream-full #gameVideoSurface{flex:1 1 0!important;width:100%;height:0;min-height:0;aspect-ratio:auto!important}
+#gameStreamViewport:is(.stream-floating,.stream-split) #streamOverlayBar{gap:2px;padding:2px}
+#gameStreamViewport.stream-floating #streamOverlayBar button{padding:1px 3px;font-size:10px}
+#gameStreamViewport #streamOverlayBar #streamResize{min-width:24px;flex:1 1 24px}
+#gameStreamViewport.stream-floating{width:max(260px,46vw);max-width:calc(100vw - 12px)}
+#gameStreamViewport:is(.stream-floating,.stream-split).controlsExpanded .gameStreamControls{display:grid!important;position:relative!important;inset:auto!important;flex:none;max-height:none!important;overflow:visible!important;padding:4px;gap:3px;background:var(--panel)!important}
+#gameStreamViewport:is(.stream-floating,.stream-split) .streamControlPads{display:grid;grid-template-columns:minmax(48px,1fr) minmax(140px,2.5fr) minmax(48px,1fr)!important;gap:4px;align-items:center}
+#gameStreamViewport:is(.stream-floating,.stream-split) .streamJoy{width:100%;height:auto;max-width:80px;aspect-ratio:1;font-size:10px}
+#gameStreamViewport:is(.stream-floating,.stream-split) .streamControlCenter{width:100%;gap:3px}
+#gameStreamViewport:is(.stream-floating,.stream-split) .streamControlMiddle{gap:3px}
+#gameStreamViewport:is(.stream-floating,.stream-split) .streamNumpad{min-width:40px;gap:2px}
+#gameStreamViewport:is(.stream-floating,.stream-split) .streamMouseActions{gap:2px}
+#gameStreamViewport:is(.stream-floating,.stream-split) .streamControlActions{gap:2px;flex-wrap:wrap}
+#gameStreamViewport:is(.stream-floating,.stream-split) .gameStreamControls button{min-width:0;min-height:22px;height:22px;padding:1px 4px;font-size:10px;line-height:18px}
+#gameStreamViewport:is(.stream-floating,.stream-split) #streamControlsHide,#gameStreamViewport:is(.stream-floating,.stream-split) #streamControlHint{display:none}
+#gameStreamViewport.stream-floating.controlsExpanded .gameStreamControls{max-height:none}
+#gameStreamViewport.stream-split.controlsExpanded{min-height:250px}
+#gameStreamViewport.stream-floating .streamJoy:last-child{justify-self:end}
+#gameStreamViewport.stream-full .gameStreamControls{max-height:calc(100% - 56px);overflow:auto}
+
+#gameStreamViewport.stream-full #streamOverlayBar #streamResize{display:none}
+
+#gameStreamViewport:is(.stream-floating,.stream-split) .streamControlPads{grid-template-areas:"move center arrows"!important}
+#gameStreamViewport:is(.stream-floating,.stream-split) .streamJoy{width:100%!important;max-width:80px!important;justify-self:center!important}
+#gameStreamViewport:is(.stream-floating,.stream-split) .streamControlMiddle{display:flex!important;gap:3px}

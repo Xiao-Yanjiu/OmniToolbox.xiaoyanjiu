@@ -9,3 +9,5 @@
 #officeStatus{height:auto;min-height:14px;white-space:normal;overflow-wrap:anywhere}#officePostStatus{font-size:11px;overflow-wrap:anywhere;margin:4px 0}
 
 .officeConnectionBar{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:5px 9px;font-size:12px;border-bottom:1px solid var(--line);flex:none}.officeConnectionBar button{font-size:12px;padding:5px 10px}#officeConnectionStatus{color:var(--muted)}#officeConnectionStatus[data-state=connected]{color:#72b98a}#officeConnectionStatus[data-state=connecting]{color:var(--accent)}
+
+#recruitLoadStatus{color:#aaa9a5!important;font-size:11px;font-weight:400;flex:none;white-space:nowrap}#recruitLoadStatus[hidden]{display:none}
