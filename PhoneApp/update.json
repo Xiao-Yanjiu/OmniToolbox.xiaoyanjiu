@@ -1,8 +1,8 @@
 {
-  "versionCode": 86,
-  "versionName": "0.3.105-local",
-  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.105/FeifeiShisi.apk",
-  "sha256": "4a16e304471c53476cfed2633956df30ec5cb863f19cd2e9e5cac9f6a2310ad4",
-  "size": 2459906,
-  "notes": "0.3.105：统一浏览器外框与导航，新增石之家，修复网页滚动后空白；调整串流控件、全屏、小窗拖动、鼠标边界及直接手机输入法；更新导航排序和招募加载状态。建议同步升级服务端0.3.105。石之家授权和游戏招募仍需实机验证。"
+  "versionCode": 90,
+  "versionName": "0.3.109-local",
+  "apkUrl": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.109/FeifeiShisi.apk",
+  "sha256": "3b15a2439b6415f7316e2d17bced51b422fe735b35e11bcba072451a82040233",
+  "size": 2476491,
+  "notes": "0.3.109：新增手机 Omni 幻化管理、石之家导入、CPU 预览编码与独立预览连接；保留浏览器会话并增加主页按钮，统一提醒/下载主题，修正退出和重连。请同步更新服务端及预览模块1.4.4；并发稳定性与实际帧率仍需实机验证。"
 }
