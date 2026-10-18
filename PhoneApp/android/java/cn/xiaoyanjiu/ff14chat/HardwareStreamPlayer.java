@@ -37,6 +37,6 @@ final class HardwareStreamPlayer implements TextureView.SurfaceTextureListener {
     int index=codec.dequeueOutputBuffer(info,1000);int newest=-1;while(index>=0){if(newest>=0)codec.releaseOutputBuffer(newest,false);newest=index;index=codec.dequeueOutputBuffer(info,0);}if(newest>=0){codec.releaseOutputBuffer(newest,System.nanoTime());frames++;if(first){first=false;report(0,"");}}
     long now=android.os.SystemClock.elapsedRealtime();if(first&&now-startup>15000)throw new IOException("硬件视频首帧超时，请检查电脑编码器状态");if(now-clock>=1000){report((int)(frames*1000L/(now-clock)),"");clock=now;frames=0;}
    }
-  }catch(Exception e){report(0,e.getMessage()==null?"硬件视频解码失败":e.getMessage());}finally{close();if(codec!=null){try{codec.stop();}catch(Exception ignored){}codec.release();}surface.release();packets.clear();if(receiver!=null){try{receiver.join(1000);}catch(InterruptedException e){Thread.currentThread().interrupt();}}}}
+  }catch(Exception e){report(0,e.getMessage()==null?"硬件视频解码失败":e.getMessage());}finally{close();if(codec!=null){try{codec.stop();}catch(Exception ignored){}try{codec.release();}catch(Exception ignored){}}try{surface.release();}catch(Exception ignored){}packets.clear();if(receiver!=null){try{receiver.join(1000);}catch(InterruptedException e){Thread.currentThread().interrupt();}}}}
  }
 }

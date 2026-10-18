@@ -12,20 +12,20 @@ public final class FishingActivity extends Activity {
   getWindow().setStatusBarColor(Color.rgb(49,48,49));getWindow().setNavigationBarColor(Color.rgb(49,48,49));
   if(Build.VERSION.SDK_INT>=30){getWindow().setDecorFitsSystemWindows(false);root.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());android.graphics.Insets ime=insets.getInsets(WindowInsets.Type.ime());v.setPadding(bars.left,bars.top,bars.right,Math.max(bars.bottom,ime.bottom));return WindowInsets.CONSUMED;});}else root.setFitsSystemWindows(true);
   status=BrowserToolbar.hintSink(this);status.setTextColor(Color.LTGRAY);status.setTextSize(10);status.setSingleLine(true);status.setEllipsize(TextUtils.TruncateAt.END);status.setPadding(dp(12),0,dp(12),dp(5));status.setOnClickListener(v->settings());
-  web=new BrowserToolbar.Content(this);BrowserToolbar.attach(this,root,(BrowserToolbar.Content)web);setContentView(root);root.requestApplyInsets();
+  java.util.ArrayList<BrowserToolbar.Content> retained=BrowserPages.take(this,"fishing");boolean restored=!retained.isEmpty();web=restored?retained.get(0):new BrowserToolbar.Content(this);BrowserToolbar.home(this,()->{error="";web.loadUrl(ORIGIN+"/#/fishing");});BrowserToolbar.attach(this,root,(BrowserToolbar.Content)web);setContentView(root);root.requestApplyInsets();
   if(Build.VERSION.SDK_INT>=30){WindowInsetsController controller=root.getWindowInsetsController();if(controller!=null)controller.setSystemBarsAppearance(0,WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);}
   WebSettings ws=web.getSettings();ws.setTextZoom(100);ws.setUseWideViewPort(true);ws.setLoadWithOverviewMode(true);ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);ws.setAllowFileAccess(false);ws.setAllowContentAccess(true);ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);ws.setSupportMultipleWindows(false);
   web.setWebChromeClient(new WebChromeClient(){
    @Override public boolean onShowFileChooser(WebView view,ValueCallback<Uri[]> cb,FileChooserParams params){return files.choose(cb,params);}
-   @Override public boolean onJsAlert(WebView view,String url,String message,JsResult r){if(!trusted(url)){r.cancel();return true;}new AlertDialog.Builder(FishingActivity.this).setMessage(message).setPositiveButton("确定",(d,n)->r.confirm()).setOnCancelListener(d->r.cancel()).show();return true;}
-   @Override public boolean onJsConfirm(WebView view,String url,String message,JsResult r){if(!trusted(url)){r.cancel();return true;}new AlertDialog.Builder(FishingActivity.this).setMessage(message).setPositiveButton("确定",(d,n)->r.confirm()).setNegativeButton("取消",(d,n)->r.cancel()).setOnCancelListener(d->r.cancel()).show();return true;}
+   @Override public boolean onJsAlert(WebView view,String url,String message,JsResult r){if(!trusted(url)){r.cancel();return true;}GameDialogStyle.builder(FishingActivity.this).setMessage(message).setPositiveButton("确定",(d,n)->r.confirm()).setOnCancelListener(d->r.cancel()).show();return true;}
+   @Override public boolean onJsConfirm(WebView view,String url,String message,JsResult r){if(!trusted(url)){r.cancel();return true;}GameDialogStyle.builder(FishingActivity.this).setMessage(message).setPositiveButton("确定",(d,n)->r.confirm()).setNegativeButton("取消",(d,n)->r.cancel()).setOnCancelListener(d->r.cancel()).show();return true;}
   });web.setWebViewClient(new WebViewClient(){
    @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest r){if(!r.isForMainFrame())return false;if(trusted(r.getUrl().toString()))return false;if(r.hasGesture()&&"https".equals(r.getUrl().getScheme()))try{startActivity(new Intent(Intent.ACTION_VIEW,r.getUrl()));}catch(Exception ignored){}return true;}
    @Override public void onPageStarted(WebView v,String u,android.graphics.Bitmap icon){generation++;ready=false;files.cancel();closePort();update();}
    @Override public void onPageFinished(WebView v,String u){if(trusted(u))connect();}
    @Override public void onReceivedError(WebView v,WebResourceRequest r,WebResourceError e){if(r.isForMainFrame()){error="鱼糕加载失败，请检查网络后刷新";update();}}
   });
-  FishingReminders.channel(this);permission();web.loadUrl(ORIGIN+"/#/fishing");update();
+  FishingReminders.channel(this);permission();if(restored){if(trusted(web.getUrl()))connect();}else web.loadUrl(BrowserPages.startUrl(this,"fishing",ORIGIN+"/#/fishing"));update();
  }
  int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
  void button(LinearLayout p,String label,int width,Runnable action){TextView b=new TextView(this);b.setText(label);b.setTextSize(12);b.setTextColor(Color.rgb(236,231,219));b.setGravity(Gravity.CENTER);b.setClickable(true);b.setFocusable(true);b.setContentDescription(label);GradientDrawable shape=new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{0xff626262,0xff353535});shape.setCornerRadius(dp(16));shape.setStroke(dp(1),0xff757168);b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x44d8c99a),shape,null));b.setOnClickListener(v->action.run());LinearLayout.LayoutParams size=new LinearLayout.LayoutParams(dp(width),dp(34));size.setMargins(dp(2),0,dp(2),0);p.addView(b,size);}
@@ -52,18 +52,18 @@ public final class FishingActivity extends Activity {
   web.evaluateJavascript(script,result->{if(epoch==generation&&trusted(web.getUrl()))web.postWebMessage(new WebMessage("ff14-fishing-notifications",new WebMessagePort[]{ports[1]}),Uri.parse(ORIGIN));});
  }catch(Exception e){error="无法连接手机提醒："+e.getMessage();update();}}
  void update(){if(status!=null)status.setText(!error.isEmpty()?error:ready?FishingServer.summary(this).split("\\n")[0]:"正在连接鱼糕服务端提醒…");}
- void settings(){new AlertDialog.Builder(this).setTitle("鱼糕服务端通知").setItems(new String[]{FishingReminders.enabled(this)?"暂停服务端提醒":"开启服务端提醒","通知发送方式","App通知权限","清空并暂停提醒","查看状态与使用说明","发送服务端测试通知","立即重新同步"},(d,n)->{try{
+ void settings(){GameDialogStyle.builder(this).setTitle("鱼糕服务端通知").setItems(new String[]{FishingReminders.enabled(this)?"暂停服务端提醒":"开启服务端提醒","通知发送方式","App通知权限","清空并暂停提醒","查看状态与使用说明","发送服务端测试通知","立即重新同步"},(d,n)->{try{
   if(n==0)FishingReminders.setEnabled(this,!FishingReminders.enabled(this));
-  else if(n==1)new AlertDialog.Builder(this).setTitle("通知发送方式").setSingleChoiceItems(new String[]{"自动：App在线直连，离线QQ／推送","仅App通知","QQ／推送服务（使用服务端配置）"},FishingServer.mode(this),(dialog,which)->{FishingServer.mode(this,which);dialog.dismiss();update();}).setNegativeButton("取消",null).show();
+  else if(n==1)GameDialogStyle.builder(this).setTitle("通知发送方式").setSingleChoiceItems(new String[]{"自动：App在线直连，离线QQ／推送","仅App通知","QQ／推送服务（使用服务端配置）"},FishingServer.mode(this),(dialog,which)->{FishingServer.mode(this,which);dialog.dismiss();update();}).setNegativeButton("取消",null).show();
   else if(n==2)startActivity(new Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName()).putExtra(android.provider.Settings.EXTRA_CHANNEL_ID,FishingReminders.CHANNEL));
   else if(n==3){FishingReminders.setEnabled(this,false);FishingReminders.clear(this);}
-  else if(n==4)new AlertDialog.Builder(this).setTitle("提醒状态").setMessage(FishingServer.summary(this)+"\n\n"+(FishingReminders.notifications(this)?"App通知权限已允许":"App通知权限未允许")+"\n在鱼糕中给目标鱼开启提醒。QQ和推送沿用游戏内服务端设置。服务端须保持运行；本地手机定时器已停用。").setPositiveButton("关闭",null).show();
+  else if(n==4)GameDialogStyle.builder(this).setTitle("提醒状态").setMessage(FishingServer.summary(this)+"\n\n"+(FishingReminders.notifications(this)?"App通知权限已允许":"App通知权限未允许")+"\n在鱼糕中给目标鱼开启提醒。QQ和推送沿用游戏内服务端设置。服务端须保持运行；本地手机定时器已停用。").setPositiveButton("关闭",null).show();
   else if(n==5)FishingServer.test(this);else if(n==6)FishingServer.changed(this);
   update();
  }catch(Exception e){error="通知设置失败："+e.getMessage();update();}}).setNegativeButton("关闭",null).show();}
  @Override public void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);files.result(request,result,data);}
  @Override public void onResume(){super.onResume();FishingReminders.schedule(this);FishingServer.flush(this,true);permissionResult();statusHandler.removeCallbacks(statusTick);statusHandler.post(statusTick);}
  @Override public void onPause(){statusHandler.removeCallbacks(statusTick);super.onPause();}
- @Override public void onDestroy(){BrowserDrawer.close(this);BrowserToolbar.close(this);generation++;files.cancel();statusHandler.removeCallbacks(statusTick);closePort();if(web!=null)web.destroy();super.onDestroy();}
+ @Override public void onDestroy(){BrowserDrawer.close(this);BrowserToolbar.close(this);generation++;files.cancel();statusHandler.removeCallbacks(statusTick);closePort();if(web!=null)BrowserPages.park(this,"fishing",java.util.Collections.singletonList(web));super.onDestroy();}
  @Override public void onBackPressed(){if(web.canGoBack())web.goBack();else finish();}
 }

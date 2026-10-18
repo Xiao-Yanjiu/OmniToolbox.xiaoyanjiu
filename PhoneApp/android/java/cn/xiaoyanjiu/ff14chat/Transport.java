@@ -42,6 +42,11 @@ final class Transport {
    Throwable cause=e;while(cause!=null){if(cause.getMessage()!=null&&cause.getMessage().contains("证书与扫码内容不一致"))throw new Unauthorized("电脑服务已重启或证书不匹配，请重新扫码确认");cause=cause.getCause();}throw e;
   }catch(IOException e){if(path.startsWith("/poll")&&generation!=pollGeneration.get())throw new Reconnecting();throw e;}finally{if(pollConnection==conn)pollConnection=null;conn.disconnect();}
  }
+ static HttpsURLConnection openGlamour(Context context,String id)throws Exception{
+  if(!id.matches("[a-fA-F0-9]{32}"))throw new IOException("方案标识无效");
+  android.content.SharedPreferences p=context.getSharedPreferences("pair",0);String expected=p.getString("expectedCharacterKey","");JSONObject game=ChatService.gameAccount;if(!expected.isEmpty()&&(game==null||!expected.equals(game.optString("name")+"@"+game.optString("world"))))throw new IOException("电脑当前角色与所选账号不同");
+  HttpsURLConnection c=openPinned(p.getString("url",""),p.getString("pin",""),p.getString("token",""),"/glamour-frames?id="+id);c.setReadTimeout(5000);return c;
+ }
  static HttpsURLConnection openVideo(Context context,String session)throws Exception{
   android.content.SharedPreferences p=context.getSharedPreferences("pair",0);String expected=p.getString("expectedCharacterKey","");JSONObject game=ChatService.gameAccount;if(!expected.isEmpty()&&(game==null||!expected.equals(game.optString("name")+"@"+game.optString("world"))))throw new IOException("电脑当前角色与所选账号不同");if(!session.matches("[a-f0-9]{32}"))throw new IOException("视频会话无效");HttpsURLConnection c=openPinned(p.getString("url",""),p.getString("pin",""),p.getString("token",""),"/stream-video?session="+session);c.setReadTimeout(5000);return c;
  }

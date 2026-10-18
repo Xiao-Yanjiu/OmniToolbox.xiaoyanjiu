@@ -62,7 +62,7 @@ final class AppUpdater {
  }
  private void download(String url,String hash,long size,int version){
   if(!busy.compareAndSet(false,true))return;
-  progress=new ProgressDialog(activity);progress.setTitle("下载狒狒食柿更新");progress.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);progress.setMax(100);progress.setCancelable(false);progress.show();
+  progress=new ProgressDialog(activity,GameDialogStyle.enabled(activity)?android.R.style.Theme_Material_Dialog_Alert:0);progress.setTitle("下载狒狒食柿更新");progress.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);progress.setMax(100);progress.setCancelable(false);progress.show();GameDialogStyle.apply(activity,progress);if(GameDialogStyle.enabled(activity)){android.widget.ProgressBar bar=progress.findViewById(android.R.id.progress);if(bar!=null)bar.setProgressTintList(android.content.res.ColorStateList.valueOf(0xffc9b579));}
   new Thread(()->{File part=new File(activity.getCacheDir(),"update.part"),apk=new File(activity.getCacheDir(),"update.apk");try{
    HttpURLConnection c=open(url,true);MessageDigest digest=MessageDigest.getInstance("SHA-256");long total=0;int last=-1;
    try(InputStream in=c.getInputStream();OutputStream out=new FileOutputStream(part)){byte[] buf=new byte[32768];int n;while((n=in.read(buf))!=-1){if(closed)throw new IOException("下载已取消");total+=n;if(total>size)throw new IOException("安装包大小不符");out.write(buf,0,n);digest.update(buf,0,n);int pct=(int)(total*100/size);if(pct!=last){last=pct;post(()->progress.setProgress(pct));}}}finally{c.disconnect();}

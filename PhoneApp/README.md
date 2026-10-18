@@ -1,14 +1,16 @@
 # 狒狒食柿 / 狒狒食柿《服务端》
 
-服务端模块版本 0.3.105，APK 版本 0.3.105-local（versionCode 86）。应用及本地 APK 文件名为“狒狒食柿”，Android 包标识 `cn.xiaoyanjiu.ff14chat` 和原签名保持兼容，覆盖安装保留已授权账号。
+服务端模块版本 0.3.109，APK 版本 0.3.109-local（versionCode 90）。应用及本地 APK 文件名为“狒狒食柿”，Android 包标识 `cn.xiaoyanjiu.ff14chat` 和原签名保持兼容，覆盖安装保留已授权账号。
+
+本版新增手机 Omni 幻化管理、CPU 预览编码、石之家导入和浏览器会话保留，详见 [GLAMOUR.md](GLAMOUR.md)。并发预览/串流仍需实机验证，不承诺已消除驱动崩溃。
 
 个人 QQ 已改为 NapCat 4.18.38 官方 Windows Node 包，包含 QQ 运行组件，无需申请 LLBot 授权或填写签名地址。首次点击准备 QQ 服务（约 118 MB，下载后校验 SHA-256），再点击机器人 QQ 扫码登录；请用机器人账号扫码。二维码直接显示在模块面板，也可点击查看登录码打开 PNG。可选填机器人 QQ 号，填后会核对扫码账号。恢复登录和随模块恢复 QQ 不自动下载程序；首次使用需先准备。离线推送单选 WxPusher 或 Server酱，QQ 提醒独立设置并与所选推送同时发送；群同步和白名单 # 回复游戏配置保留，旧后端登录凭证不能迁移，首次需重新扫码。APK 0.3.39 可使用原签名覆盖升级。
 
-在 Omni 在线模块中安装并启用“狒狒食柿《服务端》”。下载 [狒狒食柿 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.105)，在手机填写电脑可访问的地址与端口，提交验证码，再由电脑模块确认设备授权。路由器转发需由用户配置；默认端口 18765。
+在 Omni 在线模块中安装并启用“狒狒食柿《服务端》”。下载 [狒狒食柿 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.109)，在手机填写电脑可访问的地址与端口，提交验证码，再由电脑模块确认设备授权。路由器转发需由用户配置；默认端口 18765。
 
 使用个人云推送时，WxPusher、Server酱及 QQ 的凭据由用户自行设置。QQ 使用本地 NapCat 服务，不使用 LLBot 审核或签名服务。模块自动生成仅本机有效的接口密码，不要求用户填写；QQ 原生组件只运行在独立子进程，不加载进游戏。QQ 账号自己的登录验证或风控仍可能要求手机确认，不能承诺永不掉线。
 
-- `../Modules/PhoneChat/0.3.105/PhoneChat.cs`：可在 Omni 使用的单文件模块。
+- `../Modules/PhoneChat/0.3.108/PhoneChat.cs`：可在 Omni 使用的单文件模块。
 - `android/`：APK 对应源码、资源、构建脚本和说明。
 - `third_party/NapCat/`：当前 QQ 后端的官方来源、固定版本校验值和许可说明。`third_party/LLBot/` 留作旧版本记录，不再加载。`third_party/Lagrange-V1/` 留作旧发布版本的对应源码，当前模块不再加载。
 - `LICENSE` / `../Modules/PhoneChat.LICENSE`：本功能 GPL-3.0-or-later 许可证。

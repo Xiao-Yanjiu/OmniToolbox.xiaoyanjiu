@@ -1,0 +1,4 @@
+package cn.xiaoyanjiu.ff14chat;
+public final class RisingStonesGlamourRegression {
+ public static void main(String[] args){String[] valid={"https://ff14risingstones.web.sdo.com/pc/index.html#/glamour/detail/296451","https://ff14risingstones.web.sdo.com/mobile/index.html#/glamour/detail/296451?share=1","https://ff14risingstones.web.sdo.com/h5/index.html#/glamour/detail/296451/"};for(String s:valid)if(!RisingStonesGlamour.allowedSource(s))throw new AssertionError(s);String[] bad={null,"http://ff14risingstones.web.sdo.com/","https://ff14risingstones.web.sdo.com.evil.test/","https://user@ff14risingstones.web.sdo.com/","https://ff14risingstones.web.sdo.com:444/","javascript:alert(1)"};for(String s:bad)if(RisingStonesGlamour.allowedSource(s))throw new AssertionError(s);System.out.println("9 website origin checks passed; detail DOM validation remains required.");}
+}
