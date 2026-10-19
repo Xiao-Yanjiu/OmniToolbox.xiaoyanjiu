@@ -13,6 +13,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Command;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
 using OmniToolbox.Common.Module.Abstractions;
@@ -225,6 +226,7 @@ public sealed class MusicPlayer : ModuleBase
         neteasePlayer.netCookie = config.Netease!.QQCookie;
         RestoreCookies(config.QQCookie);
         config.ContentTab = Math.Clamp(config.ContentTab, 0, 3);
+        InstallOriginalMacroBridge();
         DalamudServices.PluginInterface.UiBuilder.Draw += Draw;
 
     }
@@ -232,11 +234,13 @@ public sealed class MusicPlayer : ModuleBase
     protected override void OnDisable()
     {
         try { DalamudServices.PluginInterface.UiBuilder.Draw -= Draw; } catch { }
+        RemoveOriginalMacroBridge();
         SafeShutdown();
     }
 
     protected override void OnDispose()
     {
+        RemoveOriginalMacroBridge();
         disposed = true;
         SafeShutdown();
     }
@@ -580,6 +584,66 @@ public sealed class MusicPlayer : ModuleBase
         player.panelDirty = root.panelDirty = true;
         player.QueueChat($"{player.PlatformName}悬浮窗已{(player.config.WindowVisible ? "打开" : "关闭")}");
         return true;
+    }
+
+    // Current Omni rejects unlisted command names before reaching ModuleBase.
+    // Extend the existing /omni handler for this exact argument only; forward
+    // every other command untouched, and restore the original on module unload.
+    private CommandInfo? originalOmniCommand;
+    private CommandInfo? musicOmniBridge;
+    private bool originalMacroBridgeActive;
+
+    internal CommandInfo CreateOriginalMacroBridge(CommandInfo original)
+    {
+        return new CommandInfo((command, arguments) =>
+        {
+            if (originalMacroBridgeActive && !disposed &&
+                string.Equals(arguments?.Trim(), "MusicPlayer", StringComparison.OrdinalIgnoreCase))
+            {
+                ToggleWindow();
+                return;
+            }
+            original.Handler(command, arguments!);
+        })
+        {
+            HelpMessage = original.HelpMessage,
+            ShowInHelp = original.ShowInHelp,
+            DisplayOrder = original.DisplayOrder,
+            AllowedInMacros = original.AllowedInMacros
+        };
+    }
+
+    private void InstallOriginalMacroBridge(Dalamud.Plugin.Services.ICommandManager? commandManager = null)
+    {
+        if (owner != null || musicOmniBridge != null) return;
+        var manager = commandManager ?? DalamudServices.CommandManager;
+        if (!manager.Commands.TryGetValue("/omni", out var existing) || existing is not CommandInfo original) return;
+        var bridge = CreateOriginalMacroBridge(original);
+        if (!manager.RemoveHandler("/omni")) return;
+        bool installed = false;
+        try { installed = manager.AddHandler("/omni", bridge); }
+        finally
+        {
+            if (!installed && !manager.Commands.ContainsKey("/omni")) manager.AddHandler("/omni", original);
+        }
+        if (!installed) return;
+        originalOmniCommand = original;
+        musicOmniBridge = bridge;
+        originalMacroBridgeActive = true;
+    }
+
+    private void RemoveOriginalMacroBridge(Dalamud.Plugin.Services.ICommandManager? commandManager = null)
+    {
+        originalMacroBridgeActive = false;
+        if (musicOmniBridge == null || originalOmniCommand == null) return;
+        var manager = commandManager ?? DalamudServices.CommandManager;
+        if (manager.Commands.TryGetValue("/omni", out var current) && ReferenceEquals(current, musicOmniBridge))
+        {
+            manager.RemoveHandler("/omni");
+            manager.AddHandler("/omni", originalOmniCommand);
+        }
+        musicOmniBridge = null;
+        originalOmniCommand = null;
     }
 
     private bool DrawLoginSection()
@@ -4338,6 +4402,7 @@ public sealed class MusicPlayer : ModuleBase
 
     private void Draw()
     {
+        if (!disposed) InstallOriginalMacroBridge();
         if (disposed) return;
         EnsurePlatforms();
         ApplyPlatformSwitch();

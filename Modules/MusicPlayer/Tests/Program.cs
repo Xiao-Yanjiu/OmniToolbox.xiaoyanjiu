@@ -30,6 +30,7 @@ class Program
     { try { await action(); } catch (Exception ex) { Check(ex.ToString().Contains(expected), expected); return; } throw new Exception("Expected error: " + expected); }
     static async Task Checks(bool live)
     {
+        Check(OmniToolbox.Commands.OmniCommandParser.Parse("MusicPlayer").Kind == OmniToolbox.Commands.OmniCommandKind.ShowUsage, "installed host reproduces original macro rejection");
         var legacy = new LegacyCommandProbe();
         bool forwarded = legacy.TryHandleCommand("MusicPlayer", "");
         Console.WriteLine("HOST legacy forwarding: handled=" + forwarded + ", calls=" + legacy.Calls);
@@ -60,6 +61,37 @@ class Program
         Set(root, "requestedProvider", 1); Invoke(root, "ApplyPlatformSwitch");
         Check(root.TryHandleCommand("MusicPlayer", "") && !netConfig.WindowVisible, "original macro toggles selected NetEase");
         Check((bool)Field(root, "enginePlaying")! && (bool)Field(net, "enginePlaying")!, "macro retains both playback engines");
+        var commandManager = DispatchProxy.Create<Dalamud.Plugin.Services.ICommandManager, CommandManagerProbe>();
+        var commandProbe = (CommandManagerProbe)(object)commandManager;
+        var forwardedCommands = new List<string>();
+        var hostCommand = new Dalamud.Game.Command.CommandInfo((cmd, arg) => forwardedCommands.Add(cmd + " " + arg))
+        { HelpMessage = "host help", ShowInHelp = false, DisplayOrder = 17, AllowedInMacros = true };
+        commandProbe.Commands.Add("/omni", hostCommand);
+        Invoke(root, "InstallOriginalMacroBridge", commandManager);
+        var bridge = commandProbe.Commands["/omni"];
+        Check(commandProbe.Commands.Count == 1 && !ReferenceEquals(bridge, hostCommand), "bridge registers no additional macro");
+        Check(bridge.HelpMessage == hostCommand.HelpMessage && bridge.AllowedInMacros && bridge.DisplayOrder == 17 && !bridge.ShowInHelp, "host command metadata preserved");
+        bool before = netConfig.WindowVisible;
+        bridge.Handler("/omni", "MusicPlayer");
+        Check(netConfig.WindowVisible != before && forwardedCommands.Count == 0, "actual registered handler toggles selected overlay without help");
+        bridge.Handler("/omni", "MusicPlayer");
+        Check(netConfig.WindowVisible == before, "same original macro closes overlay");
+        foreach (var arg in new[] { "", "帮助", "幻化管理", "MusicPlayer show", "MusicPlayerX" }) bridge.Handler("/omni", arg);
+        Check(forwardedCommands.Count == 5 && forwardedCommands[3] == "/omni MusicPlayer show", "all unrelated arguments forwarded unchanged");
+        Invoke(root, "InstallOriginalMacroBridge", commandManager);
+        Check(ReferenceEquals(commandProbe.Commands["/omni"], bridge), "repeated install does not wrap twice");
+        Invoke(root, "RemoveOriginalMacroBridge", commandManager);
+        Check(ReferenceEquals(commandProbe.Commands["/omni"], hostCommand), "disable restores original host registration");
+        bridge.Handler("/omni", "MusicPlayer");
+        Check(netConfig.WindowVisible == before && forwardedCommands.Count == 6, "stale bridge delegates after disable");
+        commandProbe.FailNextAdd = true;
+        Invoke(root, "InstallOriginalMacroBridge", commandManager);
+        Check(ReferenceEquals(commandProbe.Commands["/omni"], hostCommand), "registration failure restores original host command");
+        Invoke(root, "InstallOriginalMacroBridge", commandManager);
+        var other = new Dalamud.Game.Command.CommandInfo((_, _) => { });
+        commandProbe.Commands["/omni"] = other;
+        Invoke(root, "RemoveOriginalMacroBridge", commandManager);
+        Check(ReferenceEquals(commandProbe.Commands["/omni"], other), "disable does not replace a later owner");
         var restored = JsonSerializer.Deserialize<Player.MusicPlayerConfig>(JsonSerializer.Serialize(qqConfig))!;
         Check(restored.QQCookie == "qq=test" && restored.Netease!.QQCookie == "MUSIC_U=netease", "account roundtrip");
         Check(restored.Queue[0].Source == "qq" && restored.Netease!.Queue[0].Source == "netease", "queue roundtrip");
@@ -217,4 +249,22 @@ sealed class LegacyCommandProbe : OmniToolbox.Common.Module.Abstractions.ModuleB
     public int Calls;
     public override OmniToolbox.Common.Module.Models.ModuleInfo Info { get; } = new() { Title = "command-probe", Description = "", Category = OmniToolbox.Common.Module.Enums.ModuleCategory.Interface };
     public override bool TryHandleCommand(string args) { Calls++; return true; }
+}
+
+public class CommandManagerProbe : DispatchProxy
+{
+    public Dictionary<string, Dalamud.Game.Command.IReadOnlyCommandInfo> Commands = new();
+    public bool FailNextAdd;
+    protected override object? Invoke(MethodInfo? method, object?[]? args)
+    {
+        switch (method!.Name)
+        {
+            case "get_Commands": return new System.Collections.ObjectModel.ReadOnlyDictionary<string, Dalamud.Game.Command.IReadOnlyCommandInfo>(Commands);
+            case "RemoveHandler": return Commands.Remove((string)args![0]!);
+            case "AddHandler":
+                if (FailNextAdd) { FailNextAdd = false; return false; }
+                return Commands.TryAdd((string)args![0]!, (Dalamud.Game.Command.CommandInfo)args[1]!);
+            default: throw new NotSupportedException(method.Name);
+        }
+    }
 }
