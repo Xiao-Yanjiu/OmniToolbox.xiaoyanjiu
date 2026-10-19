@@ -21,6 +21,7 @@ using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Plugin.Services;
 using OmniToolbox.Common.Module.Abstractions;
 using OmniToolbox.Common.Module.Enums;
+using OmniToolbox.Common.Module.Models;
 using OmniToolbox.Host;
 using OmniToolbox.UI;
 using OmniToolbox.UI.Theme;
@@ -109,10 +110,9 @@ public sealed class ToolbarIconPlus : ModuleBase
     private static string detourState = "detour 未挂";
     private static string texProviderState = "未探测";
     private static ToolbarIconPlus? selfRef;
-    private static readonly Dictionary<uint, object?> detourWrapCache = new Dictionary<uint, object?>();
     private static readonly Dictionary<uint, object?> detourSharedKeep = new Dictionary<uint, object?>();
     private static readonly Dictionary<uint, object?> browserSharedKeep = new Dictionary<uint, object?>();
-    private const int DetourTargetCount = 5;
+    private const int DetourTargetCount = 4;
     private static readonly HashSet<string> detourPatched = new HashSet<string>(StringComparer.Ordinal);
     private static string detourLastLogged = "detour 未挂";
     private static long lastDetourRetryTick;
@@ -803,8 +803,7 @@ public sealed class ToolbarIconPlus : ModuleBase
 
             if (force)
             {
-                detourWrapCache.Clear();
-                detourSharedKeep.Clear();
+                    detourSharedKeep.Clear();
                 browserSharedKeep.Clear();
             }
 
@@ -1045,7 +1044,6 @@ public sealed class ToolbarIconPlus : ModuleBase
                 }
                 catch {   }
             }
-            detourWrapCache.Clear();
             detourSharedKeep.Clear();
             browserSharedKeep.Clear();
             Log("浏览器反注入完成：清除引用 " + removed + " 处");
@@ -1101,7 +1099,7 @@ public sealed class ToolbarIconPlus : ModuleBase
                      ?? fw.GetType().GetEvent("Update", BindingFlags.Instance | BindingFlags.Public);
             var mi = typeof(ToolbarIconPlus).GetMethod(nameof(OnFrameworkTick),
                 BindingFlags.Instance | BindingFlags.NonPublic);
-            if (ev == null || mi == null) { Log("IFramework.Update 事件不可用：保活仅在面板打开时进行"); return; }
+            if (ev?.EventHandlerType == null || mi == null) { Log("IFramework.Update 事件不可用：保活仅在面板打开时进行"); return; }
 
             var del = Delegate.CreateDelegate(ev.EventHandlerType, this, mi);
             ev.AddEventHandler(fw, del);
@@ -1189,7 +1187,6 @@ public sealed class ToolbarIconPlus : ModuleBase
             InstallMacroTextureHook();
             InstallMacroExecHook();
             EnsureFrameworkTick();
-            detourWrapCache.Clear();
             detourSharedKeep.Clear();
             browserSharedKeep.Clear();
             EnsureBrowserInjection(true);
@@ -1376,10 +1373,9 @@ public sealed class ToolbarIconPlus : ModuleBase
             }
 
             var hmType = hType.Assembly.GetType("HarmonyLib.HarmonyMethod");
-            var ibType = typeof(ModuleBase).Assembly.GetType("OmniToolbox.UI.IconBrowser");
-            if (hmType == null || ibType == null)
+            if (hmType == null)
             {
-                SetDetourState("HarmonyMethod 或 IconBrowser 类型未找到（detour 未挂）", true);
+                SetDetourState("HarmonyMethod 类型未找到（detour 未挂）", true);
                 return;
             }
 
@@ -1395,10 +1391,6 @@ public sealed class ToolbarIconPlus : ModuleBase
             var flags = BindingFlags.Public | BindingFlags.NonPublic
                       | BindingFlags.Instance | BindingFlags.Static;
 
-            var mPath = ibType.GetMethod("GetBuiltInIconPath", flags, null, new[] { typeof(uint) }, null);
-            var mExists = ibType.GetMethod("IconExists", flags, null, new[] { typeof(uint) }, null);
-            var mTex = ibType.GetMethod("GetIconTexture", flags, null, new[] { typeof(uint) }, null);
-
             MethodInfo? mGame = null;
             MethodInfo? mGameEx = null;
             var helperType = FindImageHelperType();
@@ -1410,11 +1402,21 @@ public sealed class ToolbarIconPlus : ModuleBase
                     new[] { typeof(uint), typeof(IDalamudTextureWrap).MakeByRefType(), typeof(bool) }, null);
             }
 
-            PatchOnce(hType, hmType, harmonyObj, "IconBrowser.GetBuiltInIconPath", mPath, nameof(PrefixGetBuiltInIconPath));
-            PatchOnce(hType, hmType, harmonyObj, "IconBrowser.IconExists", mExists, nameof(PrefixIconExists));
-            PatchOnce(hType, hmType, harmonyObj, "IconBrowser.GetIconTexture", mTex, nameof(PrefixGetIconTexture));
+            // Omni's protected methods can expose placeholder IL. Harmony may copy
+            // that placeholder and replace a working native renderer with a no-op.
+            // Do not patch IconBrowser or any toolbar drawing method.
             PatchOnce(hType, hmType, harmonyObj, "ImageHelper.GetGameIcon", mGame, nameof(PrefixGetGameIcon));
             PatchOnce(hType, hmType, harmonyObj, "ImageHelper.TryGetGameIcon", mGameEx, nameof(PrefixTryGetGameIcon));
+
+            // New toolbar rendering can call the SDK directly instead of ImageHelper.
+            // Resolve the interface implementation rather than relying on Dalamud's internal names.
+            if (EnsureTexProvider() && texProviderCache is ITextureProvider provider)
+            {
+                PatchOnce(hType, hmType, harmonyObj, "TextureProvider.GetFromGameIcon",
+                    FindTextureProviderMethod(provider, nameof(ITextureProvider.GetFromGameIcon)), nameof(PrefixSharedGameIcon));
+                PatchOnce(hType, hmType, harmonyObj, "TextureProvider.TryGetFromGameIcon",
+                    FindTextureProviderMethod(provider, nameof(ITextureProvider.TryGetFromGameIcon)), nameof(PrefixTrySharedGameIcon));
+            }
 
             detoursInstalled = detourPatched.Count > 0;
             SetDetourState("detour 已挂 " + detourPatched.Count + "/" + DetourTargetCount
@@ -1435,7 +1437,16 @@ public sealed class ToolbarIconPlus : ModuleBase
                                  MethodBase? original, string prefixName)
     {
         if (original == null || detourPatched.Contains(key)) return;
+        if (!CanPatchTextureMethod(original)) return;
         if (PatchWith(hType, hmType, harmony, original, prefixName)) detourPatched.Add(key);
+    }
+
+    private static bool CanPatchTextureMethod(MethodBase method)
+    {
+        var assembly = method.DeclaringType?.Assembly.GetName().Name;
+        // Keep a hard boundary around the protected host: no Omni renderer or
+        // IconBrowser method may be patched, even if its signature matches.
+        return assembly is "Dalamud" or "OmenTools";
     }
 
     private static void SetDetourState(string state, bool isError)
@@ -1479,7 +1490,8 @@ public sealed class ToolbarIconPlus : ModuleBase
         }
         catch (Exception ex)
         {
-            Log("Patch " + prefixName + " 失败: " + ex.GetType().Name + " " + ex.Message, true);
+            var error = ex is TargetInvocationException invocation ? invocation.InnerException ?? ex : ex;
+            Log("Patch " + prefixName + " 失败: " + error, true);
             return false;
         }
     }
@@ -1516,36 +1528,10 @@ public sealed class ToolbarIconPlus : ModuleBase
             harmonyInstance = null;
             detourPatched.Clear();
             detourLastLogged = "detour 未挂";
-            detourWrapCache.Clear();
             detourSharedKeep.Clear();
             browserSharedKeep.Clear();
             detourState = "detour 未挂";
         }
-    }
-
-    private static bool PrefixGetBuiltInIconPath(uint __0, ref string __result)
-    {
-        if (!InReservedRange(__0)) return true;
-        var path = FindPathForId(__0);
-        if (path == null) return true;
-        __result = path;
-        return false;
-    }
-
-    private static bool PrefixIconExists(uint __0, ref bool __result)
-    {
-        if (!InReservedRange(__0)) return true;
-        __result = FindPathForId(__0) != null;
-        return false;
-    }
-
-    private static bool PrefixGetIconTexture(uint __0, ref IDalamudTextureWrap __result)
-    {
-        if (!InReservedRange(__0)) return true;
-        var wrap = GetDetourWrap(__0) as IDalamudTextureWrap;
-        if (wrap == null) return true;
-        __result = wrap;
-        return false;
     }
 
     private static bool PrefixGetGameIcon(uint __0, bool __1, ref IDalamudTextureWrap __result)
@@ -1591,49 +1577,68 @@ public sealed class ToolbarIconPlus : ModuleBase
         }
     }
 
-    private static object? GetDetourWrap(uint id)
+    private static MethodInfo? FindTextureProviderMethod(ITextureProvider provider, string name)
     {
-        if (detourWrapCache.TryGetValue(id, out var cached))
-        {
-            if (IsWrapAlive(cached)) return cached;
-            detourWrapCache.Remove(id);
-            detourSharedKeep.Remove(id);
-        }
-        object? wrap = null;
+        var map = provider.GetType().GetInterfaceMap(typeof(ITextureProvider));
+        for (int i = 0; i < map.InterfaceMethods.Length; i++)
+            if (map.InterfaceMethods[i].Name == name) return map.TargetMethods[i];
+        return null;
+    }
+
+    private static ISharedImmediateTexture? GetSharedCustomIcon(object providerInstance, uint id)
+    {
+        // The patched implementation may serve other plugins. Only Omni's provider
+        // and IDs present in our own library are redirected.
+        if (selfRef?.moduleActive != true || !InReservedRange(id) || !ReferenceEquals(providerInstance, texProviderCache)
+            || providerInstance is not ITextureProvider provider) return null;
         try
         {
             var path = FindPathForId(id);
-            if (path != null && EnsureTexProvider() && getFromFileCache != null && texProviderCache != null)
-            {
-                var shared = getFromFileCache.Invoke(texProviderCache, new object[] { path });
-                if (shared != null)
-                {
-                    detourSharedKeep[id] = shared;
-                    wrap = shared.GetType().GetMethod("GetWrapOrDefault")?.Invoke(shared, new object?[] { null });
-                }
-            }
+            return path == null ? null : provider.GetFromFile(path);
+        }
+        catch { return null; }
+    }
+
+    private static bool PrefixSharedGameIcon(object __instance, in GameIconLookup __0, ref ISharedImmediateTexture __result)
+    {
+        var shared = GetSharedCustomIcon(__instance, __0.IconId);
+        if (shared == null) return true;
+        __result = shared;
+        return false;
+    }
+
+    private static bool PrefixTrySharedGameIcon(object __instance, in GameIconLookup __0,
+        ref ISharedImmediateTexture? __1, ref bool __result)
+    {
+        var shared = GetSharedCustomIcon(__instance, __0.IconId);
+        if (shared == null) return true;
+        __1 = shared;
+        __result = true;
+        return false;
+    }
+
+    private static object? GetDetourWrap(uint id)
+    {
+        try
+        {
+            var path = FindPathForId(id);
+            if (path == null || !EnsureTexProvider() || texProviderCache is not ITextureProvider provider) return null;
+            // Shared handles can be kept, but borrowed wraps are only valid for
+            // the current UI frame. Never keep them in detourWrapCache.
+            var shared = provider.GetFromFile(path);
+            detourSharedKeep[id] = shared;
+            return shared.GetWrapOrDefault();
         }
         catch (Exception ex)
         {
             Log("加载贴图失败(ID " + id + "): " + ex.Message, true);
+            return null;
         }
-        if (IsWrapAlive(wrap)) detourWrapCache[id] = wrap;
-        else
-        {
-            detourWrapCache.Remove(id);
-            detourSharedKeep.Remove(id);
-        }
-        return wrap;
     }
 
     private static bool SharedHandleAlive(object? shared)
     {
-        if (shared == null) return false;
-        try
-        {
-            var w = shared.GetType().GetMethod("GetWrapOrDefault")?.Invoke(shared, new object?[] { null });
-            return IsWrapAlive(w);
-        }
+        try { return shared is ISharedImmediateTexture texture && texture.TryGetWrap(out _, out _); }
         catch { return false; }
     }
 
@@ -1800,7 +1805,7 @@ public sealed class ToolbarIconPlus : ModuleBase
     private sealed class RefCmp : IEqualityComparer<object>
     {
         public static readonly RefCmp Instance = new RefCmp();
-        public bool Equals(object? a, object? b) { return ReferenceEquals(a, b); }
+        public new bool Equals(object? a, object? b) { return ReferenceEquals(a, b); }
         public int GetHashCode(object o)
         {
             return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o);
@@ -1812,8 +1817,8 @@ public sealed class ToolbarIconPlus : ModuleBase
 
     private static FieldInfo[] FieldsOf(Type t)
     {
+        if (fieldsCache.TryGetValue(t, out var cached)) return cached;
         FieldInfo[] v;
-        if (fieldsCache.TryGetValue(t, out v)) return v;
         try
         {
             v = t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -2716,7 +2721,7 @@ public sealed class ToolbarIconPlus : ModuleBase
                 Log($"  #{b.Id} name={b.Name} url={b.SourceUrl} path={b.Path} 存在={File.Exists(b.Path)}");
             Log($"缓存目录：{IconCacheDir}");
             Log("browserState=" + browserState);
-            Log("detour: " + detourState + " · 贴图缓存=" + detourWrapCache.Count + " 条"
+            Log("detour: " + detourState + " · 贴图缓存=" + detourSharedKeep.Count + " 条"
                 + " · 贴图源=" + texProviderState);
             Log("宏图标: 命令=" + macroIconCommandState + " · 开关=" + config.MacroIconSwap
                 + " · 内核贴图 就绪=" + macroKernels.Count + " 构建中=" + macroKernelPending.Count
@@ -4358,7 +4363,6 @@ public sealed class ToolbarIconPlus : ModuleBase
         if (!InReservedRange(id)) return;
         try
         {
-            detourWrapCache.Remove(id);
             detourSharedKeep.Remove(id);
             browserSharedKeep.Remove(id);
             macroKernels.TryRemove(id, out _);
@@ -5417,4 +5421,5 @@ public sealed class ToolbarIconPlus : ModuleBase
         }
     }
 }
+
 
