@@ -236,12 +236,13 @@ public sealed unsafe partial class IChingModule : ModuleBase
     }
     private void Accelerate(long a1)
     {
-        // Temporary write: restore the original acceleration after the original function returns.
         if (!Active || !config.MaxAcceleration || a1 == 0) { accelerationHook.Original(a1); return; }
-        float* value = (float*)(a1 + 0x44);
-        var saved = *value;
-        try { *value = 100; accelerationHook.Original(a1); }
-        finally { *value = saved; }
+        // This is the movement integrator's current speed, not a temporary
+        // acceleration parameter. The original function reads AND writes it.
+        // Restoring the pre-call value discards the computed output and pins
+        // a character starting from rest to zero on every update.
+        *(float*)(a1 + 0x44) = 100;
+        accelerationHook.Original(a1);
     }
     private long Move(long a1, uint a2, int a3, int a4) => Active && (a2 is 96 or 97 or 98 or 99 or 0x3E9 or 0x3EE or 0x3EF or 0x3F0) ? 1 : moveHook.Original(a1, a2, a3, a4);
     private long Knock(long actor, float angle, float distance, float time, byte a5, long a6)
