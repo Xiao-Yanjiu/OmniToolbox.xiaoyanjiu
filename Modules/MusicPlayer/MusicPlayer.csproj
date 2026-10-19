@@ -1,0 +1,301 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <DalamudLibPath Condition="'$(DalamudLibPath)' == ''">$(APPDATA)\XIVLauncherCN\addon\Hooks\26-10-18-01</DalamudLibPath>
+    <OmniLibPath Condition="'$(OmniLibPath)' == ''">$(APPDATA)\XIVLauncherCN\installedPlugins\OmniToolbox\1.1.7.5</OmniLibPath>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>0436</NoWarn>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>MusicPlayer</AssemblyName>
+    <Version>1.3.0</Version>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="0Harmony">
+      <HintPath>$(DalamudLibPath)\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BCnEncoder">
+      <HintPath>$(DalamudLibPath)\BCnEncoder.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BitFaster.Caching">
+      <HintPath>$(DalamudLibPath)\BitFaster.Caching.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="CheapLoc">
+      <HintPath>$(DalamudLibPath)\CheapLoc.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="CommunityToolkit.HighPerformance">
+      <HintPath>$(DalamudLibPath)\CommunityToolkit.HighPerformance.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Dalamud.Bindings.ImGui">
+      <HintPath>$(DalamudLibPath)\Dalamud.Bindings.ImGui.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Dalamud.Bindings.ImGuizmo">
+      <HintPath>$(DalamudLibPath)\Dalamud.Bindings.ImGuizmo.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Dalamud.Bindings.ImPlot">
+      <HintPath>$(DalamudLibPath)\Dalamud.Bindings.ImPlot.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Dalamud.Common">
+      <HintPath>$(DalamudLibPath)\Dalamud.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Dalamud">
+      <HintPath>$(DalamudLibPath)\Dalamud.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Dalamud.Injector">
+      <HintPath>$(DalamudLibPath)\Dalamud.Injector.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="FfxivArgLauncher">
+      <HintPath>$(DalamudLibPath)\FfxivArgLauncher.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="FFXIVClientStructs">
+      <HintPath>$(DalamudLibPath)\FFXIVClientStructs.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="goatcorp.Reloaded.Hooks">
+      <HintPath>$(DalamudLibPath)\goatcorp.Reloaded.Hooks.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="goatcorp.Reloaded.Memory.Buffers">
+      <HintPath>$(DalamudLibPath)\goatcorp.Reloaded.Memory.Buffers.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="HexaGen.Runtime">
+      <HintPath>$(DalamudLibPath)\HexaGen.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Iced">
+      <HintPath>$(DalamudLibPath)\Iced.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ImGuiScene">
+      <HintPath>$(DalamudLibPath)\ImGuiScene.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="InteropGenerator.Runtime">
+      <HintPath>$(DalamudLibPath)\InteropGenerator.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="JetBrains.Annotations">
+      <HintPath>$(DalamudLibPath)\JetBrains.Annotations.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Lumina">
+      <HintPath>$(DalamudLibPath)\Lumina.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Lumina.Excel">
+      <HintPath>$(DalamudLibPath)\Lumina.Excel.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.AI.Abstractions">
+      <HintPath>$(DalamudLibPath)\Microsoft.Extensions.AI.Abstractions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.DependencyInjection.Abstractions">
+      <HintPath>$(DalamudLibPath)\Microsoft.Extensions.DependencyInjection.Abstractions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.Logging.Abstractions">
+      <HintPath>$(DalamudLibPath)\Microsoft.Extensions.Logging.Abstractions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.ObjectPool">
+      <HintPath>$(DalamudLibPath)\Microsoft.Extensions.ObjectPool.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ModelContextProtocol.Core">
+      <HintPath>$(DalamudLibPath)\ModelContextProtocol.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil">
+      <HintPath>$(DalamudLibPath)\Mono.Cecil.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil.Mdb">
+      <HintPath>$(DalamudLibPath)\Mono.Cecil.Mdb.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil.Pdb">
+      <HintPath>$(DalamudLibPath)\Mono.Cecil.Pdb.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil.Rocks">
+      <HintPath>$(DalamudLibPath)\Mono.Cecil.Rocks.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(DalamudLibPath)\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PeNet.Asn1">
+      <HintPath>$(DalamudLibPath)\PeNet.Asn1.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PeNet">
+      <HintPath>$(DalamudLibPath)\PeNet.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Reloaded.Hooks.Definitions">
+      <HintPath>$(DalamudLibPath)\Reloaded.Hooks.Definitions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Reloaded.Memory.Buffers">
+      <HintPath>$(DalamudLibPath)\Reloaded.Memory.Buffers.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Reloaded.Memory">
+      <HintPath>$(DalamudLibPath)\Reloaded.Memory.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Reloaded.Memory.Sigscan.Definitions">
+      <HintPath>$(DalamudLibPath)\Reloaded.Memory.Sigscan.Definitions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Reloaded.Memory.Sigscan">
+      <HintPath>$(DalamudLibPath)\Reloaded.Memory.Sigscan.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Serilog">
+      <HintPath>$(DalamudLibPath)\Serilog.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Serilog.Sinks.Async">
+      <HintPath>$(DalamudLibPath)\Serilog.Sinks.Async.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Serilog.Sinks.Console">
+      <HintPath>$(DalamudLibPath)\Serilog.Sinks.Console.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Serilog.Sinks.File">
+      <HintPath>$(DalamudLibPath)\Serilog.Sinks.File.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SQLite-net">
+      <HintPath>$(DalamudLibPath)\SQLite-net.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SQLitePCLRaw.batteries_v2">
+      <HintPath>$(DalamudLibPath)\SQLitePCLRaw.batteries_v2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SQLitePCLRaw.core">
+      <HintPath>$(DalamudLibPath)\SQLitePCLRaw.core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SQLitePCLRaw.provider.e_sqlite3">
+      <HintPath>$(DalamudLibPath)\SQLitePCLRaw.provider.e_sqlite3.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Reactive">
+      <HintPath>$(DalamudLibPath)\System.Reactive.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Reflection.MetadataLoadContext">
+      <HintPath>$(DalamudLibPath)\System.Reflection.MetadataLoadContext.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Security.Cryptography.Pkcs">
+      <HintPath>$(DalamudLibPath)\System.Security.Cryptography.Pkcs.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="TerraFX.Interop.Windows">
+      <HintPath>$(DalamudLibPath)\TerraFX.Interop.Windows.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AngleSharp">
+      <HintPath>$(OmniLibPath)\AngleSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="CSVFile">
+      <HintPath>$(OmniLibPath)\CSVFile.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="CsvHelper">
+      <HintPath>$(OmniLibPath)\CsvHelper.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="FFXIVClientStructs.Expansion">
+      <HintPath>$(OmniLibPath)\FFXIVClientStructs.Expansion.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GuerrillaNtp">
+      <HintPath>$(OmniLibPath)\GuerrillaNtp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Jeffijoe.MessageFormat">
+      <HintPath>$(OmniLibPath)\Jeffijoe.MessageFormat.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="KamiToolKit">
+      <HintPath>$(OmniLibPath)\KamiToolKit.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="LuminaSupplemental.Excel">
+      <HintPath>$(OmniLibPath)\LuminaSupplemental.Excel.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Markdig">
+      <HintPath>$(OmniLibPath)\Markdig.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp">
+      <HintPath>$(OmniLibPath)\Microsoft.CodeAnalysis.CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis">
+      <HintPath>$(OmniLibPath)\Microsoft.CodeAnalysis.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="OmenTools">
+      <HintPath>$(OmniLibPath)\OmenTools.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="OmniToolbox.Common">
+      <HintPath>$(OmniLibPath)\OmniToolbox.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="OmniToolbox">
+      <HintPath>$(OmniLibPath)\OmniToolbox.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="OmniToolbox.Tree">
+      <HintPath>$(OmniLibPath)\OmniToolbox.Tree.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="OmniToolbox.TreePublic">
+      <HintPath>$(OmniLibPath)\OmniToolbox.TreePublic.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Sylvan.Data.Csv">
+      <HintPath>$(OmniLibPath)\Sylvan.Data.Csv.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.CodeDom">
+      <HintPath>$(OmniLibPath)\System.CodeDom.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="TinyPinyin">
+      <HintPath>$(OmniLibPath)\TinyPinyin.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../MusicPlayer.cs" />
+  </ItemGroup>
+</Project>
