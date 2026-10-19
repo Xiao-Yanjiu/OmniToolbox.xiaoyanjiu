@@ -10,7 +10,7 @@
     <NoWarn>0436</NoWarn>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AssemblyName>MusicPlayerChecks</AssemblyName>
-    <Version>1.3.3</Version>
+    <Version>1.3.4</Version>
     <OutputType>Exe</OutputType>
   </PropertyGroup>
   <ItemGroup>

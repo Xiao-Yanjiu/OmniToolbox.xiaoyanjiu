@@ -226,7 +226,7 @@ public sealed class MusicPlayer : ModuleBase
         neteasePlayer.netCookie = config.Netease!.QQCookie;
         RestoreCookies(config.QQCookie);
         config.ContentTab = Math.Clamp(config.ContentTab, 0, 3);
-        InstallOriginalMacroBridge();
+        RegisterMusicCommand();
         DalamudServices.PluginInterface.UiBuilder.Draw += Draw;
 
     }
@@ -234,13 +234,13 @@ public sealed class MusicPlayer : ModuleBase
     protected override void OnDisable()
     {
         try { DalamudServices.PluginInterface.UiBuilder.Draw -= Draw; } catch { }
-        RemoveOriginalMacroBridge();
+        UnregisterMusicCommand();
         SafeShutdown();
     }
 
     protected override void OnDispose()
     {
-        RemoveOriginalMacroBridge();
+        UnregisterMusicCommand();
         disposed = true;
         SafeShutdown();
     }
@@ -331,7 +331,7 @@ public sealed class MusicPlayer : ModuleBase
 
         ConsumePending();
 
-        ImGui.TextWrapped("宏命令：/omni MusicPlayer 切换悬浮窗；/omnimusic show 显示，/omnimusic hide 隐藏。");
+        ImGui.TextWrapped("宏命令：/MusicPlayer 打开或关闭当前音乐平台的悬浮窗。");
 
         ImGui.Spacing();
 
@@ -586,64 +586,34 @@ public sealed class MusicPlayer : ModuleBase
         return true;
     }
 
-    // Current Omni rejects unlisted command names before reaching ModuleBase.
-    // Extend the existing /omni handler for this exact argument only; forward
-    // every other command untouched, and restore the original on module unload.
-    private CommandInfo? originalOmniCommand;
-    private CommandInfo? musicOmniBridge;
-    private bool originalMacroBridgeActive;
+    private const string MusicCommand = "/MusicPlayer";
+    private CommandInfo? registeredMusicCommand;
 
-    internal CommandInfo CreateOriginalMacroBridge(CommandInfo original)
+    private void RegisterMusicCommand(Dalamud.Plugin.Services.ICommandManager? commandManager = null)
     {
-        return new CommandInfo((command, arguments) =>
+        if (owner != null || registeredMusicCommand != null) return;
+        var manager = commandManager ?? DalamudServices.CommandManager;
+        if (manager.Commands.ContainsKey(MusicCommand)) return;
+        var info = new CommandInfo((_, arguments) =>
         {
-            if (originalMacroBridgeActive && !disposed &&
-                string.Equals(arguments?.Trim(), "MusicPlayer", StringComparison.OrdinalIgnoreCase))
-            {
-                ToggleWindow();
-                return;
-            }
-            original.Handler(command, arguments!);
+            if (disposed) return;
+            if (string.IsNullOrWhiteSpace(arguments)) ToggleWindow();
+            else QueueChat("宏命令：/MusicPlayer（无需参数）");
         })
         {
-            HelpMessage = original.HelpMessage,
-            ShowInHelp = original.ShowInHelp,
-            DisplayOrder = original.DisplayOrder,
-            AllowedInMacros = original.AllowedInMacros
+            HelpMessage = "打开或关闭当前音乐平台的悬浮窗。",
+            AllowedInMacros = true
         };
+        if (manager.AddHandler(MusicCommand, info)) registeredMusicCommand = info;
     }
 
-    private void InstallOriginalMacroBridge(Dalamud.Plugin.Services.ICommandManager? commandManager = null)
+    private void UnregisterMusicCommand(Dalamud.Plugin.Services.ICommandManager? commandManager = null)
     {
-        if (owner != null || musicOmniBridge != null) return;
+        if (registeredMusicCommand == null) return;
         var manager = commandManager ?? DalamudServices.CommandManager;
-        if (!manager.Commands.TryGetValue("/omni", out var existing) || existing is not CommandInfo original) return;
-        var bridge = CreateOriginalMacroBridge(original);
-        if (!manager.RemoveHandler("/omni")) return;
-        bool installed = false;
-        try { installed = manager.AddHandler("/omni", bridge); }
-        finally
-        {
-            if (!installed && !manager.Commands.ContainsKey("/omni")) manager.AddHandler("/omni", original);
-        }
-        if (!installed) return;
-        originalOmniCommand = original;
-        musicOmniBridge = bridge;
-        originalMacroBridgeActive = true;
-    }
-
-    private void RemoveOriginalMacroBridge(Dalamud.Plugin.Services.ICommandManager? commandManager = null)
-    {
-        originalMacroBridgeActive = false;
-        if (musicOmniBridge == null || originalOmniCommand == null) return;
-        var manager = commandManager ?? DalamudServices.CommandManager;
-        if (manager.Commands.TryGetValue("/omni", out var current) && ReferenceEquals(current, musicOmniBridge))
-        {
-            manager.RemoveHandler("/omni");
-            manager.AddHandler("/omni", originalOmniCommand);
-        }
-        musicOmniBridge = null;
-        originalOmniCommand = null;
+        if (manager.Commands.TryGetValue(MusicCommand, out var current) && ReferenceEquals(current, registeredMusicCommand))
+            manager.RemoveHandler(MusicCommand);
+        registeredMusicCommand = null;
     }
 
     private bool DrawLoginSection()
@@ -4402,7 +4372,7 @@ public sealed class MusicPlayer : ModuleBase
 
     private void Draw()
     {
-        if (!disposed) InstallOriginalMacroBridge();
+        if (!disposed) RegisterMusicCommand();
         if (disposed) return;
         EnsurePlatforms();
         ApplyPlatformSwitch();
