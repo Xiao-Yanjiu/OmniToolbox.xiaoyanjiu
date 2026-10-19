@@ -95,25 +95,36 @@ public sealed unsafe partial class IChingModule : ModuleBase
     }
     protected override void OnDisable() => Stop();
     protected override void OnDispose() => Stop();
+    // Unsubscribe first; a managed failure while restoring one feature must not
+    // leave the remaining hooks, commands or frame callbacks running.
+    internal static void RunCleanupSteps(IEnumerable<System.Action> steps, System.Action<Exception> report)
+    {
+        foreach (var step in steps)
+            try { step(); }
+            catch (Exception error) { try { report(error); } catch { /* Continue cleanup even if logging fails. */ } }
+    }
     private void Stop()
     {
-        if (services != null) foreach (var command in panelCommands) services.Commands.RemoveHandler(command);
-        panelCommands.Clear();
-        RestoreFishingTimeline();
-        RestoreTargetRadius();
-        opcodeCancellation?.Cancel(); opcodeCancellation?.Dispose(); opcodeCancellation = null; opcodeTask = null;
-        RestoreDisplay();
-        if (services != null) services.FlyText.FlyTextCreated -= FakeFlyText;
         running = false;
-        if (services != null) services.Framework.Update -= Update;
-        if (DalamudServices.PluginInterface != null)
-            DalamudServices.PluginInterface.UiBuilder.Draw -= Draw;
-        foreach (var key in resources.Keys.ToArray()) Release(key);
-        canAttack = null;
-        radar.Clear();
-        errors.Clear();
-        panel = false;
-        saveHostConfig = null;
+        var steps = new List<System.Action>();
+        if (services != null)
+        {
+            steps.Add(() => services.Framework.Update -= Update);
+            steps.Add(() => services.FlyText.FlyTextCreated -= FakeFlyText);
+            foreach (var command in panelCommands.ToArray())
+                steps.Add(() => services.Commands.RemoveHandler(command));
+        }
+        steps.Add(panelCommands.Clear);
+        steps.Add(() => { if (DalamudServices.PluginInterface != null) DalamudServices.PluginInterface.UiBuilder.Draw -= Draw; });
+        steps.Add(RestoreFishingTimeline);
+        steps.Add(RestoreTargetRadius);
+        steps.Add(() => opcodeCancellation?.Cancel());
+        steps.Add(() => opcodeCancellation?.Dispose());
+        steps.Add(() => { opcodeCancellation = null; opcodeTask = null; });
+        steps.Add(RestoreDisplay);
+        foreach (var key in resources.Keys.ToArray()) steps.Add(() => Release(key));
+        steps.Add(() => { canAttack = null; radar.Clear(); });
+        RunCleanupSteps(steps, error => DalamudServices.PluginLog.Error(error, "IChing 停用清理失败，继续释放其余功能"));
     }
     private void Release(string key)
     {
@@ -169,11 +180,8 @@ public sealed unsafe partial class IChingModule : ModuleBase
 
     private void SyncFeatures()
     {
-        Feature("移速", config.Speed, () =>
-        {
-            speedHook = Hook<SpeedDelegate>(config.SpeedSignature, Speed);
-            accelerationHook = Hook<AccelerationDelegate>("40 ?? 48 ?? ?? ?? 80 79 ?? ?? 48 ?? ?? 0F 84 ?? ?? ?? ?? 48 89 7C 24 ?? 48 ?? ?? ??", Accelerate);
-        });
+        Feature("移速", config.Speed, () => speedHook = Hook<SpeedDelegate>(config.SpeedSignature, Speed));
+        Feature("最大加速度", config.MaxAcceleration, () => accelerationHook = Hook<AccelerationDelegate>("40 ?? 48 ?? ?? ?? 80 79 ?? ?? 48 ?? ?? 0F 84 ?? ?? ?? ?? 48 89 7C 24 ?? 48 ?? ?? ??", Accelerate));
         Feature("强制移动", config.MovePermission, () => moveHook = Hook<MoveDelegate>(config.MoveSignature, Move));
         Feature("防击退", config.AntiKnock, () => knockHook = Hook<KnockDelegate>("48 ?? ?? 57 48 ?? ?? ?? ?? ?? ?? 0F 29 70 ?? 0F ?? ??", Knock));
         Feature("掉落无伤", config.NoFallDamage, () => fallHook = Hook<FallDelegate>("48 89 5C 24 ?? 57 48 ?? ?? ?? 8B ?? 48 ?? ?? 33 ?? E8 ?? ?? ?? ?? 84 ??", Fall));
@@ -182,7 +190,7 @@ public sealed unsafe partial class IChingModule : ModuleBase
         if (!config.ActorRadius) RestoreTargetRadius();
         Feature("后摇移动", config.NoBackswing, () => backswingHook = Hook<BackswingDelegate>("48 ?? ?? ?? 48 ?? ?? ?? 45 ?? ?? 33 ?? E8 ?? ?? ?? ?? 84 ?? 74 ??", Backswing));
         Feature("突进无位移", config.NoActionMove, () => actionMoveHook = Hook<ActionMoveDelegate>("48 89 5C 24 ?? 48 89 74 24 ?? 57 48 83 EC ?? 48 8B F1 0F 29 74 24 ?? 48 8B 89 ?? ?? ?? ?? 0F 28 F3", ActionMove));
-        Feature("复唱缩减", config.Recast, () => recastHook = HookAddress<RecastDelegate>((nint)ActionManager.MemberFunctionPointers.GetAdjustedRecastTime, Recast));
+        Feature("复唱缩减", config.Recast || config.Mudra, () => recastHook = HookAddress<RecastDelegate>((nint)ActionManager.MemberFunctionPointers.GetAdjustedRecastTime, Recast));
         Feature("咏唱缩减", config.Cast, () =>
         {
             castHook = HookAddress<CastDelegate>((nint)ActionManager.MemberFunctionPointers.GetAdjustedCastTime, Cast);
@@ -274,7 +282,13 @@ public sealed unsafe partial class IChingModule : ModuleBase
     {
         var original = recastHook.Original(type, key, applyClassMechanics);
         if (!Active || type != ActionType.Action || original <= 0) return original;
-        return Mudra(key) ? 0 : Math.Max(original - (int)(ClampFinite(config.RecastSeconds, 0, 60) * 1000), 0);
+        return AdjustRecastMilliseconds(original, config.Recast, Mudra(key), config.RecastSeconds);
+    }
+    internal static int AdjustRecastMilliseconds(int original, bool reduceRecast, bool isFastMudra, float seconds)
+    {
+        if (original <= 0) return original;
+        if (isFastMudra) return 0;
+        return reduceRecast ? Math.Max(original - (int)(ClampFinite(seconds, 0, 60) * 1000), 0) : original;
     }
     private int Cast(ActionType type, uint id, bool apply, ActionManager.CastTimeProc* proc)
     {
@@ -493,7 +507,7 @@ public sealed unsafe partial class IChingModule : ModuleBase
         using (new Card("movement", "移动", ""))
         {
             changed |= CompactRow("移速调整", ref config.Speed, ref config.SpeedAdd, 0, 20, "+ %.2f", "移速");
-            changed |= CompactPair("最大加速度", ref config.MaxAcceleration, "强制移动", ref config.MovePermission, null, "强制移动");
+            changed |= CompactPair("最大加速度", ref config.MaxAcceleration, "强制移动", ref config.MovePermission, "最大加速度", "强制移动");
             changed |= CompactDualRow("防击退", ref config.AntiKnock, ref config.KnockDistance, ref config.KnockTime, "防击退");
             changed |= CompactPair("掉落无伤", ref config.NoFallDamage, "无掉落", ref config.NoFall, "掉落无伤", "无掉落");
         }
@@ -512,7 +526,7 @@ public sealed unsafe partial class IChingModule : ModuleBase
         using (new Card("cast", "咏唱与复唱", ""))
         {
             changed |= CompactRow("复唱缩减", ref config.Recast, ref config.RecastSeconds, 0, 60, "- %.2f s", "复唱缩减");
-            changed |= Toggle("快速结印", ref config.Mudra);
+            changed |= Toggle("快速结印", ref config.Mudra, "复唱缩减");
             changed |= CompactRow("咏唱缩减", ref config.Cast, ref config.CastSeconds, 0, 10, "- %.2f s", "咏唱缩减");
             changed |= CompactRow("PVP 动画锁", ref config.PvpAnimationLock, ref config.AnimationLock, 0, 1, "%.2f s", null);
         }
@@ -669,13 +683,13 @@ public sealed unsafe partial class IChingModule : ModuleBase
             ImGui.EndDisabled();
             if (ActionButton("复制诊断信息"))
             {
-                ImGui.SetClipboardText($"IChing 0.5 | running={running} | initialized={resources.Count}\n" + string.Join("\n", errors.Select(p => p.Key + ": " + p.Value)));
+                ImGui.SetClipboardText($"IChing local-audit-20261019 | running={running} | initialized={resources.Count}\n" + string.Join("\n", errors.Select(p => p.Key + ": " + p.Value)));
                 notice = "诊断信息已复制。";
             }
         }
         using (new Card("migration", "未迁移功能", "功能补齐情况见随附的本地调试说明。"))
         {
-            WrapHint("钓鱼动画采用本地加速替代，未照搬 DLL 的资源替换。世界射线、InvulnerableMode 与未知参数的内部指令未启用；方法体受保护，不能确认行为。\n部分旧版 Hook 尚需游戏内核验；详见功能还原说明。" );
+            WrapHint("钓鱼动画通过原生动画槽更新实现本地快速播放，未照搬 DLL 的资源替换。世界射线、InvulnerableMode 与未知参数的内部指令未启用；方法体受保护，不能确认行为。\n部分旧版 Hook 尚需游戏内核验；详见功能还原说明。" );
         }
         if (ImGui.CollapsingHeader("网络 Opcode")) DrawOpcodeDiagnostics();
         using (new Card("reset", "配置维护", "关闭所有功能并清空名单；一次性坐标与缩放写入不会撤销。"))
@@ -760,6 +774,7 @@ public sealed class IChingModuleConfig
     public bool HideHudValues, FakeDamage, ReplaceDisconnectText, MaxGrandCompanyRank;
     public bool AllowLegacyHooks;
     public bool LocalLineOfSight, FastFishingAnimation, PauseFishingNearPlayers = true;
+    // FishingAnimationSpeed is retained only to read old configs; the checkbox uses a fixed multiplier.
     public float FishingAnimationSpeed = 5, FishingPlayerDistance = 20;
     public int DisplayDamage = 99999;
     public string DisconnectText = "连接暂时中断，请稍后重试。";
@@ -919,9 +934,10 @@ public sealed unsafe partial class IChingModule
     private static readonly HashSet<uint> MovementStatuses = [142,149,604,905,911,1579,1580,1257,1681,3629,3719,3737,1293,1294,1295,1296,1958,1959,1960,1961,2161,2162,2163,2164,2381,2382,2383,2384,2538,2539,2540,2541,3698,3699,3700,3701,3715,3716,3717,3718,1422,2936,3694,3909];
     private void SyncExtendedFeatures()
     {
+        nextDisplayUpdate = 0; // Settings changes are applied on the next framework tick.
         if (!config.FastFishingAnimation) RestoreFishingTimeline();
         Feature("本地视线判定", config.LocalLineOfSight, () => lineOfSightHook = HookAddress<LineOfSightDelegate>((nint)ActionManager.MemberFunctionPointers.GetActionInRangeOrLoS, LocalLineOfSight));
-        Feature("钓鱼动画加速", config.FastFishingAnimation, () => fishingTimelineHook = HookAddress<FishingTimelineDelegate>((nint)TimelineContainer.MemberFunctionPointers.CalculateAndApplyOverallSpeed, FishingTimeline));
+        Feature("钓鱼动画加速", config.FastFishingAnimation, () => ValidateFunctionAddress((nint)FFXIVClientStructs.FFXIV.Client.Game.Control.ActionTimelineSequencer.MemberFunctionPointers.SetSlotSpeed));
         Feature("状态过滤", config.FilterMovementStatuses, () =>
             setStatusHook = HookAddress<SetStatusDelegate>((nint)StatusManager.MemberFunctionPointers.SetStatus, SetMovementStatus));
         Feature("最大军衔", config.MaxGrandCompanyRank, () =>
@@ -1089,8 +1105,15 @@ public sealed unsafe partial class IChingModule
     }
     private record DisplaySnapshot(nint Node, string Original, string Written);
     private readonly Dictionary<(string Addon, uint Component, uint Node), DisplaySnapshot> displaySnapshots = new();
-    private static AtkTextNode* TextNode(AtkUnitBase* addon, uint component, uint node) => addon == null ? null :
-        component == 0 ? addon->GetTextNodeById(node) : addon->GetComponentNodeById(component) == null ? null : addon->GetComponentNodeById(component)->GetComponent()->GetTextNodeById(node);
+    private static AtkTextNode* TextNode(AtkUnitBase* addon, uint component, uint node)
+    {
+        if (addon == null) return null;
+        if (component == 0) return addon->GetTextNodeById(node);
+        var componentNode = addon->GetComponentNodeById(component);
+        if (componentNode == null) return null;
+        var value = componentNode->GetComponent();
+        return value == null ? null : value->GetTextNodeById(node);
+    }
     private void DisplayText(string addonName, uint component, uint nodeId, string text, bool counter = false)
     {
         var addon = (AtkUnitBase*)services.Gui.GetAddonByName(addonName).Address;
@@ -1132,10 +1155,14 @@ public sealed unsafe partial class IChingModule
         }
         displaySnapshots.Clear();
     }
+    private long nextDisplayUpdate;
     private void UpdateDisplay()
     {
         if (!config.HideHudValues && !config.ReplaceDisconnectText && displaySnapshots.Count == 0) return;
-        // Restore before repainting so independently disabling either group takes effect immediately.
+        if (Environment.TickCount64 < nextDisplayUpdate) return;
+        nextDisplayUpdate = Environment.TickCount64 + 100;
+        // Ten updates per second are sufficient for masking text; don't restore
+        // and allocate replacement strings on every rendered frame.
         RestoreDisplay();
         if (config.HideHudValues)
         {
@@ -1293,26 +1320,33 @@ public sealed unsafe partial class IChingModule
         }
         finally { checkingLineOfSightTarget = false; }
     }
-    [return: MarshalAs(UnmanagedType.U1)]
-    private delegate bool FishingTimelineDelegate(TimelineContainer* timeline);
-    private Hook<FishingTimelineDelegate> fishingTimelineHook = null!;
+    // SetSlotSpeed marks the sequencer dirty so the game applies the value to
+    // the animation. Writing OverallSpeed after CalculateAndApplyOverallSpeed
+    // returns only changes its cache, not the speed already sent to the model.
+    private const float FishingAnimationMultiplier = 10f;
     private bool fishingReady, fishingPlayersNearby;
     private long nextFishingCheck;
-    private sealed record FishingSnapshot(nint Address, ulong ObjectId, uint Territory, float Original, float Written);
-    private FishingSnapshot? fishingSnapshot;
-    private bool FishingTimeline(TimelineContainer* timeline)
+    private sealed class FishingSnapshot(nint address, ulong objectId, uint territory)
     {
-        var result = fishingTimelineHook.Original(timeline);
-        if (!Active || !config.FastFishingAnimation || !fishingReady || timeline == null || timeline->OwnerObject == null ||
-            (nint)timeline->OwnerObject != services.Objects.LocalPlayer!.Address || config.PauseFishingNearPlayers && fishingPlayersNearby) return result;
-        float original = timeline->OverallSpeed;
-        if (!float.IsFinite(original) || original <= 0 || !float.IsFinite(config.FishingAnimationSpeed)) return result;
-        float written = Math.Clamp(original * ClampFinite(config.FishingAnimationSpeed, 1, 10), 0.01f, 20);
-        var player = services.Objects.LocalPlayer!;
-        fishingSnapshot = new(player.Address, player.GameObjectId, services.Client.TerritoryType, original, written);
-        timeline->OverallSpeed = written;
-        return result;
+        public readonly nint Address = address;
+        public readonly ulong ObjectId = objectId;
+        public readonly uint Territory = territory;
+        public readonly float[] Original = new float[2], Written = new float[2];
+        public readonly bool[] Owned = new bool[2];
     }
+    private FishingSnapshot? fishingSnapshot;
+
+    internal static bool TryFishingSlotSpeed(float current, bool owned, float original, float written,
+        out float baseline, out float desired)
+    {
+        baseline = owned && current == written ? original : current;
+        desired = baseline;
+        // Paused animations must stay paused; never amplify our previous write.
+        if (!float.IsFinite(baseline) || baseline <= 0 || baseline > 20) return false;
+        desired = Math.Min(baseline * FishingAnimationMultiplier, 20f);
+        return true;
+    }
+
     private void RestoreFishingTimeline()
     {
         fishingReady = false;
@@ -1320,21 +1354,41 @@ public sealed unsafe partial class IChingModule
         if (saved == null || services == null || services.Client.TerritoryType != saved.Territory) return;
         var obj = services.Objects.FirstOrDefault(o => o.Address == saved.Address && o.GameObjectId == saved.ObjectId);
         if (obj is not IBattleChara) return;
-        var timeline = &((Character*)obj.Address)->Timeline;
-        if (timeline->OverallSpeed == saved.Written) timeline->OverallSpeed = saved.Original;
+        var sequencer = &((Character*)obj.Address)->Timeline.TimelineSequencer;
+        for (uint slot = 0; slot < 2; slot++)
+            if (saved.Owned[slot] && sequencer->TimelineSpeeds[(int)slot] == saved.Written[slot])
+                sequencer->SetSlotSpeed(slot, saved.Original[slot]);
     }
+
     private void UpdateFishingState()
     {
-        var player = services.Objects.LocalPlayer!;
-        bool fishing = config.FastFishingAnimation && player.ClassJob.RowId == 18 && services.Condition[ConditionFlag.Gathering];
-        if (!fishing) { RestoreFishingTimeline(); return; }
+        var player = services.Objects.LocalPlayer;
+        bool fishing = player != null && config.FastFishingAnimation && resources.ContainsKey("钓鱼动画加速") &&
+            player.ClassJob.RowId == 18 && services.Condition[ConditionFlag.Gathering];
+        if (!fishing || player == null) { RestoreFishingTimeline(); fishingPlayersNearby = false; nextFishingCheck = 0; return; }
         if (Environment.TickCount64 >= nextFishingCheck)
         {
             nextFishingCheck = Environment.TickCount64 + 200;
             float distance = ClampFinite(config.FishingPlayerDistance, 1, 100);
-            fishingPlayersNearby = services.Objects.Any(o => o is IPlayerCharacter && o.GameObjectId != player.GameObjectId && Vector3.DistanceSquared(o.Position, player.Position) <= distance * distance);
+            fishingPlayersNearby = services.Objects.Any(o => o is IPlayerCharacter && o.GameObjectId != player!.GameObjectId && Vector3.DistanceSquared(o.Position, player.Position) <= distance * distance);
         }
         if (config.PauseFishingNearPlayers && fishingPlayersNearby) { RestoreFishingTimeline(); return; }
+        if (fishingSnapshot is { } previous && (previous.Address != player!.Address || previous.ObjectId != player.GameObjectId || previous.Territory != services.Client.TerritoryType))
+            RestoreFishingTimeline();
+        var saved = fishingSnapshot ??= new(player!.Address, player.GameObjectId, services.Client.TerritoryType);
+        var sequencer = &((Character*)player.Address)->Timeline.TimelineSequencer;
+        // Base and upper-body only. Never speed up other players, mounts, facial
+        // animation, or global particle timing.
+        for (uint slot = 0; slot < 2; slot++)
+        {
+            float current = sequencer->TimelineSpeeds[(int)slot];
+            if (!TryFishingSlotSpeed(current, saved.Owned[slot], saved.Original[slot], saved.Written[slot], out float baseline, out float desired))
+            { saved.Owned[slot] = false; continue; }
+            saved.Original[slot] = baseline;
+            saved.Written[slot] = desired;
+            saved.Owned[slot] = true;
+            if (current != desired) sequencer->SetSlotSpeed(slot, desired);
+        }
         fishingReady = true;
     }
     private int commandMode, commandInternal;
@@ -1344,12 +1398,18 @@ public sealed unsafe partial class IChingModule
     private bool DrawRestoredTools()
     {
         bool changed = false;
-        using (new Card("fishing", "钓鱼动画", "本地动画加速替代原版资源替换，不改变服务器钓鱼流程。效果尚需游戏内验证。"))
+        using (new Card("fishing", "钓鱼动画", "勾选后快速播放本人的钓鱼动作；不改变服务器咬钩时间。"))
         {
-            changed |= CompactRow("钓鱼动画加速", ref config.FastFishingAnimation, ref config.FishingAnimationSpeed, 1, 10, "%.1f x", "钓鱼动画加速");
+            changed |= ImGui.Checkbox("钓鱼动画加速", ref config.FastFishingAnimation);
             ImGui.BeginDisabled(!config.FastFishingAnimation);
             changed |= CompactRow("附近玩家暂停", ref config.PauseFishingNearPlayers, ref config.FishingPlayerDistance, 1, 100, "%.0f m", null);
             ImGui.EndDisabled();
+            string fishingStatus = !config.FastFishingAnimation ? "未启用" :
+                errors.TryGetValue("钓鱼动画加速", out var fishingError) ? "初始化失败：" + fishingError :
+                fishingReady ? "已应用到本人的钓鱼动画" :
+                config.PauseFishingNearPlayers && fishingPlayersNearby && services.Condition[ConditionFlag.Gathering] ? "已暂停：附近有其他玩家" :
+                "等待本人进入钓鱼状态";
+            WrapHint(fishingStatus);
         }
         if (ImGui.CollapsingHeader("指令生成器"))
         {
