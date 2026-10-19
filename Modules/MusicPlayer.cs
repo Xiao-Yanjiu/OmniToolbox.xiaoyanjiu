@@ -13,6 +13,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Command;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
 using OmniToolbox.Common.Module.Abstractions;
@@ -225,6 +226,7 @@ public sealed class MusicPlayer : ModuleBase
         neteasePlayer.netCookie = config.Netease!.QQCookie;
         RestoreCookies(config.QQCookie);
         config.ContentTab = Math.Clamp(config.ContentTab, 0, 3);
+        RegisterMusicCommand();
         DalamudServices.PluginInterface.UiBuilder.Draw += Draw;
 
     }
@@ -232,11 +234,13 @@ public sealed class MusicPlayer : ModuleBase
     protected override void OnDisable()
     {
         try { DalamudServices.PluginInterface.UiBuilder.Draw -= Draw; } catch { }
+        try { UnregisterMusicCommand(); } catch { }
         SafeShutdown();
     }
 
     protected override void OnDispose()
     {
+        try { UnregisterMusicCommand(); } catch { }
         disposed = true;
         SafeShutdown();
     }
@@ -327,7 +331,7 @@ public sealed class MusicPlayer : ModuleBase
 
         ConsumePending();
 
-        ImGui.TextWrapped("宏命令：/omni MusicPlayer 打开/关闭悬浮窗。");
+        ImGui.TextWrapped("宏命令：/omni MusicPlayer 切换悬浮窗；/omnimusic show 显示，/omnimusic hide 隐藏。");
 
         ImGui.Spacing();
 
@@ -552,19 +556,84 @@ public sealed class MusicPlayer : ModuleBase
         return true;
     }
 
-    public override bool TryHandleCommand(string arguments)
+    public override bool TryHandleCommand(string arguments) => HandleOverlayCommand(arguments);
+
+    public override bool TryHandleCommand(string command, string arguments)
     {
-        EnsurePlatforms();
-        if (config.SelectedProvider == 1) return neteasePlayer!.ToggleWindow();
-        return ToggleWindow();
+        if (!IsMusicCommand(command)) return false;
+        return HandleOverlayCommand(arguments);
     }
 
-    private bool ToggleWindow()
+    internal static bool IsMusicCommand(string command)
     {
-        config.WindowVisible = !config.WindowVisible;
-        if (config.WindowVisible) { overlaySuspended = false; drawErrorStreak = 0; }
-        OmniNotifier.Chat($"音乐播放器悬浮窗已{(config.WindowVisible ? "打开" : "关闭")}");
+        string name = (command ?? string.Empty).Trim().TrimStart('/');
+        return name.Equals("MusicPlayer", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("omnimusic", StringComparison.OrdinalIgnoreCase)
+            || name is "音乐播放器" or "游戏内音乐播放器";
+    }
+
+    private bool HandleOverlayCommand(string arguments)
+    {
+        var root = Root;
+        root.EnsurePlatforms();
+        root.ApplyPlatformSwitch();
+        var tokens = (arguments ?? string.Empty).Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        int provider = root.config.SelectedProvider;
+        int offset = 0;
+        if (tokens.Length > 0)
+        {
+            string platform = tokens[0].ToLowerInvariant();
+            if (platform is "qq" or "qq音乐") { provider = 0; offset = 1; }
+            else if (platform is "netease" or "163" or "网易云" or "网易云音乐") { provider = 1; offset = 1; }
+        }
+        if (tokens.Length > offset + 1) return false;
+        string action = tokens.Length > offset ? tokens[offset].ToLowerInvariant() : "toggle";
+        bool? visible;
+        switch (action)
+        {
+            case "toggle": case "切换": visible = null; break;
+            case "show": case "open": case "on": case "显示": case "打开": visible = true; break;
+            case "hide": case "close": case "off": case "隐藏": case "关闭": visible = false; break;
+            default: return false;
+        }
+        var player = provider == 1 ? root.neteasePlayer! : root;
+        player.config.WindowVisible = visible ?? !player.config.WindowVisible;
+        if (player.config.WindowVisible)
+        {
+            player.overlaySuspended = false;
+            player.drawErrorStreak = 0;
+            if (offset > 0 && root.config.SelectedProvider != provider)
+            {
+                root.requestedProvider = provider;
+                root.ApplyPlatformSwitch();
+            }
+        }
+        player.panelDirty = root.panelDirty = true;
+        // Do not call chat/UI services directly from a command-dispatch callback.
+        player.QueueChat($"{player.PlatformName}悬浮窗已{(player.config.WindowVisible ? "打开" : "关闭")}");
         return true;
+    }
+
+    private bool ToggleWindow() => HandleOverlayCommand("toggle");
+
+    private const string DirectMusicCommand = "/omnimusic";
+    private bool ownsDirectMusicCommand;
+    private void RegisterMusicCommand()
+    {
+        if (owner != null || ownsDirectMusicCommand) return;
+        ownsDirectMusicCommand = DalamudServices.CommandManager.AddHandler(DirectMusicCommand,
+            new CommandInfo((_, arguments) =>
+            {
+                if (!HandleOverlayCommand(arguments))
+                    QueueChat("用法：/omnimusic [qq|netease] [show|hide|toggle]");
+            }) { HelpMessage = "切换音乐悬浮窗；show 显示，hide 隐藏，可指定 qq/netease。" });
+    }
+
+    private void UnregisterMusicCommand()
+    {
+        if (!ownsDirectMusicCommand) return;
+        DalamudServices.CommandManager.RemoveHandler(DirectMusicCommand);
+        ownsDirectMusicCommand = false;
     }
 
     private bool DrawLoginSection()

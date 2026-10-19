@@ -1,4 +1,4 @@
-# 游戏内音乐播放器 1.3.0
+# 游戏内音乐播放器 1.3.1
 
 QQ音乐和网易云音乐共用原有 UI，通过账号登录旁的下拉框切换。各平台独立维护登录态、曲库、喜欢列表、歌单缓存、播放队列、当前歌曲、音量和音频设备。切换页面不暂停另一平台，若同时播放会叠加出声，可分别暂停。
 
@@ -30,7 +30,7 @@ dotnet run --project Modules/MusicPlayer/Tests/Checks.csproj -c Release
 
 依赖路径可用 `-p:DalamudLibPath=目录` 和 `-p:OmniLibPath=目录` 覆盖。默认检查不联网；添加 `-- --live --audio` 会执行匿名接口和静音音频检查，不登录个人账号或写入收藏。
 
-- Release 编译通过，32 项托管检查通过：账号与队列隔离、旧配置兼容、切换不暂停音频、协议编码、接口返回与错误、完整歌单、过期结果和解码清理。
+- Release 编译通过，44 项托管检查通过：账号与队列隔离、旧配置兼容、切换不暂停音频、协议编码、接口返回与错误、完整歌单、过期结果和解码清理。
 - 匿名搜索、歌词、二维码 key 和 801 等待扫码状态实测成功；真实标准 MP3 经下载、内置解码后静音播放成功。
 - 双音频设备同时播放、关闭其中一个不影响另一个，实测通过。
 - 游戏内完整布局、扫码确认后的账号持久化、私人歌单和收藏写入仍需实机验证。
@@ -44,3 +44,9 @@ dotnet run --project Modules/MusicPlayer/Tests/Checks.csproj -c Release
 - 网易云请求协议参考 [NeteaseCloudMusicApiEnhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)。
 
 许可证副本见 licenses 目录及单文件源码中的许可说明。
+
+## 1.3.1 悬浮窗命令
+
+启用模块后使用 `/omnimusic` 切换当前平台悬浮窗，`/omnimusic show` 显示，`/omnimusic hide` 隐藏；支持在动作前指定 `qq` 或 `netease`。控制悬浮窗不会停止歌曲。专用命令随模块启停注册/注销，不替换宿主的 `/omni`。
+
+补齐显式的命名单参数/双参数分发兼容，宏更改标记保存，并将提示延迟到绘制线程处理。宿主默认转发已单独验证正常；无参数 `/omni MusicPlayer` 是否先走模块启停取决于宿主分发，控制悬浮窗优先使用专用命令。

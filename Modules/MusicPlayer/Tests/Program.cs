@@ -30,6 +30,9 @@ class Program
     { try { await action(); } catch (Exception ex) { Check(ex.ToString().Contains(expected), expected); return; } throw new Exception("Expected error: " + expected); }
     static async Task Checks(bool live)
     {
+        var legacy = new LegacyCommandProbe();
+        bool forwarded = legacy.TryHandleCommand("MusicPlayer", "");
+        Console.WriteLine("HOST legacy forwarding: handled=" + forwarded + ", calls=" + legacy.Calls);
         var root = new Player(); Invoke(root, "EnsurePlatforms");
         var net = Field(root, "neteasePlayer")!;
         var qqConfig = (Player.MusicPlayerConfig)Field(root, "config")!;
@@ -47,6 +50,21 @@ class Program
         Check((bool)Field(root, "enginePlaying")! && (bool)Field(net, "enginePlaying")!, "switch does not pause either engine");
         Set(root, "requestedProvider", 0); Invoke(root, "ApplyPlatformSwitch");
         Check((bool)Field(root, "mainPanelOpen")! && !(bool)Field(net, "mainPanelOpen")! && netConfig.Queue.Count == 1, "switch back retains other queue");
+        // Both host command entry points target the selected player, without game UI services.
+        qqConfig.WindowVisible = false; netConfig.WindowVisible = true;
+        Check(root.TryHandleCommand("MusicPlayer", "") && qqConfig.WindowVisible, "legacy macro routes through named entry");
+        Check(root.TryHandleCommand("") && !qqConfig.WindowVisible, "legacy single argument toggle");
+        Check(root.TryHandleCommand("MusicPlayer", "show") && qqConfig.WindowVisible, "named show");
+        Check(root.TryHandleCommand("show") && qqConfig.WindowVisible, "show is idempotent");
+        Check(!root.TryHandleCommand("OtherModule", "hide") && qqConfig.WindowVisible, "unrelated module command rejected");
+        Check(root.TryHandleCommand("hide") && !qqConfig.WindowVisible && netConfig.WindowVisible, "QQ hide leaves NetEase state alone");
+        Check(root.TryHandleCommand("netease show") && qqConfig.SelectedProvider == 1 && netConfig.WindowVisible, "explicit NetEase show selects its page");
+        Check(root.TryHandleCommand("hide") && !netConfig.WindowVisible && !qqConfig.WindowVisible, "selected NetEase hide");
+        Check(root.TryHandleCommand("网易云音乐 显示") && netConfig.WindowVisible, "Chinese platform and action");
+        Check(!root.TryHandleCommand("unknown") && netConfig.WindowVisible, "unknown action does not toggle");
+        Check((bool)Field(root, "panelDirty")! && (bool)Field(net, "panelDirty")!, "macro visibility is marked for persistence");
+        Check((bool)Field(root, "enginePlaying")! && (bool)Field(net, "enginePlaying")!, "window macro never changes playback");
+        root.TryHandleCommand("qq show");
         var restored = JsonSerializer.Deserialize<Player.MusicPlayerConfig>(JsonSerializer.Serialize(qqConfig))!;
         Check(restored.QQCookie == "qq=test" && restored.Netease!.QQCookie == "MUSIC_U=netease", "account roundtrip");
         Check(restored.Queue[0].Source == "qq" && restored.Netease!.Queue[0].Source == "netease", "queue roundtrip");
@@ -197,4 +215,11 @@ class Program
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(Route?.Invoke(Path) ?? Body, Encoding.UTF8, "application/json") });
         }
     }
+}
+
+sealed class LegacyCommandProbe : OmniToolbox.Common.Module.Abstractions.ModuleBase
+{
+    public int Calls;
+    public override OmniToolbox.Common.Module.Models.ModuleInfo Info { get; } = new() { Title = "command-probe", Description = "", Category = OmniToolbox.Common.Module.Enums.ModuleCategory.Interface };
+    public override bool TryHandleCommand(string args) { Calls++; return true; }
 }
