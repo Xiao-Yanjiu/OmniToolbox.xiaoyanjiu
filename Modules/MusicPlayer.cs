@@ -53,6 +53,7 @@ public sealed class MusicPlayer : ModuleBase
         public float CoverOpacity { get; set; } = 1.0f;
         public bool ShowLyricInHead { get; set; } = true;
         public int ContentTab { get; set; }
+        public float FavoriteSidebarRatio { get; set; }
         public int Volume { get; set; } = 80;
         public float LyricFontScale { get; set; } = 1.0f;
         public bool ShowMeta { get; set; } = true;
@@ -864,10 +865,45 @@ public sealed class MusicPlayer : ModuleBase
             EnsurePlaylistTracks(playlists[0]);
         }
         float gap = 10f;
-        float sidebarWidth = Math.Max(124f, ImGui.CalcTextSize("我喜欢的音乐").X + 26f);
-        float available = ImGui.GetContentRegionAvail().X - 5f;
-        float contentWidth = Math.Max(1f, available - sidebarWidth - gap);
+        float available = Math.Max(gap + 2f, ImGui.GetContentRegionAvail().X - 5f);
+        float usableWidth = available - gap;
+        float minSidebar = Math.Min(124f, usableWidth * 0.4f);
+        float maxSidebar = usableWidth - Math.Min(200f, usableWidth * 0.5f);
+        float defaultWidth = Math.Max(124f, ImGui.CalcTextSize("我喜欢的音乐").X + 26f);
+        float sidebarWidth = Math.Clamp(
+            float.IsFinite(config.FavoriteSidebarRatio) && config.FavoriteSidebarRatio > 0f
+                ? usableWidth * config.FavoriteSidebarRatio : defaultWidth, minSidebar, maxSidebar);
         float panelHeight = Math.Max(320f, ImGui.GetTextLineHeightWithSpacing() * 20f);
+        var panelStart = ImGui.GetCursorScreenPos();
+        ImGui.SetCursorScreenPos(panelStart + new Vector2(sidebarWidth, 0f));
+        ImGui.InvisibleButton("##favoriteSplitter", new Vector2(gap, panelHeight));
+        bool splitterActive = ImGui.IsItemActive();
+        bool splitterHovered = ImGui.IsItemHovered();
+        if (splitterHovered || splitterActive) ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEw);
+        if (splitterActive && ImGui.GetIO().MouseDelta.X != 0f)
+        {
+            sidebarWidth = Math.Clamp(sidebarWidth + ImGui.GetIO().MouseDelta.X, minSidebar, maxSidebar);
+            config.FavoriteSidebarRatio = sidebarWidth / usableWidth;
+            changed = true;
+        }
+        var splitterStart = panelStart + new Vector2(sidebarWidth + gap * 0.5f - 1f, 4f);
+        ImGui.GetWindowDrawList().AddRectFilled(splitterStart,
+            splitterStart + new Vector2(2f, panelHeight - 8f),
+            ImGui.GetColorU32(splitterActive ? ImGuiCol.SeparatorActive : splitterHovered ? ImGuiCol.SeparatorHovered : ImGuiCol.Separator), 1f);
+        ImGui.SetCursorScreenPos(panelStart);
+        float contentWidth = Math.Max(1f, usableWidth - sidebarWidth);
+        string PlaylistLabel(string name, float width)
+        {
+            float textWidth = Math.Max(1f, width - 14f);
+            if (ImGui.CalcTextSize(name).X <= textWidth) return name;
+            var label = name;
+            while (label.Length > 0 && ImGui.CalcTextSize(label + "…").X > textWidth)
+            {
+                label = label[..^1];
+                if (label.Length > 0 && char.IsHighSurrogate(label[^1])) label = label[..^1];
+            }
+            return label + "…";
+        }
         void PanelShadow(Vector2 size)
         {
             var start = ImGui.GetCursorScreenPos();
@@ -901,7 +937,7 @@ public sealed class MusicPlayer : ModuleBase
                             for (var i = 0; i < playlists.Count; i++)
                             {
                                 var pl = playlists[i];
-                                if (DrawPillButton($"##favViewPl{i}", Truncate(pl.Name, 7), favViewIdx == i + 1, width, true))
+                                if (DrawPillButton($"##favViewPl{i}", PlaylistLabel(pl.Name, width), favViewIdx == i + 1, width, true))
                                 {
                                     favViewIdx = i + 1;
                                     EnsurePlaylistTracks(pl);

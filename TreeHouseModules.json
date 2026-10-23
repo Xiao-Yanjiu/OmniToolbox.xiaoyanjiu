@@ -6,10 +6,10 @@
       "Name": "游戏内音乐播放器",
       "Author": "小烟酒",
       "Description": "QQ音乐与网易云音乐双平台：独立登录、曲库、队列及播放通道；扫码登录、搜索、榜单、歌词、封面、喜欢和歌单读取；推荐与收藏左侧竖向列表。网易云标准 MP3 内置解码，无需 Node 或外部解码服务。",
-      "Version": "1.3.4",
+      "Version": "1.3.5",
       "MinimumOmniVersion": "1.1.7.5",
       "File": "Modules/MusicPlayer.cs",
-      "Sha256": "049319d7d1967f67c43592ec92101002bd1c4acbf4c581fb039b8061d876854a"
+      "Sha256": "08f18de88ca348fb079c14b541ae81655dee5ac5c3d93a678e182768c034423b"
     },
     {
       "InternalName": "GameWebBrowser",
