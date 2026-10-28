@@ -26,12 +26,15 @@ using Vector4 = System.Numerics.Vector4;
 
 namespace OmniToolbox.LocalModules;
 
-public sealed unsafe partial class GameWebBrowser : ModuleBase
+[ModuleApiVersion(1)]
+public sealed unsafe partial class GameWebBrowser : OmniModuleBase
 {
+    public override OmniToolbox.UI.ModuleLocalization Localization => GameWebBrowserText.Catalog;
+
     public override ModuleInfo Info { get; } = new()
     {
-        Title       = "游戏内浏览器",
-        Description = "",
+
+
         Category    = ModuleCategory.Interface,
         Author      = "小烟酒",
     };
@@ -288,7 +291,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "XIVLauncherCN", "pluginConfigs", "OmniGameWebBrowser.json");
 
-    private Config config = new();
+    private Settings config = new();
     private RepositoryNativeBrowser? repositoryBrowser;
     private bool RepositoryMode => config.RenderingBackend == 1;
     private string dialogKind = "", dialogWindowKey = "", dialogAddress = "", dialogName = "", dialogError = "";
@@ -471,16 +474,26 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
 
     private long focusGameUntilMs;
 
-    public GameWebBrowser()
+    public GameWebBrowser() { }
+
+    protected override void OnStart(TreeTools.Lifecycle.FeatureLifetime activation)
     {
+        GameWebBrowserText.Bind(this, activation);
+
+        api1Stopped = false;
+
+        activation.OnStopping(StopActivation);
         LoadOwnConfig();
+        StartBackend();
     }
 
-    protected override void OnEnable()
+    private void StartBackend()
     {
+        api1Stopped = false;
+
         commandManager = GetService<ICommandManager>("Dalamud.Game.Command.CommandManager");
         if (commandManager == null)
-            statusMessage = "命令服务获取失败，宏命令无法使用";
+            statusMessage = GameWebBrowserText.Get("Text0001");
         else
             statusMessage = "";
 
@@ -507,15 +520,18 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 DalamudServices.PluginInterface.UiBuilder.Draw += DrawChrome;
             DalamudServices.Framework.Update += BlockBrowserGameKeys;
         }
-        catch (Exception e) { statusMessage = "绘制钩子挂载失败：" + e.Message; }
+        catch (Exception e) { statusMessage = GameWebBrowserText.Get("Text0002") + e.Message; }
 
         watchCts = new CancellationTokenSource();
         var activationToken = watchCts.Token;
-        _ = Task.Run(() => WatchLoop(activationToken));
+        Activation.Track(GameWebBrowserText.Track(Task.Run(() => WatchLoop(activationToken))));
 
     }
 
-    protected override void OnDisable()
+    private bool api1Stopped = true;
+    private void StopActivation() { if (api1Stopped) return; api1Stopped = true; StopCore(); }
+    protected override void OnStop() => StopActivation();
+    private void StopCore()
     {
         browserKeyboardCapture = false;
         CefKeyboard(null);
@@ -559,9 +575,9 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         watchCts = null;
     }
 
-    protected override void OnDispose()
+    protected override void OnDestroy()
     {
-        try { OnDisable(); } catch {   }
+        try { OnStop(); } catch {   }
     }
 
     private void LoadOwnConfig()
@@ -572,7 +588,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             if (File.Exists(path))
             {
                 var json     = File.ReadAllText(path);
-                var loaded   = JsonSerializer.Deserialize<Config>(json);
+                var loaded   = JsonSerializer.Deserialize<Settings>(json);
                 if (loaded != null) config = loaded;
                 if (config.RenderingBackend != 1) config.RenderingBackend = 0;
                 texRenderOn = config.TextureRender;   // 静态镜像（见 TextureModeActive）
@@ -619,7 +635,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             File.Move(temp, path, true);
             repositoryBrowser?.Configure(json);
         }
-        catch (Exception e) { statusMessage = "配置保存失败：" + e.Message; }
+        catch (Exception e) { statusMessage = GameWebBrowserText.Get("Text0003") + e.Message; }
     }
 
     private static string NormalizeCommand(string cmd)
@@ -656,11 +672,11 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             {
                 var ok = commandManager.AddHandler(cmd, new CommandInfo((string command, string arguments) => TogglePage(page)));
                 if (ok) registeredCommands.Add(cmd);
-                else statusMessage = $"命令 {cmd} 注册失败（可能已被占用）";
+                else statusMessage = string.Format(GameWebBrowserText.Get("Text0004"), cmd);
             }
             catch (Exception e)
             {
-                statusMessage = $"命令 {cmd} 注册异常: {e.Message}";
+                statusMessage = string.Format(GameWebBrowserText.Get("Text0005"), cmd, e.Message);
             }
         }
     }
@@ -920,10 +936,10 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
     private void CreateHostWindow(BrowserWin win)
     {
         EnsureHostClass();
-        if (hostClassAtom == 0) { Wv2FailWin(win, "宿主窗口类注册失败，无法显示网页"); return; }
+        if (hostClassAtom == 0) { Wv2FailWin(win, GameWebBrowserText.Get("Ui2001")); return; }
 
         var game = FindGameHwnd();
-        if (game == IntPtr.Zero) { Wv2FailWin(win, "未找到游戏窗口"); return; }
+        if (game == IntPtr.Zero) { Wv2FailWin(win, GameWebBrowserText.Get("Ui2002")); return; }
 
         // 先清掉上一次模块加载没能销毁的孤儿宿主窗口（防浮窗 + 防悬垂 WndProc 崩溃）
         DestroyOrphanHosts(game, win.HostHwnd);
@@ -943,7 +959,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
 
         if (!GetGameClientOrigin(out var ox, out var oy))
         {
-            Wv2FailWin(win, "无法定位游戏窗口客户区，无法显示网页");
+            Wv2FailWin(win, GameWebBrowserText.Get("Ui2003"));
             return;
         }
 
@@ -966,7 +982,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         if (hwnd == IntPtr.Zero)
         {
             Wv2Log($"CreateWindowExW 失败 winerr={Marshal.GetLastWin32Error()}");
-            Wv2FailWin(win, "宿主窗口创建失败，无法显示网页");
+            Wv2FailWin(win, GameWebBrowserText.Get("Ui2004"));
             return;
         }
 
@@ -1274,7 +1290,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
     {
         if (RepositoryMode)
         {
-            if (!TryWebUrl(page.Url, out var url)) { statusMessage = "请输入有效的网页地址。"; return; }
+            if (!TryWebUrl(page.Url, out var url)) { statusMessage = GameWebBrowserText.Get("Text0006"); return; }
             if (!TryProxy(page.UseProxy, config.Proxy, out _, out var error)) { statusMessage = error; return; }
             page.Url = url;
             repositoryBrowser?.Configure(JsonSerializer.Serialize(config));
@@ -1295,14 +1311,14 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             {
                 win.Visible = false;
                 Wv2HideWin(win);
-                statusMessage = "已隐藏，再按一次宏命令即可重新显示";
+                statusMessage = GameWebBrowserText.Get("Text0007");
                 return;
             }
 
             var url = NormalizeUrl(page.Url);
             if (url.Length == 0 && (win == null || win.TabCount == 0))
             {
-                statusMessage = "该网页的网址为空，请先在设置里填写";
+                statusMessage = GameWebBrowserText.Get("Text0008");
                 return;
             }
 
@@ -1332,7 +1348,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
 
             FocusGame();
         }
-        catch (Exception e) { statusMessage = $"操作失败: {e.Message}"; }
+        catch (Exception e) { statusMessage = string.Format(GameWebBrowserText.Get("Text0009"), e.Message); }
     }
 
     private static string NormalizeUrl(string? raw)
@@ -1357,15 +1373,15 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         proxy = ""; error = "";
         if (!enabled) return true;
         var text = (input ?? "").Trim();
-        if (text.Length == 0) { error = "请先在模块设置的网络代理中填写地址。"; return false; }
+        if (text.Length == 0) { error = GameWebBrowserText.Get("Text0010"); return false; }
         if (text.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || c == '"'))
-        { error = "代理地址不能包含空白、引号或附加启动参数。"; return false; }
+        { error = GameWebBrowserText.Get("Text0011"); return false; }
         if (!text.Contains("://")) text = "http://" + text;
         if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) ||
             uri.Scheme is not ("http" or "https" or "socks4" or "socks5") ||
             uri.Host.Length == 0 || uri.Port < 1 || uri.Port > 65535 || uri.UserInfo.Length != 0 ||
             uri.AbsolutePath != "/" || uri.Query.Length != 0 || uri.Fragment.Length != 0)
-        { error = "代理格式不正确。示例：127.0.0.1:7890 或 socks5://127.0.0.1:1080；不支持在地址中填写账号密码。"; return false; }
+        { error = GameWebBrowserText.Get("Text0012"); return false; }
         proxy = uri.Scheme + "://" + uri.Authority;
         return true;
     }
@@ -1401,16 +1417,16 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         var page = config.Pages.FirstOrDefault(p => NormalizeCommand(p.Command) == old.Key);
         if (page != null) page.UseProxy = enabled;
         SaveOwnConfig();
-        statusMessage = enabled ? "已切换到代理，正在重新加载标签页。" : "已关闭代理，正在重新加载标签页。";
+        statusMessage = enabled ? GameWebBrowserText.Get("Text0013") : GameWebBrowserText.Get("Text0014");
     }
     private static float FavoritePanelWidth(BrowserWin win) => win.FavoritesOpen ? MathF.Min(OmniScale(260), MathF.Max(120, win.W * 0.42f)) : 0;
     private void AddFavorite(BrowserTab? tab)
     {
-        if (tab == null || !TryWebUrl(tab.Url, out var url)) { statusMessage = "当前页面没有可收藏的网址。"; return; }
-        if (config.Favorites.Any(f => BookmarkKey(f.Url) == url)) { statusMessage = "该网页已经在收藏夹中。"; return; }
+        if (tab == null || !TryWebUrl(tab.Url, out var url)) { statusMessage = GameWebBrowserText.Get("Text0015"); return; }
+        if (config.Favorites.Any(f => BookmarkKey(f.Url) == url)) { statusMessage = GameWebBrowserText.Get("Text0016"); return; }
         config.Favorites.Add(new FavoriteEntry { Name = string.IsNullOrWhiteSpace(tab.Title) ? new Uri(url).Host : tab.Title, Url = url });
         SaveOwnConfig();
-        statusMessage = "已收藏当前网页。";
+        statusMessage = GameWebBrowserText.Get("Text0017");
     }
 
     // 隐藏整个窗口（最小化 / 宏命令收起）：子窗口连 WebView2 一起消失。
@@ -1435,7 +1451,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
     // 新开一个标签页；同一个窗口的标签共用 Environment（Cookie / 登录态共享）
     private void OpenTab(BrowserWin win, string url, bool activate, IntPtr popupArgs = default, IntPtr popupDeferral = default)
     {
-        if (CefMode && win.TabCount >= 16) { statusMessage = "每个 CEF 窗口最多打开 16 个标签。"; return; }
+        if (CefMode && win.TabCount >= 16) { statusMessage = GameWebBrowserText.Get("Text0018"); return; }
         var tab = new BrowserTab
         {
             Win     = win,
@@ -1458,7 +1474,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
 
         if (!EnsureWv2Thread())
         {
-            Wv2FailWin(win, "内置内核线程启动失败，WebView2 不可用");
+            Wv2FailWin(win, GameWebBrowserText.Get("Ui2005"));
             return;
         }
 
@@ -1474,7 +1490,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 {
                     Volatile.Write(ref wv2ProbeState, (int)Wv2ProbeState.Missing);
                     wv2ProbeNextRetryMs = Environment.TickCount64 + 3_000;
-                    Wv2FailWin(win, "未检测到 WebView2 运行时，请先安装 Microsoft Edge WebView2 Runtime");
+                    Wv2FailWin(win, GameWebBrowserText.Get("Ui2006"));
                     return;
                 }
                 wv2RuntimeVersion = version;
@@ -1503,7 +1519,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             FocusGameNoRestore();
             windows.Remove(key);
         }
-        catch (Exception e) { statusMessage = $"关闭失败: {e.Message}"; }
+        catch (Exception e) { statusMessage = string.Format(GameWebBrowserText.Get("Text0019"), e.Message); }
     }
 
     private static string SanitizeKey(string key)
@@ -1538,29 +1554,29 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         var changed = false;
         var backend = config.RenderingBackend;
         ImGui.SetNextItemWidth(OmniScale(260));
-        if (ImGui.Combo("渲染版本", ref backend, "CEF 游戏内浏览器\0独立浏览器（Edge / Chrome）\0"))
+        if (ImGui.Combo(GameWebBrowserText.Get("Text0020"), ref backend, GameWebBrowserText.Get("Text0021")))
         {
-            OnDisable();
+            OnStop();
             config.RenderingBackend = backend;
             config.TextureRender = true;
             SaveOwnConfig();
-            OnEnable();
+            StartBackend();
             changed = true;
         }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("切换会关闭当前浏览器窗口。网页、宏命令、代理和收藏共用；各内核的登录资料分别保存。");
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(GameWebBrowserText.Get("Text0022"));
         ImGui.Spacing();
 
         if (CefMode) { DrawCefSettings(); ImGui.Spacing(); }
         if (CefMode)
         {
             var outside = config.AllowOutsideGameWindow;
-            if (ImGui.Checkbox("允许移出游戏屏幕", ref outside))
+            if (ImGui.Checkbox(GameWebBrowserText.Get("Text0023"), ref outside))
             {
                 config.AllowOutsideGameWindow = outside;
                 if (!outside) foreach (var window in windows.Values) { ClampInsideGame(window, ImGui.GetIO().DisplaySize); ApplyPageRect(window); }
                 SaveOwnConfig(); changed = true;
             }
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("允许拖过游戏画面边缘；超出的部分由游戏画面裁剪。关闭此项可收回窗口。");
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip(GameWebBrowserText.Get("Text0024"));
         }
         int removeIndex = -1;
 
@@ -1568,11 +1584,11 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         var gap = ImGui.GetStyle().ItemSpacing.X;
         var pageNameWidth = OmniScale(100);
         var commandWidth = OmniScale(90);
-        var buttonWidth = MathF.Max(OmniScale(56), ImGui.CalcTextSize("删除").X + ImGui.GetStyle().FramePadding.X * 2);
+        var buttonWidth = MathF.Max(OmniScale(56), ImGui.CalcTextSize(GameWebBrowserText.Get("Text0025")).X + ImGui.GetStyle().FramePadding.X * 2);
         // OMNI 自绘复选框有独立尺寸，不能用文本输入框高度代替其宽度。
         var checkboxWidth = MathF.Max(ImGui.GetFrameHeight(), OmniTheme.CheckboxSize());
-        var proxyWidth = checkboxWidth + ImGui.GetStyle().ItemInnerSpacing.X + ImGui.CalcTextSize("代理").X;
-        var appWidth = RepositoryMode ? checkboxWidth + ImGui.GetStyle().ItemInnerSpacing.X + ImGui.CalcTextSize("无边框").X : 0;
+        var proxyWidth = checkboxWidth + ImGui.GetStyle().ItemInnerSpacing.X + ImGui.CalcTextSize(GameWebBrowserText.Get("Text0026")).X;
+        var appWidth = RepositoryMode ? checkboxWidth + ImGui.GetStyle().ItemInnerSpacing.X + ImGui.CalcTextSize(GameWebBrowserText.Get("Text0027")).X : 0;
         var commandX = rowX + pageNameWidth + gap;
         var urlX = commandX + commandWidth + gap;
         var clipRight = ImGui.GetWindowDrawList().GetClipRectMax().X - (ImGui.GetCursorScreenPos().X - rowX);
@@ -1586,13 +1602,13 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         if (config.Pages.Count > 0)
         {
             ImGui.PushTextWrapPos(-1);
-            ImGui.TextDisabled("名字");
-            ImGui.SameLine(commandX); ImGui.TextDisabled("宏命令");
-            ImGui.SameLine(urlX); ImGui.TextDisabled("网址");
-            ImGui.SameLine(proxyX + (proxyWidth - ImGui.CalcTextSize("代理").X) / 2); ImGui.TextDisabled("代理");
-            if (RepositoryMode) { ImGui.SameLine(appX + (appWidth - ImGui.CalcTextSize("无边框").X) / 2); ImGui.TextDisabled("无边框"); }
-            ImGui.SameLine(toggleX + (buttonWidth - ImGui.CalcTextSize("开关").X) / 2); ImGui.TextDisabled("开关");
-            ImGui.SameLine(deleteX + (buttonWidth - ImGui.CalcTextSize("删除").X) / 2); ImGui.TextDisabled("删除");
+            ImGui.TextDisabled(GameWebBrowserText.Get("Text0028"));
+            ImGui.SameLine(commandX); ImGui.TextDisabled(GameWebBrowserText.Get("Text0029"));
+            ImGui.SameLine(urlX); ImGui.TextDisabled(GameWebBrowserText.Get("Text0030"));
+            ImGui.SameLine(proxyX + (proxyWidth - ImGui.CalcTextSize(GameWebBrowserText.Get("Text0026")).X) / 2); ImGui.TextDisabled(GameWebBrowserText.Get("Text0026"));
+            if (RepositoryMode) { ImGui.SameLine(appX + (appWidth - ImGui.CalcTextSize(GameWebBrowserText.Get("Text0027")).X) / 2); ImGui.TextDisabled(GameWebBrowserText.Get("Text0027")); }
+            ImGui.SameLine(toggleX + (buttonWidth - ImGui.CalcTextSize(GameWebBrowserText.Get("Text0031")).X) / 2); ImGui.TextDisabled(GameWebBrowserText.Get("Text0031"));
+            ImGui.SameLine(deleteX + (buttonWidth - ImGui.CalcTextSize(GameWebBrowserText.Get("Text0025")).X) / 2); ImGui.TextDisabled(GameWebBrowserText.Get("Text0025"));
             ImGui.PopTextWrapPos();
         }
 
@@ -1608,7 +1624,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             ImGui.SetNextItemWidth(pageNameWidth);
             var nameEdited = ImGui.InputText("##Name", ref name, 64);
             if (name.Length == 0)
-                DrawPlaceholder("如: 百度");
+                DrawPlaceholder(GameWebBrowserText.Get("Ui2007"));
             if (nameEdited) { page.Name = name; changed = true; }
 
             ImGui.SameLine(commandX);
@@ -1616,7 +1632,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             ImGui.SetNextItemWidth(commandWidth);
             var cmdEdited = ImGui.InputText("##Cmd", ref cmd, 64);
             if (cmd.Length == 0)
-                DrawPlaceholder("如: /baidu");
+                DrawPlaceholder(GameWebBrowserText.Get("Ui2008"));
             if (cmdEdited)
             {
                 page.Command = cmd;
@@ -1629,12 +1645,12 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             ImGui.SetNextItemWidth(urlWidth);
             var urlEdited = ImGui.InputText("##Url", ref url, 512);
             if (url.Length == 0)
-                DrawPlaceholder("如: https://www.baidu.com");
+                DrawPlaceholder(GameWebBrowserText.Get("Ui2009"));
             if (urlEdited) { page.Url = url; changed = true; }
 
             ImGui.SameLine(proxyX);
             var useProxy = page.UseProxy;
-            if (ImGui.Checkbox("代理", ref useProxy))
+            if (ImGui.Checkbox(GameWebBrowserText.Get("Text0026"), ref useProxy))
             {
                 if (windows.TryGetValue(key, out var proxyWin) && proxyWin.TabCount > 0)
                     ChangeWindowProxy(proxyWin, useProxy);
@@ -1646,18 +1662,18 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             {
                 ImGui.SameLine(appX);
                 var appMode = page.UseAppMode;
-                if (ImGui.Checkbox("无边框", ref appMode)) { page.UseAppMode = appMode; changed = true; }
+                if (ImGui.Checkbox(GameWebBrowserText.Get("Text0027"), ref appMode)) { page.UseAppMode = appMode; changed = true; }
             }
 
             ImGui.SameLine(toggleX);
-            if (ImGui.Button(open ? "关闭" : "打开", new System.Numerics.Vector2(buttonWidth, 0f)))
+            if (ImGui.Button(open ? GameWebBrowserText.Get("Text0032") : GameWebBrowserText.Get("Text0033"), new System.Numerics.Vector2(buttonWidth, 0f)))
             {
                 if (open) ClosePage(page);
                 else      TogglePage(page);
             }
 
             ImGui.SameLine(deleteX);
-            if (ImGui.Button("删除", new System.Numerics.Vector2(buttonWidth, 0f))) removeIndex = i;
+            if (ImGui.Button(GameWebBrowserText.Get("Text0025"), new System.Numerics.Vector2(buttonWidth, 0f))) removeIndex = i;
 
             ImGui.PopID();
         }
@@ -1688,7 +1704,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         }
 
         ImGui.Spacing();
-        if (ImGui.Button("＋ 添加网页"))
+        if (ImGui.Button(GameWebBrowserText.Get("Text0034")))
         {
             config.Pages.Add(new PageEntry
             {
@@ -1701,33 +1717,33 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         }
 
         ImGui.Spacing();
-        if (ImGui.CollapsingHeader("设置"))
+        if (ImGui.CollapsingHeader(GameWebBrowserText.Get("Text0035")))
         {
             if (RepositoryMode)
             {
                 var browserPath = config.BrowserPath;
-                ImGui.TextDisabled("浏览器路径");
+                ImGui.TextDisabled(GameWebBrowserText.Get("Text0036"));
                 ImGui.SetNextItemWidth(-1);
-                if (ImGui.InputTextWithHint("##NativeBrowserPath", "留空自动查找 Edge / Chrome，或填写浏览器 exe 路径", ref browserPath, 1024))
+                if (ImGui.InputTextWithHint("##NativeBrowserPath", GameWebBrowserText.Get("Text0037"), ref browserPath, 1024))
                 { config.BrowserPath = browserPath; changed = true; }
                 var offsetX = config.OffsetX; var offsetY = config.OffsetY;
                 ImGui.SetNextItemWidth(100);
-                if (ImGui.InputInt("水平偏移", ref offsetX)) { config.OffsetX = offsetX; changed = true; }
+                if (ImGui.InputInt(GameWebBrowserText.Get("Text0038"), ref offsetX)) { config.OffsetX = offsetX; changed = true; }
                 ImGui.SameLine(); ImGui.SetNextItemWidth(100);
-                if (ImGui.InputInt("垂直偏移", ref offsetY)) { config.OffsetY = offsetY; changed = true; }
+                if (ImGui.InputInt(GameWebBrowserText.Get("Text0039"), ref offsetY)) { config.OffsetY = offsetY; changed = true; }
             }
             var lastErr = RepositoryMode ? "" : wv2LastError;
             if (lastErr.Length > 0)
             {
-                ImGui.TextColored(new System.Numerics.Vector4(1f, 0.55f, 0.55f, 1f), "上次错误：" + lastErr);
+                ImGui.TextColored(new System.Numerics.Vector4(1f, 0.55f, 0.55f, 1f), GameWebBrowserText.Get("Text0040") + lastErr);
             }
 
             ImGui.Spacing();
-            ImGui.TextDisabled("窗口大小与位置");
+            ImGui.TextDisabled(GameWebBrowserText.Get("Text0041"));
             ImGui.Spacing();
 
             ImGui.AlignTextToFramePadding();
-            ImGui.TextDisabled("宽度");
+            ImGui.TextDisabled(GameWebBrowserText.Get("Text0042"));
             ImGui.SameLine();
             ImGui.SetNextItemWidth(60f);
             var winW = config.WinWidth > 0 ? config.WinWidth : DefaultWinWidth;
@@ -1739,7 +1755,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
 
             ImGui.SameLine();
             ImGui.AlignTextToFramePadding();
-            ImGui.TextDisabled("高度");
+            ImGui.TextDisabled(GameWebBrowserText.Get("Text0043"));
             ImGui.SameLine();
             ImGui.SetNextItemWidth(60f);
             var winH = config.WinHeight > 0 ? config.WinHeight : DefaultWinHeight;
@@ -1750,7 +1766,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             }
 
             ImGui.SameLine();
-            if (ImGui.Button("恢复默认窗口"))
+            if (ImGui.Button(GameWebBrowserText.Get("Text0044")))
             {
                 config.WinWidth  = DefaultWinWidth;
                 config.WinHeight = DefaultWinHeight;
@@ -1760,7 +1776,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             }
 
             ImGui.Spacing();
-            ImGui.TextDisabled("网络代理");
+            ImGui.TextDisabled(GameWebBrowserText.Get("Text0045"));
             ImGui.SetNextItemWidth(-1f);
             var proxyInput = config.Proxy ?? "";
             if (ImGui.InputText("###GlobalProxy", ref proxyInput, 256))
@@ -1768,11 +1784,11 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 config.Proxy = proxyInput;
                 changed = true;
             }
-            ImGui.TextDisabled("示例：127.0.0.1:7890 / socks5://127.0.0.1:1080");
+            ImGui.TextDisabled(GameWebBrowserText.Get("Text0046"));
 
         }
 
-        if (ImGui.CollapsingHeader("收藏夹"))
+        if (ImGui.CollapsingHeader(GameWebBrowserText.Get("Text0047")))
         {
             int removeFavorite = -1;
             for (int i = 0; i < config.Favorites.Count; i++)
@@ -1782,31 +1798,31 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 ImGui.PushID("favorite" + i);
                 var rowWidth = ImGui.GetContentRegionAvail().X;
                 var spacing = ImGui.GetStyle().ItemSpacing.X;
-                var deleteWidth = ImGui.CalcTextSize("删除").X + ImGui.GetStyle().FramePadding.X * 2;
+                var deleteWidth = ImGui.CalcTextSize(GameWebBrowserText.Get("Text0025")).X + ImGui.GetStyle().FramePadding.X * 2;
                 var nameWidth = MathF.Min(OmniScale(180), MathF.Max(60, rowWidth * 0.22f));
                 string name = favorite.Name;
                 ImGui.SetNextItemWidth(nameWidth);
-                if (ImGui.InputTextWithHint("##favoriteName", "名称，如：百度", ref name, 128)) favorite.Name = name;
+                if (ImGui.InputTextWithHint("##favoriteName", GameWebBrowserText.Get("Text0048"), ref name, 128)) favorite.Name = name;
                 changed |= ImGui.IsItemDeactivatedAfterEdit();
                 ImGui.SameLine();
                 string url = favorite.Url;
                 ImGui.SetNextItemWidth(MathF.Max(80, rowWidth - nameWidth - deleteWidth * 2 - spacing * 3));
-                if (ImGui.InputTextWithHint("##favoriteUrl", "网址，如：https://www.baidu.com", ref url, 2048)) favorite.Url = url;
+                if (ImGui.InputTextWithHint("##favoriteUrl", GameWebBrowserText.Get("Text0049"), ref url, 2048)) favorite.Url = url;
                 if (ImGui.IsItemDeactivatedAfterEdit())
                 {
                     if (TryWebUrl(favorite.Url, out var normalized)) favorite.Url = normalized;
-                    else statusMessage = "收藏网址无效，请填写 HTTP/HTTPS 网址。";
+                    else statusMessage = GameWebBrowserText.Get("Text0050");
                     changed = true;
                 }
                 ImGui.SameLine();
-                if (ImGui.Button("打开")) OpenSavedFavorite(favorite);
+                if (ImGui.Button(GameWebBrowserText.Get("Text0033"))) OpenSavedFavorite(favorite);
                 ImGui.SameLine();
-                if (ImGui.Button("删除")) removeFavorite = i;
+                if (ImGui.Button(GameWebBrowserText.Get("Text0025"))) removeFavorite = i;
                 ImGui.Separator();
                 ImGui.PopID();
             }
             if (removeFavorite >= 0) { config.Favorites.RemoveAt(removeFavorite); changed = true; }
-            if (ImGui.Button("＋ 添加收藏"))
+            if (ImGui.Button(GameWebBrowserText.Get("Text0051")))
             {
                 config.Favorites.Add(new FavoriteEntry { Name = "", Url = "" });
                 changed = true;
@@ -1823,7 +1839,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
 
     private void OpenSavedFavorite(FavoriteEntry favorite)
     {
-        if (!TryWebUrl(favorite.Url, out var url)) { statusMessage = "请输入有效的收藏网址。"; return; }
+        if (!TryWebUrl(favorite.Url, out var url)) { statusMessage = GameWebBrowserText.Get("Text0052"); return; }
         var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(BookmarkKey(url)))).Substring(0, 16);
         TogglePage(new PageEntry { Name = favorite.Name, Url = url, Command = "/omni-favorite-" + id });
     }
@@ -2203,10 +2219,10 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
     // 真实槽号（只有 IUnknown 自己的方法才该用这个）
     private static T FnRaw<T>(IntPtr obj, int slot) where T : Delegate
     {
-        if (!ComObjectOk(obj)) throw new InvalidOperationException("COM 对象指针无效");
+        if (!ComObjectOk(obj)) throw new InvalidOperationException(GameWebBrowserText.Get("Text0053"));
         var vtbl = Marshal.ReadIntPtr(obj);
         var fn   = Marshal.ReadIntPtr(vtbl, slot * IntPtr.Size);
-        if (!IsMemOk(fn, true)) throw new InvalidOperationException($"COM 槽位 {slot} 不是可执行地址");
+        if (!IsMemOk(fn, true)) throw new InvalidOperationException(string.Format(GameWebBrowserText.Get("Text0054"), slot));
         return Marshal.GetDelegateForFunctionPointer<T>(fn);
     }
 
@@ -2337,7 +2353,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 DispatchMessage(ref msg);
             }
         }
-        catch (Exception e) { wv2LastError = "消息泵异常：" + e.Message; Wv2Log("消息泵异常: " + e); }
+        catch (Exception e) { wv2LastError = GameWebBrowserText.Get("Text0055") + e.Message; Wv2Log("消息泵异常: " + e); }
         finally
         {
             wv2ThreadId = 0;
@@ -2410,12 +2426,12 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 wv2LoaderModule = LoadLibraryW(dll);
                 if (wv2LoaderModule == IntPtr.Zero)
                 {
-                    error = $"内置 WebView2Loader 加载失败（错误码 {Marshal.GetLastWin32Error()}）";
+                    error = string.Format(GameWebBrowserText.Get("Text0056"), Marshal.GetLastWin32Error());
                     return false;
                 }
 
                 var fp = GetProcAddress(wv2LoaderModule, "CreateCoreWebView2EnvironmentWithOptions");
-                if (fp == IntPtr.Zero) { error = "内置 WebView2Loader 导出函数缺失"; return false; }
+                if (fp == IntPtr.Zero) { error = GameWebBrowserText.Get("Text0057"); return false; }
                 wv2CreateEnvFn = Marshal.GetDelegateForFunctionPointer<Wv2CreateEnvFn>(fp);
 
                 var vp = GetProcAddress(wv2LoaderModule, "GetAvailableCoreWebView2BrowserVersionString");
@@ -2425,7 +2441,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             }
             catch (Exception e)
             {
-                error = "内置 WebView2Loader 释放失败: " + e.Message;
+                error = GameWebBrowserText.Get("Text0058") + e.Message;
                 return false;
             }
         }
@@ -2464,14 +2480,14 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
 
         wv2ProbeNextRetryMs = Environment.TickCount64 + 3_000;
 
-        _ = Task.Run(() =>
+        _ = GameWebBrowserText.Track(Task.Run(() =>
         {
             var v = "";
             try { v = ProbeWv2Runtime() ?? ""; } catch { v = ""; }
             if (v.Length > 0) wv2RuntimeVersion = v;
             Volatile.Write(ref wv2ProbeState,
                 v.Length > 0 ? (int)Wv2ProbeState.Ready : (int)Wv2ProbeState.Missing);
-        });
+        }));
     }
 
     // 没检测到就过一会儿再自动试一次（装运行时不用重启游戏）
@@ -2544,7 +2560,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         }
         win.EnvReady = false;
 
-        if (FindGameHwnd() == IntPtr.Zero) { win.EnvCreating = false; Wv2FailWin(win, "未找到游戏窗口"); return; }
+        if (FindGameHwnd() == IntPtr.Zero) { win.EnvCreating = false; Wv2FailWin(win, GameWebBrowserText.Get("Ui2010")); return; }
         if (win.UserData.Length == 0) win.UserData = Wv2ProfileDir(win.Key);
         try { Directory.CreateDirectory(win.UserData); } catch {   }
 
@@ -2564,7 +2580,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         // 探测不到内核版本时不挂 options：那会让 TargetCompatibleBrowserVersion 无处可取，
         // 而回空串必被拒（0x80070057）。宁可这次不带代理，也不要整个环境创建失败。
         if (proxy.Length > 0 && wv2RuntimeVersion.Length == 0)
-        { win.EnvCreating = false; Wv2FailWin(win, "无法取得内核版本，代理环境未创建；不会自动直连。"); return; }
+        { win.EnvCreating = false; Wv2FailWin(win, GameWebBrowserText.Get("Ui2011")); return; }
         if (argList.Length > 0 && wv2RuntimeVersion.Length > 0)
         {
             EnsureVtables();
@@ -2581,7 +2597,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         if (hr >= 0) return;
 
         win.EnvCreating = false;
-        Wv2FailWin(win, $"内置内核环境创建失败（0x{hr:X8}）" + (win.UseProxy ? "；代理仍开启，请检查代理地址。" : ""));
+        Wv2FailWin(win, string.Format(GameWebBrowserText.Get("Ui2012"), hr) + (win.UseProxy ? GameWebBrowserText.Get("Ui2013") : ""));
     }
 
     private void Wv2CreateController(BrowserWin win, BrowserTab tab)
@@ -2911,7 +2927,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 if (hr < 0 || a == IntPtr.Zero)
                 {
                     win.EnvCreating = false;
-                    Wv2FailWin(win, $"内置内核环境创建失败（0x{hr:X8}）" + (win.UseProxy ? "；代理仍开启，请检查代理地址。" : ""));
+                    Wv2FailWin(win, string.Format(GameWebBrowserText.Get("Ui2014"), hr) + (win.UseProxy ? GameWebBrowserText.Get("Ui2015") : ""));
                     return;
                 }
 
@@ -2926,7 +2942,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 if (!System.Text.RegularExpressions.Regex.IsMatch(v, @"^\d+\.\d+"))
                 {
                     win.EnvCreating = false;
-                    Wv2FailWin(win, "内置内核接口自检未通过，已中止（不会影响游戏）");
+                    Wv2FailWin(win, GameWebBrowserText.Get("Ui2016"));
                     return;
                 }
                 wv2RuntimeVersion = v;
@@ -3023,8 +3039,8 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 if (win.ActiveTabSafe() == tab)
                 {
                     statusMessage = wv2RuntimeVersion.Length > 0
-                        ? $"已用内置内核 {wv2RuntimeVersion} 打开；标题栏可拖动 / 缩放"
-                        : "已用内置内核打开；标题栏可拖动 / 缩放";
+                        ? string.Format(GameWebBrowserText.Get("Text0059"), wv2RuntimeVersion)
+                        : GameWebBrowserText.Get("Text0060");
                 }
 
                 // 建好后把前台交还游戏：这样宏命令随时可用，用户点一下页面才把输入焦点交给网页
@@ -3033,7 +3049,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             }
 
             case Wv2CbKind.NavStarting:
-                if (tab != null && win.ActiveTabSafe() == tab) statusMessage = "内置内核加载中…";
+                if (tab != null && win.ActiveTabSafe() == tab) statusMessage = GameWebBrowserText.Get("Text0061");
                 return;
 
             case Wv2CbKind.NavCompleted:
@@ -3049,7 +3065,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 if (ti.Length  > 0) tab.Title = ti;
                 if (src.Length > 0) tab.Url   = src;
                 if (win.ActiveTabSafe() == tab)
-                    statusMessage = ok ? "" : "页面加载失败，可检查网址或代理设置";
+                    statusMessage = ok ? "" : GameWebBrowserText.Get("Text0062");
                 return;
             }
 
@@ -3070,7 +3086,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 if (deferral == IntPtr.Zero)
                 {
                     Fn<DlgSetInt>(args, 3)(args, 1);
-                    statusMessage = "网页新窗口请求无法延迟，请重试。";
+                    statusMessage = GameWebBrowserText.Get("Text0063");
                     return;
                 }
                 AddRefRaw(args);
@@ -3152,7 +3168,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                 {
 
                     try { DrawOneWindow(win); }
-                    catch (Exception e) { Wv2Log("绘制外壳异常: " + e); }
+                    catch (Exception e) { Wv2Log(GameWebBrowserText.Get("Ui2017") + e); }
                 }
 
                 // ★ 键盘：归属规则跟浏览器一致 —— 点一下网页画面，键盘归网页；点一下浏览器之外，
@@ -3176,7 +3192,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             }
             else { browserKeyboardCapture = false; if (CefMode) CefKeyboard(null); else WgcForwardKeys(wgcKeyboardCore, false); }
         }
-        catch (Exception e) { browserKeyboardCapture = false; Wv2Log("DrawChrome 异常: " + e); }
+        catch (Exception e) { browserKeyboardCapture = false; Wv2Log(GameWebBrowserText.Get("Ui2018") + e); }
         DrawBrowserDialog();
 
         try { HandleDragRelease(); } catch {   }
@@ -3445,7 +3461,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         if (hovered) inputTopKey = win.Key;
         uiInputOn = hovered || win.Key == dragKey || win.Key == wgcMouseOwnerKey;
         try   { if (open) DrawChromeContent(win, tabs, mn, mx); }
-        catch (Exception e) { Wv2Log("外壳内容绘制异常: " + e); }
+        catch (Exception e) { Wv2Log(GameWebBrowserText.Get("Ui2019") + e); }
         uiInputOn = true;
         ImGui.End();
         ImGui.PopStyleVar(4);
@@ -3647,9 +3663,9 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         consumed |= clickBack || clickFwd || clickRel;
 
         var tabsX0 = relMx.X + 6f;
-        var proxyWidth = MathF.Max(48f, ImGui.CalcTextSize("代理").X + btnH + 10f);
-        var favoritesWidth = MathF.Max(44f, ImGui.CalcTextSize("收藏").X + 12f);
-        var addressWidth = MathF.Max(30f, ImGui.CalcTextSize("网址").X + 10f);
+        var proxyWidth = MathF.Max(48f, ImGui.CalcTextSize(GameWebBrowserText.Get("Text0026")).X + btnH + 10f);
+        var favoritesWidth = MathF.Max(44f, ImGui.CalcTextSize(GameWebBrowserText.Get("Text0064")).X + 12f);
+        var addressWidth = MathF.Max(30f, ImGui.CalcTextSize(GameWebBrowserText.Get("Text0030")).X + 10f);
         var addressMx = new Vector2(minX0 - 4f, btnY1);
         var addressMn = new Vector2(addressMx.X - addressWidth, btnY0);
         var favoritesMx = new Vector2(addressMn.X - 4f, btnY1);
@@ -3666,7 +3682,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         var proxyClick = proxyHover && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
         consumed |= proxyHover;
         var checkSide = MathF.Min(btnH - 2, 15f);
-        var proxyText = ImGui.CalcTextSize("代理");
+        var proxyText = ImGui.CalcTextSize(GameWebBrowserText.Get("Text0026"));
         var check = new Vector2((proxyMn.X + proxyMx.X - checkSide - 4 - proxyText.X) / 2, (btnY0 + btnY1 - checkSide) / 2);
         dl.AddRect(check, check + new Vector2(checkSide), win.UseProxy ? cAccent : cDim, 2, ImDrawFlags.None, 1.2f);
         if (win.UseProxy)
@@ -3674,11 +3690,11 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             dl.AddLine(check + new Vector2(3, checkSide * 0.52f), check + new Vector2(checkSide * 0.44f, checkSide - 3), cText, 1.8f);
             dl.AddLine(check + new Vector2(checkSide * 0.44f, checkSide - 3), check + new Vector2(checkSide - 2, 3), cText, 1.8f);
         }
-        dl.AddText(new Vector2(check.X + checkSide + 4, (btnY0 + btnY1 - proxyText.Y) / 2), proxyHover ? cText : cDim, "代理");
+        dl.AddText(new Vector2(check.X + checkSide + 4, (btnY0 + btnY1 - proxyText.Y) / 2), proxyHover ? cText : cDim, GameWebBrowserText.Get("Text0026"));
         if (proxyHover && ImGui.IsMouseClicked(ImGuiMouseButton.Right)) ShowBrowserDialog("proxy", win);
         consumed |= IsMouseInRect(addressMn, addressMx);
-        if (ChromeTextButton(dl, addressMn, addressMx, "网址", cText, cHover, true)) ShowBrowserDialog("address", win);
-        var favoriteClick = ChromeTextButton(dl, favoritesMn, favoritesMx, "收藏", cText, win.FavoritesOpen ? cActive : cHover, true);
+        if (ChromeTextButton(dl, addressMn, addressMx, GameWebBrowserText.Get("Text0030"), cText, cHover, true)) ShowBrowserDialog("address", win);
+        var favoriteClick = ChromeTextButton(dl, favoritesMn, favoritesMx, GameWebBrowserText.Get("Text0064"), cText, win.FavoritesOpen ? cActive : cHover, true);
         consumed |= IsMouseInRect(favoritesMn, favoritesMx);
         if (favoriteClick) { win.FavoritesOpen = !win.FavoritesOpen; ApplyPageRect(win); }
 
@@ -3691,7 +3707,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         plusMx.X = plusMn.X + btnW;
         clickPlus = ChromeBtn(dl, "##gbnewtab", plusMn, plusMx, btnRad, cHover, cActive, cText, cText, GlyphKind.Plus);
         consumed |= IsMouseInRect(plusMn, plusMx);
-        if (IsMouseInRect(plusMn, plusMx)) ImGui.SetTooltip("新建标签页");
+        if (IsMouseInRect(plusMn, plusMx)) ImGui.SetTooltip(GameWebBrowserText.Get("Text0065"));
 
         var active = win.ActiveIndex;
         var switchTo = -1;
@@ -3739,8 +3755,8 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
 
             // 标题
             var title = t.Title.Length > 0 ? t.Title : (t.Url.Length > 0 ? t.Url : win.PageName);
-            if (title.Length == 0) title = "新标签页";
-            if (!t.Ready && t.Url.Length > 0) title = "载入中… " + title;
+            if (title.Length == 0) title = GameWebBrowserText.Get("Ui2020");
+            if (!t.Ready && t.Url.Length > 0) title = GameWebBrowserText.Get("Ui2021") + title;
 
             dl.PushClipRect(new Vector2(tmn.X + 6f, tmn.Y), new Vector2(bodyX - 3f, tmx.Y), true);
             var tsz = ImGui.CalcTextSize(title);
@@ -3786,8 +3802,8 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         }
         if (clickPlus)
         {
-            if (win.TabCount >= 16) { statusMessage = "每个窗口最多打开 16 个标签。"; return; }
-            win.AddTab(new BrowserTab { Win = win, Title = "新标签页" }, true);
+            if (win.TabCount >= 16) { statusMessage = GameWebBrowserText.Get("Text0066"); return; }
+            win.AddTab(new BrowserTab { Win = win, Title = GameWebBrowserText.Get("Ui2022") }, true);
             CloseBrowserInput();
             return;
         }
@@ -3805,7 +3821,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             {
                 win.Visible = false;
                 Wv2HideWin(win);
-                statusMessage = "标签页已全部关闭，再按一次宏命令即可重新打开";
+                statusMessage = GameWebBrowserText.Get("Text0067");
             }
             return;
         }
@@ -3816,7 +3832,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             ResetDragIfMine(win);
             win.Visible = false;
             Wv2HideWin(win);
-            statusMessage = "已隐藏，再按一次宏命令即可重新显示";
+            statusMessage = GameWebBrowserText.Get("Text0007");
             return;
         }
 
@@ -4025,17 +4041,17 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         {
             // 输入行遵循普通 ImGui 窗口层级。
             if (dialogRequested) { ImGui.SetKeyboardFocusHere(); dialogRequested = false; }
-            if (!inlineAddress) ImGui.TextUnformatted(dialogKind == "proxy" ? "网络代理" : dialogKind == "favorite" ? "添加收藏" : "输入网址");
+            if (!inlineAddress) ImGui.TextUnformatted(dialogKind == "proxy" ? GameWebBrowserText.Get("Text0045") : dialogKind == "favorite" ? GameWebBrowserText.Get("Text0068") : GameWebBrowserText.Get("Text0069"));
             if (dialogKind == "proxy")
-                ImGui.TextWrapped("示例：127.0.0.1:7890 或 socks5://127.0.0.1:1080。应用后重载当前窗口标签；不同连接方式分别保存登录状态。");
+                ImGui.TextWrapped(GameWebBrowserText.Get("Text0070"));
             if (dialogKind == "favorite")
-            { ImGui.SetNextItemWidth(-1); ImGui.InputTextWithHint("##favoriteName", "收藏名称（可留空）", ref dialogName, 128); }
-            var actionLabel = dialogKind == "favorite" ? "添加收藏" : dialogKind == "proxy" ? "应用并使用代理" : "前往";
-            var buttonsWidth = ImGui.CalcTextSize(actionLabel).X + ImGui.CalcTextSize("取消").X + ImGui.GetStyle().FramePadding.X * 4 + ImGui.GetStyle().ItemSpacing.X * 2;
+            { ImGui.SetNextItemWidth(-1); ImGui.InputTextWithHint("##favoriteName", GameWebBrowserText.Get("Text0071"), ref dialogName, 128); }
+            var actionLabel = dialogKind == "favorite" ? GameWebBrowserText.Get("Text0068") : dialogKind == "proxy" ? GameWebBrowserText.Get("Text0072") : GameWebBrowserText.Get("Text0073");
+            var buttonsWidth = ImGui.CalcTextSize(actionLabel).X + ImGui.CalcTextSize(GameWebBrowserText.Get("Text0074")).X + ImGui.GetStyle().FramePadding.X * 4 + ImGui.GetStyle().ItemSpacing.X * 2;
             ImGui.SetNextItemWidth(inlineAddress ? MathF.Max(120, ImGui.GetContentRegionAvail().X - buttonsWidth) : -1);
-            bool enter = ImGui.InputTextWithHint("##browserAddress", dialogKind == "proxy" ? "代理地址" : "https://example.com", ref dialogAddress, 2048, ImGuiInputTextFlags.EnterReturnsTrue);
+            bool enter = ImGui.InputTextWithHint("##browserAddress", dialogKind == "proxy" ? GameWebBrowserText.Get("Text0075") : "https://example.com", ref dialogAddress, 2048, ImGuiInputTextFlags.EnterReturnsTrue);
             if (inlineAddress) ImGui.SameLine();
-            if (ImGui.Button(dialogKind == "favorite" ? "添加收藏" : dialogKind == "proxy" ? "应用并使用代理" : "前往") || enter)
+            if (ImGui.Button(dialogKind == "favorite" ? GameWebBrowserText.Get("Text0068") : dialogKind == "proxy" ? GameWebBrowserText.Get("Text0072") : GameWebBrowserText.Get("Text0073")) || enter)
             {
                 bool done = false;
                 if (dialogKind == "favorite")
@@ -4046,7 +4062,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                             config.Favorites.Add(new FavoriteEntry { Name = string.IsNullOrWhiteSpace(dialogName) ? new Uri(url).Host : dialogName.Trim(), Url = url });
                         SaveOwnConfig(); done = true;
                     }
-                    else dialogError = "请输入有效的 HTTP/HTTPS 网页地址。";
+                    else dialogError = GameWebBrowserText.Get("Text0076");
                 }
                 else if (windows.TryGetValue(dialogWindowKey, out var window) && !window.Closed)
                 {
@@ -4065,13 +4081,13 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
                         else OpenTab(window, url, true);
                         done = true;
                     }
-                    else dialogError = "请输入有效的 HTTP/HTTPS 网页地址。";
+                    else dialogError = GameWebBrowserText.Get("Text0076");
                 }
-                else dialogError = "浏览器窗口已关闭。";
+                else dialogError = GameWebBrowserText.Get("Text0077");
                 if (done) { CloseBrowserInput(); }
             }
             ImGui.SameLine();
-            if (ImGui.Button("取消")) { CloseBrowserInput(); }
+            if (ImGui.Button(GameWebBrowserText.Get("Text0074"))) { CloseBrowserInput(); }
             if (dialogError.Length > 0) ImGui.TextWrapped(dialogError);
         }
         ImGui.End();
@@ -4102,18 +4118,18 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         string currentUrl = "";
         bool canFavorite = current != null && TryWebUrl(current.Url, out currentUrl);
         bool alreadyFavorite = canFavorite && config.Favorites.Any(f => BookmarkKey(f.Url) == currentUrl);
-        var favoriteLabel = alreadyFavorite ? "已收藏当前网页" : canFavorite ? "+ 收藏当前网页" : "暂无可收藏网页";
+        var favoriteLabel = alreadyFavorite ? GameWebBrowserText.Get("Text0078") : canFavorite ? GameWebBrowserText.Get("Text0079") : GameWebBrowserText.Get("Text0080");
         if (ChromeTextButton(dl, new Vector2(mn.X, y), new Vector2(mx.X, y + row), favoriteLabel, alreadyFavorite || !canFavorite ? dim : text, hover) && canFavorite && !alreadyFavorite) AddFavorite(current);
-        if (IsMouseInRect(new Vector2(mn.X, y), new Vector2(mx.X, y + row))) ImGui.SetTooltip(alreadyFavorite ? "当前网页已在下方收藏列表中" : canFavorite ? currentUrl : "等待网页地址");
+        if (IsMouseInRect(new Vector2(mn.X, y), new Vector2(mx.X, y + row))) ImGui.SetTooltip(alreadyFavorite ? GameWebBrowserText.Get("Text0081") : canFavorite ? currentUrl : GameWebBrowserText.Get("Text0082"));
         y += row + 8;
-        if (ChromeTextButton(dl, new Vector2(mn.X, y), new Vector2(mx.X, y + row), "+ 手动添加网页", text, hover)) ShowBrowserDialog("favorite", win);
+        if (ChromeTextButton(dl, new Vector2(mn.X, y), new Vector2(mx.X, y + row), GameWebBrowserText.Get("Text0083"), text, hover)) ShowBrowserDialog("favorite", win);
         y += row + 8;
         int visibleRows = Math.Max(1, (int)((mx.Y - y - row * 2) / row));
         win.FavoriteOffset = Math.Clamp(win.FavoriteOffset, 0, Math.Max(0, config.Favorites.Count - visibleRows));
         if (consumed && ImGui.GetIO().MouseWheel != 0)
             win.FavoriteOffset = Math.Clamp(win.FavoriteOffset - Math.Sign(ImGui.GetIO().MouseWheel) * 3, 0, Math.Max(0, config.Favorites.Count - visibleRows));
         int end = Math.Min(config.Favorites.Count, win.FavoriteOffset + visibleRows);
-        if (config.Favorites.Count == 0) dl.AddText(new Vector2(mn.X + 5, y + 5), dim, "暂无收藏");
+        if (config.Favorites.Count == 0) dl.AddText(new Vector2(mn.X + 5, y + 5), dim, GameWebBrowserText.Get("Text0084"));
         for (int i = win.FavoriteOffset; i < end; i++)
         {
             var favorite = config.Favorites[i];
@@ -4124,21 +4140,21 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             if (ChromeTextButton(dl, left, right, name, text, hover))
             {
                 if (TryWebUrl(favorite.Url, out var url)) OpenTab(win, url, true);
-                else statusMessage = "收藏网址无效，请到模块设置中修改。";
+                else statusMessage = GameWebBrowserText.Get("Text0085");
             }
             if (IsMouseInRect(left, right)) ImGui.SetTooltip(favorite.Url);
             if (ChromeBtn(dl, "favoriteDelete" + i, deleteLeft, new Vector2(mx.X, y + row), 4, hover, hover, dim, text, GlyphKind.Close))
-            { config.Favorites.RemoveAt(i); SaveOwnConfig(); statusMessage = "已删除收藏。"; break; }
+            { config.Favorites.RemoveAt(i); SaveOwnConfig(); statusMessage = GameWebBrowserText.Get("Text0086"); break; }
             y += row;
         }
         float footerY = mx.Y - row * 2;
         if (config.Favorites.Count > visibleRows)
         {
             float middle = (mn.X + mx.X) / 2;
-            if (ChromeTextButton(dl, new Vector2(mn.X, footerY), new Vector2(middle, footerY + row), "上一页", dim, hover)) win.FavoriteOffset = Math.Max(0, win.FavoriteOffset - visibleRows);
-            if (ChromeTextButton(dl, new Vector2(middle, footerY), new Vector2(mx.X, footerY + row), "下一页", dim, hover)) win.FavoriteOffset = Math.Min(Math.Max(0, config.Favorites.Count - visibleRows), win.FavoriteOffset + visibleRows);
+            if (ChromeTextButton(dl, new Vector2(mn.X, footerY), new Vector2(middle, footerY + row), GameWebBrowserText.Get("Text0087"), dim, hover)) win.FavoriteOffset = Math.Max(0, win.FavoriteOffset - visibleRows);
+            if (ChromeTextButton(dl, new Vector2(middle, footerY), new Vector2(mx.X, footerY + row), GameWebBrowserText.Get("Text0088"), dim, hover)) win.FavoriteOffset = Math.Min(Math.Max(0, config.Favorites.Count - visibleRows), win.FavoriteOffset + visibleRows);
         }
-        dl.AddText(new Vector2(mn.X + 5, mx.Y - row), dim, $"{config.Favorites.Count} 项收藏");
+        dl.AddText(new Vector2(mn.X + 5, mx.Y - row), dim, string.Format(GameWebBrowserText.Get("Text0089"), config.Favorites.Count));
         dl.PopClipRect();
         return consumed;
     }
@@ -4725,7 +4741,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         win.CapState      = 2;
         win.CapFailReason = why;
         Wv2Log($"抓帧失败，已回退原生窗口 win={win.Key}: {why}");
-        statusMessage = "贴图抓帧失败，已回退原生窗口（详见 gwblog.txt）";
+        statusMessage = GameWebBrowserText.Get("Text0090");
         Wv2Post(() => WgcStop(win));
         // 回退后要让宿主窗口重新回到游戏之上，否则网页会「不见了」
         win.HostZMode = 0;
@@ -4801,8 +4817,8 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
             catch {   }
         }
         statusMessage = config.TextureRender
-            ? "已切换到抽帧渲染（可自由叠放）"
-            : "已切换到原生窗口渲染";
+            ? GameWebBrowserText.Get("Text0091")
+            : GameWebBrowserText.Get("Text0092");
     }
 
     // 设置页里的抓帧状态行
@@ -4813,21 +4829,21 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         {
             any = true;
             string line;
-            if (!config.TextureRender) line = "（贴图渲染已关闭）";
-            else if (win.CapFailed)    line = "已回退原生窗口（抓帧不可用）";
-            else if (win.CapState == 1) line = $"运行中，已取 {win.CapFrames} 帧 {win.CapW}x{win.CapH}，点击转发 {win.CapMouseSends} 次";
-            else                        line = "启动中…";
+            if (!config.TextureRender) line = GameWebBrowserText.Get("Ui2023");
+            else if (win.CapFailed)    line = GameWebBrowserText.Get("Ui2024");
+            else if (win.CapState == 1) line = string.Format(GameWebBrowserText.Get("Ui2025"), win.CapFrames, win.CapW, win.CapH, win.CapMouseSends);
+            else                        line = GameWebBrowserText.Get("Ui2026");
             ImGui.TextDisabled($"  {win.PageName}（{win.Key}）：{line}");
             if (win.CapFailed && win.CapFailReason.Length > 0)
-                ImGui.TextDisabled($"      原因：{win.CapFailReason}");
+                ImGui.TextDisabled(string.Format(GameWebBrowserText.Get("Text0093"), win.CapFailReason));
         }
-        if (!any) ImGui.TextDisabled("  当前没有打开的浏览器窗口");
+        if (!any) ImGui.TextDisabled(GameWebBrowserText.Get("Text0094"));
     }
 
     // ---- 贴图绘制：把抓到的一帧画进外壳的「网页画面」区域 ----
     private void DrawPageTexture(ImDrawListPtr dl, BrowserWin win, Vector2 pmn, Vector2 pmx)
     {
-        if (CefMode) { var surface = win.ActiveTabSafe()?.Cef; if (surface != null && surface.Srv != IntPtr.Zero) dl.AddImageRounded(new ImTextureID(surface.Srv), pmn, pmx, Vector2.Zero, Vector2.One, 0xFFFFFFFF, 4); else dl.AddText(pmn + new Vector2(12, 12), ImGui.GetColorU32(ImGuiCol.TextDisabled), win.ActiveTabSafe()?.Url.Length == 0 ? "输入网址打开新标签页" : win.CapFailReason.Length > 0 ? win.CapFailReason : "CEF 正在加载网页…"); return; }
+        if (CefMode) { var surface = win.ActiveTabSafe()?.Cef; if (surface != null && surface.Srv != IntPtr.Zero) dl.AddImageRounded(new ImTextureID(surface.Srv), pmn, pmx, Vector2.Zero, Vector2.One, 0xFFFFFFFF, 4); else dl.AddText(pmn + new Vector2(12, 12), ImGui.GetColorU32(ImGuiCol.TextDisabled), win.ActiveTabSafe()?.Url.Length == 0 ? GameWebBrowserText.Get("Text0095") : win.CapFailReason.Length > 0 ? win.CapFailReason : GameWebBrowserText.Get("Text0096")); return; }
         if (config.TextureRender && !win.CapFailed && win.CapSrv != IntPtr.Zero)
         {
             // 圆角跟外壳那圈描边对齐（见 DrawChromeContent 的 rad * 0.45f），
@@ -4839,8 +4855,8 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         }
 
         // 还没有画面：给个占位，别让人以为壳坏了
-        var hint = !config.TextureRender ? "原生窗口模式" :
-                   (win.CapFailed ? "抓帧失败，已回退原生窗口" : "正在接通画面…");
+        var hint = !config.TextureRender ? GameWebBrowserText.Get("Ui2027") :
+                   (win.CapFailed ? GameWebBrowserText.Get("Ui2028") : GameWebBrowserText.Get("Ui2029"));
         var sz = ImGui.CalcTextSize(hint);
         dl.AddText(new Vector2((pmn.X + pmx.X - sz.X) * 0.5f, (pmn.Y + pmx.Y - sz.Y) * 0.5f),
                    ImGui.GetColorU32(ImGuiCol.TextDisabled), hint);
@@ -5471,7 +5487,7 @@ public sealed unsafe partial class GameWebBrowser : ModuleBase
         catch {   }
     }
 
-    private class Config
+    private class Settings
     {
         public int RenderingBackend { get; set; } = 0;
         public bool AllowOutsideGameWindow { get; set; } = false;
@@ -5647,7 +5663,7 @@ internal sealed unsafe class RepositoryNativeBrowser
     public bool IsOpen(string command) => openStates.TryGetValue(NormalizeCommand(command), out var open) && open;
     public void Configure(string json)
     {
-        var next = JsonSerializer.Deserialize<Config>(json) ?? new Config();
+        var next = JsonSerializer.Deserialize<Settings>(json) ?? new Settings();
         requests.Enqueue(() =>
         {
             // 保留待启动请求引用的 PageEntry，编辑共用设置不会使排队的网页失效。
@@ -5838,7 +5854,7 @@ internal sealed unsafe class RepositoryNativeBrowser
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "XIVLauncherCN", "pluginConfigs", "OmniGameWebBrowser.json");
 
-    private Config config = new();
+    private Settings config = new();
 
     private class BrowserWin
     {
@@ -5896,7 +5912,7 @@ internal sealed unsafe class RepositoryNativeBrowser
     {
         commandManager = GetService<ICommandManager>("Dalamud.Game.Command.CommandManager");
         if (commandManager == null)
-            statusMessage = "命令服务获取失败，宏命令无法使用";
+            statusMessage = GameWebBrowserText.Get("Text0001");
         else
             statusMessage = "";
 
@@ -5906,7 +5922,7 @@ internal sealed unsafe class RepositoryNativeBrowser
 
         watchCts = new CancellationTokenSource();
         var token = watchCts.Token;
-        _ = Task.Run(() => WatchLoop(token));
+        _ = GameWebBrowserText.Track(Task.Run(() => WatchLoop(token)));
         StartWinEventWatch(watchCts.Token);
     }
 
@@ -5938,7 +5954,7 @@ internal sealed unsafe class RepositoryNativeBrowser
             if (File.Exists(path))
             {
                 var json     = File.ReadAllText(path);
-                var loaded   = JsonSerializer.Deserialize<Config>(json);
+                var loaded   = JsonSerializer.Deserialize<Settings>(json);
                 if (loaded != null) config = loaded;
 
             }
@@ -5989,11 +6005,11 @@ internal sealed unsafe class RepositoryNativeBrowser
             {
                 var ok = commandManager.AddHandler(cmd, new CommandInfo((string command, string arguments) => TogglePage(page)));
                 if (ok) registeredCommands.Add(cmd);
-                else statusMessage = $"命令 {cmd} 注册失败（可能已被占用）";
+                else statusMessage = string.Format(GameWebBrowserText.Get("Text0004"), cmd);
             }
             catch (Exception e)
             {
-                statusMessage = $"命令 {cmd} 注册异常: {e.Message}";
+                statusMessage = string.Format(GameWebBrowserText.Get("Text0005"), cmd, e.Message);
             }
         }
     }
@@ -6035,7 +6051,7 @@ internal sealed unsafe class RepositoryNativeBrowser
                         launching.Launching = false;
                         activeLaunchKey = null;
                         anyLaunching = false;
-                        statusMessage = "未捕获到浏览器窗口（30 秒超时）";
+                        statusMessage = GameWebBrowserText.Get("Text0097");
                     }
                 }
 
@@ -6087,7 +6103,7 @@ internal sealed unsafe class RepositoryNativeBrowser
                     // 表现为「点游戏最小化，结果最小化的是浏览器」
                     FocusGameNoRestore();
                     focusGameUntilMs = Environment.TickCount64 + 2000;
-                    statusMessage = "浏览器已最小化隐藏，再按一次宏命令即可重新显示";
+                    statusMessage = GameWebBrowserText.Get("Text0098");
                 }
 
                 if (Environment.TickCount64 < focusGameUntilMs) FocusGameNoRestore();
@@ -6225,14 +6241,14 @@ internal sealed unsafe class RepositoryNativeBrowser
                     SWP_NOZORDER | SWP_NOACTIVATE);
             }
         }
-        catch (Exception e) { statusMessage = $"窗口绑定异常: {e.Message}"; }
+        catch (Exception e) { statusMessage = string.Format(GameWebBrowserText.Get("Text0099"), e.Message); }
     }
 
     private void ApplyWindowGeometryToOpen()
     {
         var game = FindGameHwnd();
-        if (game == IntPtr.Zero) { statusMessage = "未找到游戏窗口"; return; }
-        if (!GetWindowRect(game, out var gameRect)) { statusMessage = "读取游戏窗口位置失败"; return; }
+        if (game == IntPtr.Zero) { statusMessage = GameWebBrowserText.Get("Text0100"); return; }
+        if (!GetWindowRect(game, out var gameRect)) { statusMessage = GameWebBrowserText.Get("Text0101"); return; }
 
         List<IntPtr> hwnds;
         try { hwnds = windows.Values.SelectMany(w => w.Hwnds).ToList(); }
@@ -6253,7 +6269,7 @@ internal sealed unsafe class RepositoryNativeBrowser
             }
             catch {   }
         }
-        statusMessage = n > 0 ? $"已应用窗口位置与大小（{n} 个窗口）" : "当前没有已打开的窗口";
+        statusMessage = n > 0 ? string.Format(GameWebBrowserText.Get("Text0102"), n) : GameWebBrowserText.Get("Text0103");
     }
 
     private static IntPtr FindGameHwnd() => FindWindowW("FFXIVGAME", null);
@@ -6546,7 +6562,7 @@ internal sealed unsafe class RepositoryNativeBrowser
             // 用户从任务栏最小化游戏时被最小化的反而是浏览器
             FocusGame();
         }
-        catch (Exception e) { statusMessage = $"操作失败: {e.Message}"; }
+        catch (Exception e) { statusMessage = string.Format(GameWebBrowserText.Get("Text0009"), e.Message); }
     }
 
     private void HideBrowser(BrowserWin win)
@@ -6592,14 +6608,14 @@ internal sealed unsafe class RepositoryNativeBrowser
         if (exe.Length == 0 || !File.Exists(exe)) exe = FindBrowserExe() ?? "";
         if (exe.Length == 0)
         {
-            statusMessage = "未找到 Edge / Chrome，请在设置中手动填写浏览器路径";
+            statusMessage = GameWebBrowserText.Get("Text0104");
             return;
         }
 
         var url = (page.Url ?? "").Trim();
         if (url.Length == 0)
         {
-            statusMessage = "该网页的网址为空，请先在设置里填写";
+            statusMessage = GameWebBrowserText.Get("Text0008");
             return;
         }
         if (!url.StartsWith("http://") && !url.StartsWith("https://"))
@@ -6610,7 +6626,7 @@ internal sealed unsafe class RepositoryNativeBrowser
             if (anyLaunching)
             {
                 pendingLaunches.Enqueue(new PendingLaunch { Key = key, Page = page });
-                statusMessage = $"「{page.Name}」已排队，等上一个网页启动完成后自动打开";
+                statusMessage = string.Format(GameWebBrowserText.Get("Text0105"), page.Name);
                 return;
             }
             anyLaunching = true;
@@ -6663,11 +6679,11 @@ internal sealed unsafe class RepositoryNativeBrowser
             win.Launching     = true;
             win.LaunchStartMs = Environment.TickCount64;
             activeLaunchKey   = key;
-            statusMessage     = $"正在启动 {page.Name} …";
+            statusMessage     = string.Format(GameWebBrowserText.Get("Text0106"), page.Name);
         }
         catch (Exception e)
         {
-            statusMessage = $"浏览器启动失败: {e.Message}";
+            statusMessage = string.Format(GameWebBrowserText.Get("Text0107"), e.Message);
             lock (launchGate) { anyLaunching = false; }
         }
     }
@@ -6690,7 +6706,7 @@ internal sealed unsafe class RepositoryNativeBrowser
             }
             windows.Remove(key);
         }
-        catch (Exception e) { statusMessage = $"关闭失败: {e.Message}"; }
+        catch (Exception e) { statusMessage = string.Format(GameWebBrowserText.Get("Text0019"), e.Message); }
     }
 
     private static string SanitizeKey(string key)
@@ -6746,7 +6762,7 @@ internal sealed unsafe class RepositoryNativeBrowser
         public bool   UseAppMode { get; set; } = false;
     }
 
-    private class Config
+    private class Settings
     {
         public List<PageEntry> Pages { get; set; } = new List<PageEntry>();
 
@@ -6764,3 +6780,202 @@ internal sealed unsafe class RepositoryNativeBrowser
 
 
 
+
+internal static class GameWebBrowserText
+{
+    internal static readonly OmniToolbox.UI.ModuleLocalization Catalog = OmniToolbox.UI.ModuleLocalization.Create(
+        new System.Collections.Generic.Dictionary<string,string>
+        {
+            ["Text0001"] = "命令服务获取失败，宏命令无法使用",
+            ["Text0002"] = "绘制钩子挂载失败：",
+            ["Text0003"] = "配置保存失败：",
+            ["Text0004"] = "命令 {0} 注册失败（可能已被占用）",
+            ["Text0005"] = "命令 {0} 注册异常: {1}",
+            ["Text0006"] = "请输入有效的网页地址。",
+            ["Text0007"] = "已隐藏，再按一次宏命令即可重新显示",
+            ["Text0008"] = "该网页的网址为空，请先在设置里填写",
+            ["Text0009"] = "操作失败: {0}",
+            ["Text0010"] = "请先在模块设置的网络代理中填写地址。",
+            ["Text0011"] = "代理地址不能包含空白、引号或附加启动参数。",
+            ["Text0012"] = "代理格式不正确。示例：127.0.0.1:7890 或 socks5://127.0.0.1:1080；不支持在地址中填写账号密码。",
+            ["Text0013"] = "已切换到代理，正在重新加载标签页。",
+            ["Text0014"] = "已关闭代理，正在重新加载标签页。",
+            ["Text0015"] = "当前页面没有可收藏的网址。",
+            ["Text0016"] = "该网页已经在收藏夹中。",
+            ["Text0017"] = "已收藏当前网页。",
+            ["Text0018"] = "每个 CEF 窗口最多打开 16 个标签。",
+            ["Text0019"] = "关闭失败: {0}",
+            ["Text0020"] = "渲染版本",
+            ["Text0021"] = "CEF 游戏内浏览器\u241f独立浏览器（Edge / Chrome）\u241f",
+            ["Text0022"] = "切换会关闭当前浏览器窗口。网页、宏命令、代理和收藏共用；各内核的登录资料分别保存。",
+            ["Text0023"] = "允许移出游戏屏幕",
+            ["Text0024"] = "允许拖过游戏画面边缘；超出的部分由游戏画面裁剪。关闭此项可收回窗口。",
+            ["Text0025"] = "删除",
+            ["Text0026"] = "代理",
+            ["Text0027"] = "无边框",
+            ["Text0028"] = "名字",
+            ["Text0029"] = "宏命令",
+            ["Text0030"] = "网址",
+            ["Text0031"] = "开关",
+            ["Text0032"] = "关闭",
+            ["Text0033"] = "打开",
+            ["Text0034"] = "＋ 添加网页",
+            ["Text0035"] = "设置",
+            ["Text0036"] = "浏览器路径",
+            ["Text0037"] = "留空自动查找 Edge / Chrome，或填写浏览器 exe 路径",
+            ["Text0038"] = "水平偏移",
+            ["Text0039"] = "垂直偏移",
+            ["Text0040"] = "上次错误：",
+            ["Text0041"] = "窗口大小与位置",
+            ["Text0042"] = "宽度",
+            ["Text0043"] = "高度",
+            ["Text0044"] = "恢复默认窗口",
+            ["Text0045"] = "网络代理",
+            ["Text0046"] = "示例：127.0.0.1:7890 / socks5://127.0.0.1:1080",
+            ["Text0047"] = "收藏夹",
+            ["Text0048"] = "名称，如：百度",
+            ["Text0049"] = "网址，如：https://www.baidu.com",
+            ["Text0050"] = "收藏网址无效，请填写 HTTP/HTTPS 网址。",
+            ["Text0051"] = "＋ 添加收藏",
+            ["Text0052"] = "请输入有效的收藏网址。",
+            ["Text0053"] = "COM 对象指针无效",
+            ["Text0054"] = "COM 槽位 {0} 不是可执行地址",
+            ["Text0055"] = "消息泵异常：",
+            ["Text0056"] = "内置 WebView2Loader 加载失败（错误码 {0}）",
+            ["Text0057"] = "内置 WebView2Loader 导出函数缺失",
+            ["Text0058"] = "内置 WebView2Loader 释放失败: ",
+            ["Text0059"] = "已用内置内核 {0} 打开；标题栏可拖动 / 缩放",
+            ["Text0060"] = "已用内置内核打开；标题栏可拖动 / 缩放",
+            ["Text0061"] = "内置内核加载中…",
+            ["Text0062"] = "页面加载失败，可检查网址或代理设置",
+            ["Text0063"] = "网页新窗口请求无法延迟，请重试。",
+            ["Text0064"] = "收藏",
+            ["Text0065"] = "新建标签页",
+            ["Text0066"] = "每个窗口最多打开 16 个标签。",
+            ["Text0067"] = "标签页已全部关闭，再按一次宏命令即可重新打开",
+            ["Text0068"] = "添加收藏",
+            ["Text0069"] = "输入网址",
+            ["Text0070"] = "示例：127.0.0.1:7890 或 socks5://127.0.0.1:1080。应用后重载当前窗口标签；不同连接方式分别保存登录状态。",
+            ["Text0071"] = "收藏名称（可留空）",
+            ["Text0072"] = "应用并使用代理",
+            ["Text0073"] = "前往",
+            ["Text0074"] = "取消",
+            ["Text0075"] = "代理地址",
+            ["Text0076"] = "请输入有效的 HTTP/HTTPS 网页地址。",
+            ["Text0077"] = "浏览器窗口已关闭。",
+            ["Text0078"] = "已收藏当前网页",
+            ["Text0079"] = "+ 收藏当前网页",
+            ["Text0080"] = "暂无可收藏网页",
+            ["Text0081"] = "当前网页已在下方收藏列表中",
+            ["Text0082"] = "等待网页地址",
+            ["Text0083"] = "+ 手动添加网页",
+            ["Text0084"] = "暂无收藏",
+            ["Text0085"] = "收藏网址无效，请到模块设置中修改。",
+            ["Text0086"] = "已删除收藏。",
+            ["Text0087"] = "上一页",
+            ["Text0088"] = "下一页",
+            ["Text0089"] = "{0} 项收藏",
+            ["Text0090"] = "贴图抓帧失败，已回退原生窗口（详见 gwblog.txt）",
+            ["Text0091"] = "已切换到抽帧渲染（可自由叠放）",
+            ["Text0092"] = "已切换到原生窗口渲染",
+            ["Text0093"] = "      原因：{0}",
+            ["Text0094"] = "  当前没有打开的浏览器窗口",
+            ["Text0095"] = "输入网址打开新标签页",
+            ["Text0096"] = "CEF 正在加载网页…",
+            ["Text0097"] = "未捕获到浏览器窗口（30 秒超时）",
+            ["Text0098"] = "浏览器已最小化隐藏，再按一次宏命令即可重新显示",
+            ["Text0099"] = "窗口绑定异常: {0}",
+            ["Text0100"] = "未找到游戏窗口",
+            ["Text0101"] = "读取游戏窗口位置失败",
+            ["Text0102"] = "已应用窗口位置与大小（{0} 个窗口）",
+            ["Text0103"] = "当前没有已打开的窗口",
+            ["Text0104"] = "未找到 Edge / Chrome，请在设置中手动填写浏览器路径",
+            ["Text0105"] = "「{0}」已排队，等上一个网页启动完成后自动打开",
+            ["Text0106"] = "正在启动 {0} …",
+            ["Text0107"] = "浏览器启动失败: {0}",
+            ["Text0108"] = "CEF 已安装 · 154.0.34",
+            ["Text0109"] = "CEF 已安装，需要更新浏览器组件",
+            ["Text0110"] = "CEF 未安装",
+            ["Text0111"] = "取消下载",
+            ["Text0112"] = "更新浏览器组件",
+            ["Text0113"] = "下载 CEF",
+            ["Text0114"] = "请在 CEF 模式下点击“更新浏览器组件”。",
+            ["Text0115"] = "请在 CEF 模式下点击“下载 CEF”。",
+            ["Text0116"] = "无法启动 CEF 进程",
+            ["Text0117"] = "CEF 校验失败，安装已取消",
+            ["Text0118"] = "桥接程序校验失败，安装已取消",
+            ["Text0119"] = "正在解压和校验，首次安装可能需要稍等",
+            ["Text0120"] = "安装包缺少 ",
+            ["Text0121"] = "安装包缺少 locales/",
+            ["Text0122"] = "目标目录已存在，请关闭浏览器并移除未完成的安装目录后重试",
+            ["Text0123"] = "浏览器组件已更新，原 CEF 内核和登录资料已保留。",
+            ["Text0124"] = "CEF 下载完成，可以打开网页了。",
+            ["Text0125"] = "下载已取消，可重新点击下载。",
+            ["Text0126"] = "下载失败：",
+            ["Text0127"] = "下载包超过允许大小",
+            ["Text0128"] = "下载不完整",
+            ["Text0129"] = "安装包路径无效",
+            ["Text0130"] = "安装包路径重复或越界",
+            ["Text0131"] = "解压内容过大",
+            ["Title"] = "游戏内浏览器",
+            ["Description"] = "CEF 游戏内浏览器：沿用原贴图外观，用户点击下载内核并查看实时进度；保留独立 Edge/Chrome 模式，共用网页、宏命令、代理和收藏。"
+        ,
+            ["Ui2001"] = "宿主窗口类注册失败，无法显示网页",
+            ["Ui2002"] = "未找到游戏窗口",
+            ["Ui2003"] = "无法定位游戏窗口客户区，无法显示网页",
+            ["Ui2004"] = "宿主窗口创建失败，无法显示网页",
+            ["Ui2005"] = "内置内核线程启动失败，WebView2 不可用",
+            ["Ui2006"] = "未检测到 WebView2 运行时，请先安装 Microsoft Edge WebView2 Runtime",
+            ["Ui2007"] = "如: 百度",
+            ["Ui2008"] = "如: /baidu",
+            ["Ui2009"] = "如: https://www.baidu.com",
+            ["Ui2010"] = "未找到游戏窗口",
+            ["Ui2011"] = "无法取得内核版本，代理环境未创建；不会自动直连。",
+            ["Ui2012"] = "内置内核环境创建失败（0x{0:X8}）",
+            ["Ui2013"] = "；代理仍开启，请检查代理地址。",
+            ["Ui2014"] = "内置内核环境创建失败（0x{0:X8}）",
+            ["Ui2015"] = "；代理仍开启，请检查代理地址。",
+            ["Ui2016"] = "内置内核接口自检未通过，已中止（不会影响游戏）",
+            ["Ui2017"] = "绘制外壳异常: ",
+            ["Ui2018"] = "DrawChrome 异常: ",
+            ["Ui2019"] = "外壳内容绘制异常: ",
+            ["Ui2020"] = "新标签页",
+            ["Ui2021"] = "载入中… ",
+            ["Ui2022"] = "新标签页",
+            ["Ui2023"] = "（贴图渲染已关闭）",
+            ["Ui2024"] = "已回退原生窗口（抓帧不可用）",
+            ["Ui2025"] = "运行中，已取 {0} 帧 {1}x{2}，点击转发 {3} 次",
+            ["Ui2026"] = "启动中…",
+            ["Ui2027"] = "原生窗口模式",
+            ["Ui2028"] = "抓帧失败，已回退原生窗口",
+            ["Ui2029"] = "正在接通画面…"
+});
+    private static System.WeakReference<OmniToolbox.Common.Module.Abstractions.OmniModuleBase>? owner;
+    private static TreeTools.Lifecycle.FeatureLifetime? lifetime;
+internal static void Bind(OmniToolbox.Common.Module.Abstractions.OmniModuleBase module, TreeTools.Lifecycle.FeatureLifetime scope)
+{
+    owner = new(module);
+    lifetime = scope;
+}
+internal static System.Threading.Tasks.Task Track(System.Threading.Tasks.Task task)
+{
+    var scope = lifetime;
+    if (!task.IsCompleted && scope is { IsStopping: false })
+    {
+        try { scope.Track(task); }
+        catch (System.InvalidOperationException) when (scope.IsStopping) { }
+    }
+    return task;
+}
+internal static System.Threading.Tasks.Task<T> Track<T>(System.Threading.Tasks.Task<T> task)
+{
+    Track((System.Threading.Tasks.Task)task);
+    return task;
+}
+    internal static string Get(string key)
+    {
+        if (owner != null && owner.TryGetTarget(out var module))
+            return OmniToolbox.UI.OmniLoc.Get(module, key).Replace('\u241f', '\0');
+        return Catalog.Get(key, OmniToolbox.UI.OmniLoc.CurrentLanguage).Replace('\u241f', '\0');
+    }
+}

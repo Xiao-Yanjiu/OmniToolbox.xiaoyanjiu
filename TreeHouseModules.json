@@ -3,73 +3,115 @@
   "Modules": [
     {
       "InternalName": "MusicPlayer",
-      "Name": "游戏内音乐播放器",
       "Author": "小烟酒",
-      "Description": "QQ音乐与网易云音乐双平台：独立登录、曲库、队列及播放通道；扫码登录、搜索、榜单、歌词、封面、喜欢和歌单读取；推荐与收藏左侧竖向列表。网易云标准 MP3 内置解码，无需 Node 或外部解码服务。",
-      "Version": "1.3.5",
-      "MinimumOmniVersion": "1.1.7.5",
+      "Version": "2.0.0",
+      "MinimumOmniVersion": "1.1.8.2",
       "File": "Modules/MusicPlayer.cs",
-      "Sha256": "08f18de88ca348fb079c14b541ae81655dee5ac5c3d93a678e182768c034423b"
+      "Sha256": "ebb7660293a4e87447b6c0428d3b3e8ccd83e992cf1a15004a7ce9e4f3543ed9",
+      "ApiVersion": 1,
+      "RepositoryURL": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu",
+      "Localization": {
+        "Source": {
+          "Title": "游戏内音乐播放器",
+          "Description": "QQ音乐与网易云音乐双平台：独立登录、曲库、队列及播放通道；扫码登录、搜索、榜单、歌词、封面、喜欢和歌单读取；推荐与收藏左侧竖向列表。网易云标准 MP3 内置解码，无需 Node 或外部解码服务。"
+        }
+      }
     },
     {
       "InternalName": "GameWebBrowser",
-      "Name": "游戏内浏览器",
       "Author": "小烟酒",
-      "Description": "CEF 游戏内浏览器：沿用原贴图外观，用户点击下载内核并查看实时进度；保留独立 Edge/Chrome 模式，共用网页、宏命令、代理和收藏。",
-      "Version": "1.4.8",
-      "MinimumOmniVersion": "1.1.6.6",
-      "File": "Modules/Browser/1.4.8/GameWebBrowser.dll",
-      "Sha256": "dade5502592956a1e6b1c322335647afc5578bf8c41fb5703dcc599851896349"
+      "Version": "2.0.0",
+      "MinimumOmniVersion": "1.1.8.2",
+      "File": "Modules/Browser/2.0.0/GameWebBrowser.dll",
+      "Sha256": "3b6406a0115cf800e32528de2d0e8cb0499ebc9ebcca75626f94686a38df7fe9",
+      "ApiVersion": 1,
+      "RepositoryURL": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu",
+      "Localization": {
+        "Source": {
+          "Title": "游戏内浏览器",
+          "Description": "CEF 游戏内浏览器：沿用原贴图外观，用户点击下载内核并查看实时进度；保留独立 Edge/Chrome 模式，共用网页、宏命令、代理和收藏。"
+        }
+      }
     },
     {
       "InternalName": "AutoDiscardJunk",
-      "Name": "自动丢垃圾",
       "Author": "小烟酒",
-      "Description": "三栏管理背包物品：黑名单中的物品会在启动后自动丢弃。",
-      "Version": "1.1.1",
-      "MinimumOmniVersion": "1.1.3.0",
+      "Version": "2.0.0",
+      "MinimumOmniVersion": "1.1.8.2",
       "File": "Modules/AutoDiscardJunk.cs",
-      "Sha256": "9050b583abcc7ff9831df670c0963c10c75d79f86c46261a6096dabe1a7321a8"
+      "Sha256": "ecdada8f7c3f692cb2252ef7e1de67b32980c50237558a39890e073110ca0acc",
+      "ApiVersion": 1,
+      "RepositoryURL": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu",
+      "Localization": {
+        "Source": {
+          "Title": "自动丢垃圾",
+          "Description": "三栏管理背包物品：黑名单中的物品会在启动后自动丢弃。"
+        }
+      }
     },
     {
       "InternalName": "ToolbarIconPlus",
-      "Name": "更好的图标管理",
       "Author": "小烟酒",
-      "Description": "网站图标（favicon）与本地图片入库后，可给游戏宏与 Omni 多功能工具栏使用。适配 Omni 1.1.7.5 的共享纹理读取；移除直接修改工具栏绘制的补丁，保留原有图库与编号。",
-      "Version": "1.2.2",
-      "MinimumOmniVersion": "1.1.3.0",
+      "Version": "2.0.0",
+      "MinimumOmniVersion": "1.1.8.2",
       "File": "Modules/ToolbarIconPlus.cs",
-      "Sha256": "426869955bfa2d8030b1dc2075afeadd363f519930185942e2fdd1adc745d869"
+      "Sha256": "4bb25e8ba916d364ab50a54b8ec2a0f6bae4230b6a0836b655e2319db810202b",
+      "ApiVersion": 1,
+      "RepositoryURL": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu",
+      "Localization": {
+        "Source": {
+          "Title": "更好的图标管理",
+          "Description": "网站图标（favicon）与本地图片入库后，可给游戏宏与 Omni 多功能工具栏使用。适配 Omni 1.1.7.5 的共享纹理读取；移除直接修改工具栏绘制的补丁，保留原有图库与编号。"
+        }
+      }
     },
     {
       "InternalName": "IChingModule",
-      "Name": "IChing",
       "Author": "小烟酒（基于 IChing 原作者源码）",
-      "Description": "",
-      "Version": "0.6.2",
-      "MinimumOmniVersion": "1.1.6.5",
+      "Version": "2.0.0",
+      "MinimumOmniVersion": "1.1.8.2",
       "File": "Modules/IChingModule.cs",
-      "Sha256": "478aae86b5a3f154850fb0b479cd47970849dc6b451bffa2513ae41d99e8c4f5"
+      "Sha256": "7854719b6079a5e2ec8cd18f54228ff1f356bc98f45e1e5b98473cb442f30527",
+      "ApiVersion": 1,
+      "RepositoryURL": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu",
+      "Localization": {
+        "Source": {
+          "Title": "IChing",
+          "Description": "IChing 功能与游戏界面辅助。"
+        }
+      }
     },
     {
       "InternalName": "CommandCatalog",
-      "Name": "宏指令目录",
       "Author": "小烟酒",
-      "Description": "实时列出游戏与插件斜杠指令及功能说明，支持搜索、来源筛选、填写参数执行和复制；使用 /cmdcatalog 打开，界面跟随 OMNI 主题。",
-      "Version": "1.0.0",
-      "MinimumOmniVersion": "1.1.6.5",
+      "Version": "2.0.0",
+      "MinimumOmniVersion": "1.1.8.2",
       "File": "Modules/CommandCatalog.cs",
-      "Sha256": "5c00c7e8187524cc282c22104ec3fb7dcbab5dbd40419cf598f53ecd8c6aedf6"
+      "Sha256": "9be5059c7d0f8120a1d0509bb36cc8a2bb9f62d002e9b5b81c9c2626533a6299",
+      "ApiVersion": 1,
+      "RepositoryURL": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu",
+      "Localization": {
+        "Source": {
+          "Title": "宏指令目录",
+          "Description": "实时列出游戏与插件斜杠指令及功能说明，支持搜索、来源筛选、填写参数执行和复制；使用 /cmdcatalog 打开，界面跟随 OMNI 主题。"
+        }
+      }
     },
     {
       "InternalName": "PhoneChat",
-      "Name": "狒狒食柿《服务端》",
       "Author": "小烟酒",
-      "Description": "狒狒食柿0.3.109：新增手机Omni幻化管理、石之家导入及独立CPU预览编码；浏览器保留会话，增加主页按钮并统一弹窗主题。配套App0.3.109及预览模块1.4.4；并发稳定性仍待实机验证。",
-      "Version": "0.3.109",
-      "MinimumOmniVersion": "1.1.7.1",
-      "File": "Modules/PhoneChat/0.3.108/PhoneChat.cs",
-      "Sha256": "be33b5c6ffe60a806a8ba5bc3de3c60215dface9a48bdb4d79db9a317e9d6083"
+      "Version": "2.0.0",
+      "MinimumOmniVersion": "1.1.8.2",
+      "File": "Modules/PhoneChat/2.0.0/PhoneChat.cs",
+      "Sha256": "869958af5e3e721e5febbb0d0349e203cbd34e247ff4622a8a4a7eb661e7d95e",
+      "ApiVersion": 1,
+      "RepositoryURL": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu",
+      "Localization": {
+        "Source": {
+          "Title": "狒狒食柿《服务端》",
+          "Description": "手机连接服务端：同步聊天、物品与幻化管理，支持独立预览和游戏串流；兼容现有配套 App。"
+        }
+      }
     }
   ]
 }

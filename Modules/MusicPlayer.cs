@@ -28,18 +28,21 @@ using OmenTools.OmenService;
 namespace OmniToolbox.LocalModules
 {
 
-public sealed class MusicPlayer : ModuleBase
+[ModuleApiVersion(1)]
+public sealed class MusicPlayer : OmniModuleBase
 {
+    public override OmniToolbox.UI.ModuleLocalization Localization => MusicPlayerText.Catalog;
+
     public override ModuleInfo Info { get; } = new()
     {
-        Title = "游戏内音乐播放器",
-        Description = "QQ音乐与网易云音乐：独立账号、曲库、队列和播放通道。",
+
+
         Category = ModuleCategory.Interface,
         Author = "小烟酒"
     };
 
     [Serializable]
-    public sealed class MusicPlayerConfig
+    public sealed class Settings
     {
         public bool WindowVisible { get; set; } = true;
         public bool WindowLocked { get; set; }
@@ -63,10 +66,10 @@ public sealed class MusicPlayer : ModuleBase
         public string QQMusicId { get; set; } = string.Empty;
         public int SelectedProvider { get; set; }
         // A separate config object owns the NetEase account, queue and UI settings.
-        public MusicPlayerConfig? Netease { get; set; }
+        public Settings? Netease { get; set; }
     }
 
-    private MusicPlayerConfig config = new();
+    private Settings config = new();
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(20) };
 
@@ -217,8 +220,14 @@ public sealed class MusicPlayer : ModuleBase
         lock (chatLock) pendingChats.Add(message);
     }
 
-    protected override void OnEnable()
+    protected override void OnStart(TreeTools.Lifecycle.FeatureLifetime activation)
     {
+        MusicPlayerText.Bind(this, activation);
+
+        api1Stopped = false;
+
+        activation.OnStopping(StopActivation);
+
         disposed = false;
         workCancellation.Dispose(); workCancellation = new();
         EnsurePlatforms();
@@ -232,14 +241,17 @@ public sealed class MusicPlayer : ModuleBase
 
     }
 
-    protected override void OnDisable()
+    private bool api1Stopped = true;
+    private void StopActivation() { if (api1Stopped) return; api1Stopped = true; StopCore(); }
+    protected override void OnStop() => StopActivation();
+    private void StopCore()
     {
         try { DalamudServices.PluginInterface.UiBuilder.Draw -= Draw; } catch { }
         UnregisterMusicCommand();
         SafeShutdown();
     }
 
-    protected override void OnDispose()
+    protected override void OnDestroy()
     {
         UnregisterMusicCommand();
         disposed = true;
@@ -320,7 +332,7 @@ public sealed class MusicPlayer : ModuleBase
         }
         catch (Exception e)
         {
-            try { LogError("设置面板绘制异常：" + e); } catch { }
+            try { LogError(MusicPlayerText.Get("Text0001") + e); } catch { }
             return false;
         }
     }
@@ -332,11 +344,11 @@ public sealed class MusicPlayer : ModuleBase
 
         ConsumePending();
 
-        ImGui.TextWrapped("宏命令：/MusicPlayer 打开或关闭当前音乐平台的悬浮窗。");
+        ImGui.TextWrapped(MusicPlayerText.Get("Text0002"));
 
         ImGui.Spacing();
 
-        if (ImGui.Button(config.WindowVisible ? "关闭悬浮窗" : "显示悬浮窗"))
+        if (ImGui.Button(config.WindowVisible ? MusicPlayerText.Get("Text0003") : MusicPlayerText.Get("Text0004")))
         {
             config.WindowVisible = !config.WindowVisible;
             if (config.WindowVisible) { overlaySuspended = false; drawErrorStreak = 0; }
@@ -373,7 +385,7 @@ public sealed class MusicPlayer : ModuleBase
         var began = false;
         try
         {
-            began = ImGui.Begin(PlatformName + "播放器###OmniMusicMain", ref open);
+            began = ImGui.Begin(PlatformName + MusicPlayerText.Get("Text0005"), ref open);
             if (began)
             {
                 ClampCurrentWindow(ImGui.GetWindowSize());
@@ -390,16 +402,16 @@ public sealed class MusicPlayer : ModuleBase
                     tabBarBegan = ImGui.BeginTabBar("##musicContentTabs");
                     if (tabBarBegan)
                     {
-                        var t0 = ImGui.BeginTabItem("搜索");
+                        var t0 = ImGui.BeginTabItem(MusicPlayerText.Get("Text0006"));
                         try { if (t0) tab = 0; } finally { if (t0) ImGui.EndTabItem(); }
 
-                        var t1 = ImGui.BeginTabItem("推荐");
+                        var t1 = ImGui.BeginTabItem(MusicPlayerText.Get("Text0007"));
                         try { if (t1) tab = 1; } finally { if (t1) ImGui.EndTabItem(); }
 
-                        var t2 = ImGui.BeginTabItem("收藏");
+                        var t2 = ImGui.BeginTabItem(MusicPlayerText.Get("Text0008"));
                         try { if (t2) tab = 2; } finally { if (t2) ImGui.EndTabItem(); }
 
-                        var t3 = ImGui.BeginTabItem("播放列表");
+                        var t3 = ImGui.BeginTabItem(MusicPlayerText.Get("Text0009"));
                         try { if (t3) tab = 3; } finally { if (t3) ImGui.EndTabItem(); }
                     }
                 }
@@ -428,7 +440,7 @@ public sealed class MusicPlayer : ModuleBase
         }
         catch (Exception e)
         {
-            try { LogError("曲库窗口绘制异常：" + e); } catch { }
+            try { LogError(MusicPlayerText.Get("Text0010") + e); } catch { }
         }
         finally
         {
@@ -453,14 +465,14 @@ public sealed class MusicPlayer : ModuleBase
         var began = false;
         try
         {
-            began = ImGui.Begin("音乐播放器设置###OmniMusicSettings", ref open);
+            began = ImGui.Begin(MusicPlayerText.Get("Text0011"), ref open);
             if (began)
             {
                 ClampCurrentWindow(ImGui.GetWindowSize());
                 var changed = false;
 
                 var anchor = config.AnchorToHead;
-                if (ImGui.Checkbox("固定到角色头顶（跟随角色移动）", ref anchor))
+                if (ImGui.Checkbox(MusicPlayerText.Get("Text0012"), ref anchor))
                 {
                     if (config.AnchorToHead && !anchor && lastOverlaySize.X > 1f)
                     {
@@ -470,10 +482,10 @@ public sealed class MusicPlayer : ModuleBase
                     config.AnchorToHead = anchor;
                     if (anchor) smoothAnchorInit = false;
                     changed = true;
-                    Log($"悬浮窗：取消/启用固定头顶 -> {config.AnchorToHead}");
+                    Log(string.Format(MusicPlayerText.Get("Ui2001"), config.AnchorToHead));
                 }
 
-                if (ImGui.Button("把悬浮窗拉回屏幕中央##ovRecenter"))
+                if (ImGui.Button(MusicPlayerText.Get("Text0013")))
                 {
                     var w = lastOverlaySize.X > 1f ? lastOverlaySize.X : 340f * config.OverlayScale;
                     var h = lastOverlaySize.Y > 1f ? lastOverlaySize.Y : 148f * config.OverlayScale;
@@ -486,14 +498,14 @@ public sealed class MusicPlayer : ModuleBase
                     drawErrorStreak = 0;
                     overlayForcePos = true;
                     changed = true;
-                    Log($"悬浮窗：位置重置到 ({config.OverlayX:F0},{config.OverlayY:F0})，屏幕 {io.DisplaySize.X:F0}x{io.DisplaySize.Y:F0}");
+                    Log(string.Format(MusicPlayerText.Get("Ui2002"), config.OverlayX, config.OverlayY, io.DisplaySize.X, io.DisplaySize.Y));
                 }
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("换了分辨率/窗口模式后如果不在顺手的位置，点这里把它摆回屏幕中央。\n（悬浮窗现在拖不出游戏窗口——贴到边界就停住，不会再丢。）");
+                    ImGui.SetTooltip(MusicPlayerText.Get("Text0014"));
 
                 if (config.AnchorToHead)
                 {
-                    ImGui.TextUnformatted("头顶高度");
+                    ImGui.TextUnformatted(MusicPlayerText.Get("Text0015"));
                     ImGui.SetNextItemWidth(-1f);
                     var off = config.HeadOffsetY;
                     if (ImGui.SliderFloat("##ovHeadY", ref off, 1.2f, 4.5f, "%.2f"))
@@ -503,7 +515,7 @@ public sealed class MusicPlayer : ModuleBase
                     }
                 }
 
-                ImGui.TextUnformatted("悬浮窗大小");
+                ImGui.TextUnformatted(MusicPlayerText.Get("Text0016"));
                 ImGui.SetNextItemWidth(-1f);
                 var ovScale = config.OverlayScale;
                 if (ImGui.SliderFloat("##ovScale", ref ovScale, 0.3f, 1.5f, "%.2f"))
@@ -512,7 +524,7 @@ public sealed class MusicPlayer : ModuleBase
                     changed = true;
                 }
 
-                ImGui.TextUnformatted("背景不透明度（0=完全透明）");
+                ImGui.TextUnformatted(MusicPlayerText.Get("Text0017"));
                 ImGui.SetNextItemWidth(-1f);
                 var op = config.OverlayOpacity;
                 if (ImGui.SliderFloat("##ovOpacity", ref op, 0f, 1f, "%.2f"))
@@ -521,7 +533,7 @@ public sealed class MusicPlayer : ModuleBase
                     changed = true;
                 }
 
-                ImGui.TextUnformatted("封面不透明度（0=完全透明）");
+                ImGui.TextUnformatted(MusicPlayerText.Get("Text0018"));
                 ImGui.SetNextItemWidth(-1f);
                 var cop = config.CoverOpacity;
                 if (ImGui.SliderFloat("##ovCoverOpacity", ref cop, 0f, 1f, "%.2f"))
@@ -531,14 +543,14 @@ public sealed class MusicPlayer : ModuleBase
                 }
 
                 var headLyric = config.ShowLyricInHead;
-                if (ImGui.Checkbox("悬浮窗显示当前歌词", ref headLyric)) { config.ShowLyricInHead = headLyric; changed = true; }
+                if (ImGui.Checkbox(MusicPlayerText.Get("Text0019"), ref headLyric)) { config.ShowLyricInHead = headLyric; changed = true; }
 
                 if (changed) panelDirty = true;
             }
         }
         catch (Exception e)
         {
-            try { LogError("设置窗口绘制异常：" + e); } catch { }
+            try { LogError(MusicPlayerText.Get("Text0020") + e); } catch { }
         }
         finally
         {
@@ -550,7 +562,7 @@ public sealed class MusicPlayer : ModuleBase
     public override bool ResetSettings()
     {
         SafeShutdown();
-        config = new MusicPlayerConfig();
+        config = new Settings();
         neteasePlayer = null; platformReady = false;
         workCancellation.Dispose(); workCancellation = new(); disposed = false;
         EnsurePlatforms();
@@ -583,7 +595,7 @@ public sealed class MusicPlayer : ModuleBase
             player.drawErrorStreak = 0;
         }
         player.panelDirty = root.panelDirty = true;
-        player.QueueChat($"{player.PlatformName}悬浮窗已{(player.config.WindowVisible ? "打开" : "关闭")}");
+        player.QueueChat(string.Format(MusicPlayerText.Get("Ui2003"), player.PlatformName, (player.config.WindowVisible ? "打开" : "关闭")));
         return true;
     }
 
@@ -599,10 +611,10 @@ public sealed class MusicPlayer : ModuleBase
         {
             if (disposed) return;
             if (string.IsNullOrWhiteSpace(arguments)) ToggleWindow();
-            else QueueChat("宏命令：/MusicPlayer（无需参数）");
+            else QueueChat(MusicPlayerText.Get("Ui2004"));
         })
         {
-            HelpMessage = "打开或关闭当前音乐平台的悬浮窗。",
+            HelpMessage = MusicPlayerText.Get("Text0021"),
             AllowedInMacros = true
         };
         if (manager.AddHandler(MusicCommand, info)) registeredMusicCommand = info;
@@ -625,20 +637,20 @@ public sealed class MusicPlayer : ModuleBase
 
         if (!string.IsNullOrEmpty(config.QQNickname))
         {
-            ImGui.TextColored(new Vector4(0.4f, 0.85f, 0.45f, 1f), $"已登录：{config.QQNickname}");
+            ImGui.TextColored(new Vector4(0.4f, 0.85f, 0.45f, 1f), string.Format(MusicPlayerText.Get("Text0022"), config.QQNickname));
             ImGui.SameLine();
             if (!string.IsNullOrEmpty(config.QQMusicId))
             {
                 ImGui.TextDisabled($"(musicid {config.QQMusicId})");
             }
             ImGui.SameLine();
-            if (ImGui.Button("刷新数据##qqRefresh"))
+            if (ImGui.Button(MusicPlayerText.Get("Text0023")))
             {
                 TriggerLoadFavorites();
                 TriggerLoadPlaylists();
             }
             ImGui.SameLine();
-            if (ImGui.Button("退出登录##qqLogout"))
+            if (ImGui.Button(MusicPlayerText.Get("Text0024")))
             {
                 ClearCookies("qq.com");
                 config.QQCookie = string.Empty;
@@ -658,16 +670,16 @@ public sealed class MusicPlayer : ModuleBase
         }
         else
         {
-            ImGui.TextDisabled("未登录");
+            ImGui.TextDisabled(MusicPlayerText.Get("Text0025"));
             ImGui.SameLine();
-            if (ImGui.Button("QQ音乐扫码登录##qqLogin") && !loginRunning)
+            if (ImGui.Button(MusicPlayerText.Get("Text0026")) && !loginRunning)
             {
                 StartQQLogin();
             }
             if (!string.IsNullOrEmpty(config.QQCookie) && string.IsNullOrEmpty(config.QQNickname))
             {
                 ImGui.SameLine();
-                ImGui.TextDisabled("(检测到残留登录态，可重新扫码)");
+                ImGui.TextDisabled(MusicPlayerText.Get("Text0027"));
             }
         }
 
@@ -681,7 +693,7 @@ public sealed class MusicPlayer : ModuleBase
             }
             else
             {
-                ImGui.TextDisabled("二维码图片解码中…");
+                ImGui.TextDisabled(MusicPlayerText.Get("Text0028"));
             }
         }
 
@@ -706,15 +718,15 @@ public sealed class MusicPlayer : ModuleBase
         var changed = false;
 
         ImGui.SetNextItemWidth(-90f);
-        var submit = ImGui.InputTextWithHint("##musicSearchBox", "输入歌名/歌手，按回车或点右侧搜索", ref searchInput, 128,
+        var submit = ImGui.InputTextWithHint("##musicSearchBox", MusicPlayerText.Get("Text0029"), ref searchInput, 128,
             ImGuiInputTextFlags.EnterReturnsTrue);
         ImGui.SameLine();
-        var doSearch = ImGui.Button("搜索##doSearchBtn", new Vector2(70f, 0f));
+        var doSearch = ImGui.Button(MusicPlayerText.Get("Text0030"), new Vector2(70f, 0f));
 
         if (submit || doSearch)
         {
-            Log($"搜索触发：\"{searchInput}\"（{searchInput.Length}字） searching={searching}");
-            if (searching) searchDebug = "上一次搜索还在进行中，请稍候";
+            Log(string.Format(MusicPlayerText.Get("Ui2005"), searchInput, searchInput.Length, searching));
+            if (searching) searchDebug = MusicPlayerText.Get("Ui2006");
             else TriggerSearch(searchInput);
         }
 
@@ -753,12 +765,12 @@ public sealed class MusicPlayer : ModuleBase
 
         var tops = new (int Id, string Name)[]
         {
-            (26, "热歌榜"), (4, "新歌榜"), (62, "飙升榜"), (27, "经典老歌"), (72, "情歌榜")
+            (26, MusicPlayerText.Get("Ui2007")), (4, MusicPlayerText.Get("Ui2008")), (62, MusicPlayerText.Get("Ui2009")), (27, MusicPlayerText.Get("Ui2010")), (72, MusicPlayerText.Get("Ui2011"))
         };
-        if (isNetease) tops = new[] { (3778678, "热歌榜"), (3779629, "新歌榜"), (19723756, "飙升榜"), (2884035, "原创榜") };
+        if (isNetease) tops = new[] { (3778678, MusicPlayerText.Get("Ui2012")), (3779629, MusicPlayerText.Get("Ui2013")), (19723756, MusicPlayerText.Get("Ui2014")), (2884035, MusicPlayerText.Get("Ui2015")) };
         float gap = 10f;
         float available = ImGui.GetContentRegionAvail().X - 5f;
-        float sidebarWidth = Math.Max(96f, ImGui.CalcTextSize("经典老歌").X + 30f);
+        float sidebarWidth = Math.Max(96f, ImGui.CalcTextSize(MusicPlayerText.Get("Text0031")).X + 30f);
         float panelHeight = Math.Max(280f, ImGui.GetTextLineHeightWithSpacing() * 18f);
         float listWidth = Math.Max(1f, available - sidebarWidth - gap);
 
@@ -801,16 +813,16 @@ public sealed class MusicPlayer : ModuleBase
             {
                 if (content)
                 {
-                    if (ImGui.Button("刷新榜单##recReload") && !loadingRecommend)
+                    if (ImGui.Button(MusicPlayerText.Get("Text0032")) && !loadingRecommend)
                         TriggerLoadRecommend(recommendTopId, recommendTopName);
                     ImGui.SameLine();
-                    if (recommendTracks.Count > 0 && ImGui.Button("整榜播放##recPlayAll"))
+                    if (recommendTracks.Count > 0 && ImGui.Button(MusicPlayerText.Get("Text0033")))
                     {
                         SetQueueAndPlay(recommendTracks, 0);
-                        QueueChat($"已加载{recommendTopName}（{recommendTracks.Count}首），开始播放");
+                        QueueChat(string.Format(MusicPlayerText.Get("Ui2016"), recommendTopName, recommendTracks.Count));
                         changed = true;
                     }
-                    if (loadingRecommend) ImGui.TextDisabled("加载中...");
+                    if (loadingRecommend) ImGui.TextDisabled(MusicPlayerText.Get("Text0034"));
                     if (!string.IsNullOrEmpty(recommendError))
                         ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), recommendError);
                     ImGui.Separator();
@@ -823,7 +835,7 @@ public sealed class MusicPlayer : ModuleBase
                             for (var i = 0; i < recommendTracks.Count; i++)
                                 DrawSongRow($"rec{i}", recommendTracks[i], recommendTracks, i, ref changed);
                             if (recommendTracks.Count == 0)
-                                ImGui.TextWrapped("选择左侧榜单加载歌曲");
+                                ImGui.TextWrapped(MusicPlayerText.Get("Text0035"));
                         }
                     }
                     finally { ImGui.EndChild(); }
@@ -843,11 +855,11 @@ public sealed class MusicPlayer : ModuleBase
 
         if (string.IsNullOrEmpty(config.QQMusicId))
         {
-            ImGui.TextWrapped("收藏内容需要登录 " + PlatformName + "。请先在上方扫码登录，登录成功后这里会自动加载。");
+            ImGui.TextWrapped(MusicPlayerText.Get("Text0036") + PlatformName + MusicPlayerText.Get("Text0037"));
             if (!loginRunning)
             {
                 ImGui.NewLine();
-                if (ImGui.Button("立即扫码登录##favGoLogin")) StartQQLogin();
+                if (ImGui.Button(MusicPlayerText.Get("Text0038"))) StartQQLogin();
             }
             return false;
         }
@@ -869,7 +881,7 @@ public sealed class MusicPlayer : ModuleBase
         float usableWidth = available - gap;
         float minSidebar = Math.Min(124f, usableWidth * 0.4f);
         float maxSidebar = usableWidth - Math.Min(200f, usableWidth * 0.5f);
-        float defaultWidth = Math.Max(124f, ImGui.CalcTextSize("我喜欢的音乐").X + 26f);
+        float defaultWidth = Math.Max(124f, ImGui.CalcTextSize(MusicPlayerText.Get("Text0039")).X + 26f);
         float sidebarWidth = Math.Clamp(
             float.IsFinite(config.FavoriteSidebarRatio) && config.FavoriteSidebarRatio > 0f
                 ? usableWidth * config.FavoriteSidebarRatio : defaultWidth, minSidebar, maxSidebar);
@@ -919,8 +931,8 @@ public sealed class MusicPlayer : ModuleBase
             {
                 if (sidebar)
                 {
-                    if (ImGui.Button("刷新歌单##plReload") && !loadingPlaylists) TriggerLoadPlaylists();
-                    if (loadingPlaylists) ImGui.TextDisabled("加载中...");
+                    if (ImGui.Button(MusicPlayerText.Get("Text0040")) && !loadingPlaylists) TriggerLoadPlaylists();
+                    if (loadingPlaylists) ImGui.TextDisabled(MusicPlayerText.Get("Text0034"));
                     ImGui.Separator();
                     bool categories = ImGui.BeginChild("##favoriteCategories", new Vector2(0f, 0f), false);
                     try
@@ -930,7 +942,7 @@ public sealed class MusicPlayer : ModuleBase
                             float width = Math.Max(1f, ImGui.GetContentRegionAvail().X - 3f);
                             if (!isNetease)
                             {
-                                if (DrawPillButton("##favViewFav", "我喜欢的音乐", favViewIdx == 0, width, true))
+                                if (DrawPillButton("##favViewFav", MusicPlayerText.Get("Text0039"), favViewIdx == 0, width, true))
                                     favViewIdx = 0;
                                 ImGui.Dummy(new Vector2(0f, 5f));
                             }
@@ -942,7 +954,7 @@ public sealed class MusicPlayer : ModuleBase
                                     favViewIdx = i + 1;
                                     EnsurePlaylistTracks(pl);
                                 }
-                                if (ImGui.IsItemHovered()) ImGui.SetTooltip($"{pl.Name}（{pl.Count}首）");
+                                if (ImGui.IsItemHovered()) ImGui.SetTooltip(string.Format(MusicPlayerText.Get("Text0041"), pl.Name, pl.Count));
                                 ImGui.Dummy(new Vector2(0f, 5f));
                             }
                         }
@@ -959,7 +971,7 @@ public sealed class MusicPlayer : ModuleBase
             {
                 if (content && isNetease && playlists.Count == 0)
                 {
-                    ImGui.TextWrapped(loadingPlaylists ? "正在加载歌单..." : "暂无歌单，请点击左侧刷新歌单");
+                    ImGui.TextWrapped(loadingPlaylists ? MusicPlayerText.Get("Text0042") : MusicPlayerText.Get("Text0043"));
                     if (!string.IsNullOrEmpty(playlistError))
                         ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), playlistError);
                 }
@@ -973,7 +985,7 @@ public sealed class MusicPlayer : ModuleBase
                         tracks = favTracks;
                         loading = loadingFav;
                         error = favError;
-                        if (ImGui.Button("刷新歌曲##favReload") && !loadingFav) TriggerLoadFavorites();
+                        if (ImGui.Button(MusicPlayerText.Get("Text0044")) && !loadingFav) TriggerLoadFavorites();
                     }
                     else
                     {
@@ -981,19 +993,19 @@ public sealed class MusicPlayer : ModuleBase
                         playlistTrackCache.TryGetValue(pl.Id, out tracks);
                         loading = playlistTrackLoading.Contains(pl.Id);
                         error = playlistError;
-                        if (ImGui.Button("刷新歌曲##plTracksReload") && !loading)
+                        if (ImGui.Button(MusicPlayerText.Get("Text0045")) && !loading)
                         {
                             playlistTrackCache.Remove(pl.Id);
                             EnsurePlaylistTracks(pl);
                         }
                     }
                     ImGui.SameLine();
-                    if (ImGui.Button("整单播放##favoritePlayAll") && tracks is { Count: > 0 })
+                    if (ImGui.Button(MusicPlayerText.Get("Text0046")) && tracks is { Count: > 0 })
                     {
                         SetQueueAndPlay(tracks, 0);
                         changed = true;
                     }
-                    if (loading) { ImGui.SameLine(); ImGui.TextDisabled("加载中..."); }
+                    if (loading) { ImGui.SameLine(); ImGui.TextDisabled(MusicPlayerText.Get("Text0034")); }
                     if (!string.IsNullOrEmpty(error)) ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), error);
                     ImGui.Separator();
                     bool list = ImGui.BeginChild("##favoriteTracks", new Vector2(0f, 0f), false);
@@ -1005,7 +1017,7 @@ public sealed class MusicPlayer : ModuleBase
                                 for (var i = 0; i < tracks.Count; i++)
                                     DrawSongRow($"favorite{i}", tracks[i], tracks, i, ref changed);
                             if (tracks == null || tracks.Count == 0)
-                                ImGui.TextWrapped(loading ? "正在加载歌曲..." : "暂无歌曲，点击刷新歌曲重试");
+                                ImGui.TextWrapped(loading ? MusicPlayerText.Get("Text0047") : MusicPlayerText.Get("Text0048"));
                         }
                     }
                     finally { ImGui.EndChild(); }
@@ -1023,7 +1035,7 @@ public sealed class MusicPlayer : ModuleBase
     {
         var changed = false;
 
-        if (ImGui.Button("清空播放列表##qClear") && config.Queue.Count > 0)
+        if (ImGui.Button(MusicPlayerText.Get("Text0049")) && config.Queue.Count > 0)
         {
             config.Queue.Clear();
             currentQueueIndex = -1;
@@ -1031,7 +1043,7 @@ public sealed class MusicPlayer : ModuleBase
             changed = true;
         }
         ImGui.SameLine();
-        ImGui.TextDisabled($"共 {config.Queue.Count} 首");
+        ImGui.TextDisabled(string.Format(MusicPlayerText.Get("Text0050"), config.Queue.Count));
 
         ImGui.BeginChild("##musicQueue", new Vector2(0, 230f), true);
         try
@@ -1046,23 +1058,23 @@ public sealed class MusicPlayer : ModuleBase
                 try
                 {
                     var st = ImGui.GetStyle();
-                    var wPlay = ImGui.CalcTextSize("播放").X + st.FramePadding.X * 2;
-                    var wFav = ImGui.CalcTextSize("已喜欢").X + st.FramePadding.X * 2;
-                    var wDel = ImGui.CalcTextSize("移除").X + st.FramePadding.X * 2;
+                    var wPlay = ImGui.CalcTextSize(MusicPlayerText.Get("Text0051")).X + st.FramePadding.X * 2;
+                    var wFav = ImGui.CalcTextSize(MusicPlayerText.Get("Text0052")).X + st.FramePadding.X * 2;
+                    var wDel = ImGui.CalcTextSize(MusicPlayerText.Get("Text0053")).X + st.FramePadding.X * 2;
                     var btnTotal = wPlay + wFav + wDel + st.ItemSpacing.X * 2;
                     var contentRight = ImGui.GetWindowContentRegionMax().X;
                     var rowW = Math.Max(80f, contentRight - ImGui.GetCursorPosX() - btnTotal - st.ItemSpacing.X);
-                    ImGui.Selectable($"{(isCurrent ? "[播放中] " : "")}{song.Title} - {song.Artist}", isCurrent,
+                    ImGui.Selectable($"{(isCurrent ? MusicPlayerText.Get("Text0054") : "")}{song.Title} - {song.Artist}", isCurrent,
                         ImGuiSelectableFlags.None, new Vector2(rowW, 0));
 
                     doubleClicked = ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(0);
                     ImGui.SameLine();
                     ImGui.SetCursorPosX(contentRight - btnTotal);
-                    if (ImGui.SmallButton("播放")) doubleClicked = true;
+                    if (ImGui.SmallButton(MusicPlayerText.Get("Text0051"))) doubleClicked = true;
                     ImGui.SameLine();
                     DrawFavButton(song, ref changed);
                     ImGui.SameLine();
-                    if (ImGui.SmallButton("移除"))
+                    if (ImGui.SmallButton(MusicPlayerText.Get("Text0053")))
                     {
                         config.Queue.RemoveAt(i);
                         if (i == currentQueueIndex) currentQueueIndex = -1;
@@ -1081,7 +1093,7 @@ public sealed class MusicPlayer : ModuleBase
             }
             if (config.Queue.Count == 0)
             {
-                ImGui.TextDisabled("播放列表为空，去\"搜索\"或\"我的歌单\"里添加吧");
+                ImGui.TextDisabled(MusicPlayerText.Get("Text0055"));
             }
         }
         finally
@@ -1101,13 +1113,13 @@ public sealed class MusicPlayer : ModuleBase
             var isCurrent = (currentTrack != null && song.Id.Length > 0 && currentTrack.Id == song.Id)
                             || ReferenceEquals(song, currentTrack);
             var st = ImGui.GetStyle();
-            var wPlay = ImGui.CalcTextSize("播放").X + st.FramePadding.X * 2;
-            var wFav = ImGui.CalcTextSize("已喜欢").X + st.FramePadding.X * 2;
+            var wPlay = ImGui.CalcTextSize(MusicPlayerText.Get("Text0051")).X + st.FramePadding.X * 2;
+            var wFav = ImGui.CalcTextSize(MusicPlayerText.Get("Text0052")).X + st.FramePadding.X * 2;
             var wVip = song.IsVip ? ImGui.CalcTextSize("VIP").X + st.ItemSpacing.X : 0f;
             var btnTotal = wPlay + wFav + wVip + st.ItemSpacing.X * 2;
             var contentRight = ImGui.GetWindowContentRegionMax().X;
             var rowW = Math.Max(80f, contentRight - ImGui.GetCursorPosX() - btnTotal - st.ItemSpacing.X);
-            ImGui.Selectable($"{(isCurrent ? "[播放中] " : "")}{song.Title} - {song.Artist}", isCurrent,
+            ImGui.Selectable($"{(isCurrent ? MusicPlayerText.Get("Text0054") : "")}{song.Title} - {song.Artist}", isCurrent,
                 ImGuiSelectableFlags.None, new Vector2(rowW, 0));
 
             doubleClicked = ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(0);
@@ -1116,10 +1128,10 @@ public sealed class MusicPlayer : ModuleBase
             if (song.IsVip)
             {
                 ImGui.TextColored(new Vector4(1f, 0.82f, 0.35f, 1f), "VIP");
-                if (ImGui.IsItemHovered()) ImGui.SetTooltip("VIP 歌曲：未登录或非会员可能无法播放");
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip(MusicPlayerText.Get("Text0056"));
                 ImGui.SameLine();
             }
-            if (ImGui.SmallButton("播放")) doubleClicked = true;
+            if (ImGui.SmallButton(MusicPlayerText.Get("Text0051"))) doubleClicked = true;
             ImGui.SameLine();
             DrawFavButton(song, ref changed);
         }
@@ -1130,7 +1142,7 @@ public sealed class MusicPlayer : ModuleBase
 
         if (doubleClicked)
         {
-            Log($"双击播放：{song.Title}（列表 {source.Count} 首，index={index}）");
+            Log(string.Format(MusicPlayerText.Get("Ui2017"), song.Title, source.Count, index));
             if (source.Count > 0) SetQueueAndPlay(source, index);
             else EnqueueAndPlay(song);
             changed = true;
@@ -1180,19 +1192,19 @@ public sealed class MusicPlayer : ModuleBase
 
         if (!canFav)
         {
-            ImGui.TextDisabled("收藏");
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("未取到歌曲数字ID，无法收藏");
+            ImGui.TextDisabled(MusicPlayerText.Get("Text0008"));
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip(MusicPlayerText.Get("Text0057"));
             return;
         }
 
-        if (ImGui.SmallButton(liked ? "已喜欢" : "收藏"))
+        if (ImGui.SmallButton(liked ? MusicPlayerText.Get("Text0052") : MusicPlayerText.Get("Text0008")))
         {
-            Log($"点击收藏：{song.Title}（id={song.SongId}，like={!liked}）");
+            Log(string.Format(MusicPlayerText.Get("Ui2018"), song.Title, song.SongId, !liked));
             ToggleFavorite(song, !liked);
             changed = true;
         }
 
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip(liked ? "点击取消喜欢" : "加入「我喜欢的音乐」");
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(liked ? MusicPlayerText.Get("Text0058") : MusicPlayerText.Get("Text0059"));
     }
 
     private void DrawNowPlayingSection(ref bool changed)
@@ -1207,7 +1219,7 @@ public sealed class MusicPlayer : ModuleBase
         }
 
         ImGui.BeginGroup();
-        ImGui.TextUnformatted($"正在播放：{currentTrack.Title}");
+        ImGui.TextUnformatted(string.Format(MusicPlayerText.Get("Text0060"), currentTrack.Title));
         ImGui.TextDisabled($"{currentTrack.Artist}  ·  {QQ}");
         ImGui.EndGroup();
 
@@ -1225,13 +1237,13 @@ public sealed class MusicPlayer : ModuleBase
             EngineSeek(Math.Clamp(x / Math.Max(1f, size.X), 0f, 1f) * engineDuration);
         }
 
-        if (ImGui.Button("上一曲##npPrev", new Vector2(64f, 30f))) PlayPrev();
+        if (ImGui.Button(MusicPlayerText.Get("Text0061"), new Vector2(64f, 30f))) PlayPrev();
         ImGui.SameLine();
-        if (ImGui.Button(enginePlaying ? "暂停##npToggle" : "播放##npToggle", new Vector2(70f, 30f))) EngineTogglePause();
+        if (ImGui.Button(enginePlaying ? MusicPlayerText.Get("Text0062") : MusicPlayerText.Get("Text0063"), new Vector2(70f, 30f))) EngineTogglePause();
         ImGui.SameLine();
-        if (ImGui.Button("下一曲##npNext", new Vector2(64f, 30f))) PlayNext(auto: false);
+        if (ImGui.Button(MusicPlayerText.Get("Text0064"), new Vector2(64f, 30f))) PlayNext(auto: false);
         ImGui.SameLine();
-        if (resolvingPlay) ImGui.TextDisabled("解析播放地址...");
+        if (resolvingPlay) ImGui.TextDisabled(MusicPlayerText.Get("Text0065"));
         var perr = playError;
         if (!string.IsNullOrEmpty(perr))
         {
@@ -1240,7 +1252,7 @@ public sealed class MusicPlayer : ModuleBase
 
         var vol = config.Volume;
         ImGui.SetNextItemWidth(180f);
-        if (ImGui.SliderInt("音量##npVol", ref vol, 0, 100))
+        if (ImGui.SliderInt(MusicPlayerText.Get("Text0066"), ref vol, 0, 100))
         {
             config.Volume = vol;
             ApplyVolume();
@@ -1254,19 +1266,19 @@ public sealed class MusicPlayer : ModuleBase
         if (disposed) return;
 
         try { FlushChats(); }
-        catch (Exception e) { try { LogError("FlushChats 异常：" + e); } catch { } }
+        catch (Exception e) { try { LogError(MusicPlayerText.Get("Text0067") + e); } catch { } }
 
         try { ConsumePending(); }
-        catch (Exception e) { try { LogError("ConsumePending 异常：" + e); } catch { } }
+        catch (Exception e) { try { LogError(MusicPlayerText.Get("Text0068") + e); } catch { } }
 
         try { PollPlayback(); }
-        catch (Exception e) { try { LogError("PollPlayback 异常：" + e); } catch { } }
+        catch (Exception e) { try { LogError(MusicPlayerText.Get("Text0069") + e); } catch { } }
 
         try { EnsureCover(); }
-        catch (Exception e) { try { LogError("EnsureCover 异常：" + e); } catch { } }
+        catch (Exception e) { try { LogError(MusicPlayerText.Get("Text0070") + e); } catch { } }
 
         try { UpdateLyricIndex(); }
-        catch (Exception e) { try { LogError("UpdateLyricIndex 异常：" + e); } catch { } }
+        catch (Exception e) { try { LogError(MusicPlayerText.Get("Text0071") + e); } catch { } }
 
         if (!visible) return;
         if (config.WindowVisible && !overlaySuspended)
@@ -1277,7 +1289,7 @@ public sealed class MusicPlayer : ModuleBase
             }
             catch (Exception e)
             {
-                try { LogError("悬浮窗绘制异常：" + e); } catch { }
+                try { LogError(MusicPlayerText.Get("Text0072") + e); } catch { }
                 var now = DateTime.UtcNow;
                 if ((now - lastDrawErrorTime).TotalSeconds > 2) drawErrorStreak = 0;
                 drawErrorStreak++;
@@ -1285,17 +1297,17 @@ public sealed class MusicPlayer : ModuleBase
                 if (drawErrorStreak >= 120)
                 {
                     overlaySuspended = true;
-                    LogError("悬浮窗连续异常已熔断，自动隐藏（重新开关悬浮窗可恢复）");
-                    QueueChat("音乐悬浮窗出现异常已自动隐藏，可在设置里重新打开");
+                    LogError(MusicPlayerText.Get("Text0073"));
+                    QueueChat(MusicPlayerText.Get("Ui2019"));
                 }
             }
         }
 
         try { DrawMainPanel(); }
-        catch (Exception e) { try { LogError("曲库窗口异常：" + e); } catch { } }
+        catch (Exception e) { try { LogError(MusicPlayerText.Get("Text0074") + e); } catch { } }
 
         try { DrawSettingsWindow(); }
-        catch (Exception e) { try { LogError("设置窗口异常：" + e); } catch { } }
+        catch (Exception e) { try { LogError(MusicPlayerText.Get("Text0075") + e); } catch { } }
     }
 
     private void FlushChats()
@@ -1310,7 +1322,7 @@ public sealed class MusicPlayer : ModuleBase
         foreach (var item in items)
         {
             try { OmniNotifier.Chat(item); }
-            catch (Exception e) { LogError("聊天播报失败：" + e.Message); }
+            catch (Exception e) { LogError(MusicPlayerText.Get("Text0076") + e.Message); }
         }
     }
 
@@ -1363,7 +1375,7 @@ public sealed class MusicPlayer : ModuleBase
         }
         catch (Exception e)
         {
-            try { LogError("窗口位置钳制异常：" + e.Message); } catch { }
+            try { LogError(MusicPlayerText.Get("Text0077") + e.Message); } catch { }
         }
     }
 
@@ -1437,7 +1449,7 @@ public sealed class MusicPlayer : ModuleBase
         }
         catch (Exception e)
         {
-            try { LogError("悬浮窗绘制异常：" + e); } catch { }
+            try { LogError(MusicPlayerText.Get("Text0072") + e); } catch { }
         }
         finally
         {
@@ -1456,7 +1468,7 @@ public sealed class MusicPlayer : ModuleBase
         if (!overlayDiagLogged)
         {
             overlayDiagLogged = true;
-            Log($"[构建]{BuildTag} scale={scale:F2}(config {config.OverlayScale:F2}) radius={radius:F1} " +
+            Log(string.Format(MusicPlayerText.Get("Ui2020"), BuildTag, scale, config.OverlayScale, radius) +
                 $"window={(int)(max.X - min.X)}x{(int)(max.Y - min.Y)} opacity={config.OverlayOpacity:F2}");
         }
 
@@ -1469,9 +1481,9 @@ public sealed class MusicPlayer : ModuleBase
         var utilCx = min.X + 8f * scale + utilR;
         var utilCy = min.Y + 10f * scale + utilR;
         var utilStep = utilR * 2 + 6f * scale;
-        if (OverlayCircleButton(dl, "##ovAnchorBtn", anchored ? "顶" : "拖",
+        if (OverlayCircleButton(dl, "##ovAnchorBtn", anchored ? MusicPlayerText.Get("Text0078") : MusicPlayerText.Get("Text0079"),
                 new Vector2(utilCx - utilR, utilCy - utilR), new Vector2(utilCx + utilR, utilCy + utilR),
-                anchored, anchored ? "取消固定，改为自由拖动" : "固定到角色头顶", !config.WindowLocked))
+                anchored, anchored ? MusicPlayerText.Get("Text0080") : MusicPlayerText.Get("Text0081"), !config.WindowLocked))
         {
             if (anchored)
             {
@@ -1480,34 +1492,34 @@ public sealed class MusicPlayer : ModuleBase
                 config.OverlayY = pos.Y;
             }
             config.AnchorToHead = !config.AnchorToHead;
-            Log($"悬浮窗：切换锚定 -> {config.AnchorToHead}");
+            Log(string.Format(MusicPlayerText.Get("Ui2021"), config.AnchorToHead));
         }
         var lockCy = utilCy + utilStep;
-        if (OverlayCircleButton(dl, "##ovLockBtn", "锁",
+        if (OverlayCircleButton(dl, "##ovLockBtn", MusicPlayerText.Get("Text0082"),
                 new Vector2(utilCx - utilR, lockCy - utilR), new Vector2(utilCx + utilR, lockCy + utilR),
-                config.WindowLocked, config.WindowLocked ? "点击解锁悬浮窗" : "锁定悬浮窗", true))
+                config.WindowLocked, config.WindowLocked ? MusicPlayerText.Get("Text0083") : MusicPlayerText.Get("Text0084"), true))
         {
             config.WindowLocked = !config.WindowLocked;
-            Log($"悬浮窗：锁定 -> {config.WindowLocked}");
+            Log(string.Format(MusicPlayerText.Get("Ui2022"), config.WindowLocked));
         }
 
         var winR = 9f * scale;
         var winCy = min.Y + 12f * scale;
         var setCx = max.X - 14f * scale - winR;
         var libCx = setCx - (winR * 2 + 6f * scale);
-        if (OverlayCircleButton(dl, "##ovLibBtn", "曲",
+        if (OverlayCircleButton(dl, "##ovLibBtn", MusicPlayerText.Get("Text0085"),
                 new Vector2(libCx - winR, winCy - winR), new Vector2(libCx + winR, winCy + winR),
-                mainPanelOpen, mainPanelOpen ? "关闭曲库窗口" : "打开曲库窗口（登录 / 搜索 / 榜单 / 收藏 / 播放列表）"))
+                mainPanelOpen, mainPanelOpen ? MusicPlayerText.Get("Text0086") : MusicPlayerText.Get("Text0087")))
         {
             mainPanelOpen = !mainPanelOpen;
-            Log($"悬浮窗：曲库窗口 -> {mainPanelOpen}");
+            Log(string.Format(MusicPlayerText.Get("Ui2023"), mainPanelOpen));
         }
-        if (OverlayCircleButton(dl, "##ovSetBtn", "设",
+        if (OverlayCircleButton(dl, "##ovSetBtn", MusicPlayerText.Get("Text0088"),
                 new Vector2(setCx - winR, winCy - winR), new Vector2(setCx + winR, winCy + winR),
-                settingsPanelOpen, settingsPanelOpen ? "关闭设置窗口" : "打开设置窗口"))
+                settingsPanelOpen, settingsPanelOpen ? MusicPlayerText.Get("Text0089") : MusicPlayerText.Get("Text0090")))
         {
             settingsPanelOpen = !settingsPanelOpen;
-            Log($"悬浮窗：设置窗口 -> {settingsPanelOpen}");
+            Log(string.Format(MusicPlayerText.Get("Ui2024"), settingsPanelOpen));
         }
 
         DrawOverlayVolume(dl, min, max, scale, utilCx, lockCy + utilR);
@@ -1540,9 +1552,9 @@ public sealed class MusicPlayer : ModuleBase
             var idleFont = ImGui.GetFont();
             var idleFs = ImGui.GetFontSize();
             dl.AddText(idleFont, idleFs, new Vector2(textLeft, min.Y + H * 0.5f - 24f * scale),
-                Col(new Vector3(1f, 1f, 1f), 0.92f), "暂无播放内容");
+                Col(new Vector3(1f, 1f, 1f), 0.92f), MusicPlayerText.Get("Text0091"));
             dl.AddText(idleFont, idleFs, new Vector2(textLeft, min.Y + H * 0.5f - 2f * scale),
-                Col(new Vector3(1f, 1f, 1f), 0.55f), "点右上角「曲」打开曲库窗口");
+                Col(new Vector3(1f, 1f, 1f), 0.55f), MusicPlayerText.Get("Text0092"));
         }
         else
         {
@@ -1579,10 +1591,10 @@ public sealed class MusicPlayer : ModuleBase
         else
         {
             FillRounded(dl, coverMin, coverMax, Col(new Vector3(1f, 1f, 1f), 0.10f), radius);
-            var phTs = ImGui.CalcTextSize("无封面");
+            var phTs = ImGui.CalcTextSize(MusicPlayerText.Get("Text0093"));
             var coverSpan = coverMax - coverMin;
             dl.AddText(coverMin + (coverSpan - phTs) * 0.5f,
-                Col(new Vector3(1f, 1f, 1f), 0.35f), "无封面");
+                Col(new Vector3(1f, 1f, 1f), 0.35f), MusicPlayerText.Get("Text0093"));
         }
 
         var tw = Math.Max(60f, textRight - textLeft);
@@ -1606,21 +1618,21 @@ public sealed class MusicPlayer : ModuleBase
         if (OverlayVectorButton(dl, "##ovPrev", OvIcon.Prev,
                 new Vector2(bx, btnY), new Vector2(bx + btnW, btnY + btnH), true))
         {
-            Log("悬浮窗：上一曲");
+            Log(MusicPlayerText.Get("Ui2025"));
             PlayPrev();
         }
         bx += btnW + gap;
         if (OverlayVectorButton(dl, "##ovToggle", enginePlaying ? OvIcon.Pause : OvIcon.Play,
                 new Vector2(bx, btnY), new Vector2(bx + btnW, btnY + btnH), true))
         {
-            Log("悬浮窗：播放/暂停");
+            Log(MusicPlayerText.Get("Ui2026"));
             EngineTogglePause();
         }
         bx += btnW + gap;
         if (OverlayVectorButton(dl, "##ovNext", OvIcon.Next,
                 new Vector2(bx, btnY), new Vector2(bx + btnW, btnY + btnH), true))
         {
-            Log("悬浮窗：下一曲");
+            Log(MusicPlayerText.Get("Ui2027"));
             PlayNext(auto: false);
         }
 
@@ -1642,7 +1654,7 @@ public sealed class MusicPlayer : ModuleBase
             var nextIdx = (currentQueueIndex + 1) % config.Queue.Count;
             var next = config.Queue[nextIdx];
             dl.AddText(font, fsz, new Vector2(textLeft, lineY),
-                Col(new Vector3(1f, 1f, 1f), 0.50f), $"下一曲：{Truncate(next.Title, 18)}");
+                Col(new Vector3(1f, 1f, 1f), 0.50f), string.Format(MusicPlayerText.Get("Text0094"), Truncate(next.Title, 18)));
         }
 
         var barH = Math.Max(3f, 3.5f * scale);
@@ -1787,7 +1799,7 @@ public sealed class MusicPlayer : ModuleBase
                 ApplyVolume();
             }
         }
-        if (hovered) ImGui.SetTooltip($"音量 {config.Volume}");
+        if (hovered) ImGui.SetTooltip(string.Format(MusicPlayerText.Get("Text0095"), config.Volume));
 
         var fracNow = Math.Clamp(config.Volume / 100f, 0f, 1f);
         var fillTop = bottom - trackH * fracNow;
@@ -2079,7 +2091,7 @@ public sealed class MusicPlayer : ModuleBase
         if (string.IsNullOrEmpty(url)) return;
 
         var ext = isNetease || url.Contains(".mp3", StringComparison.OrdinalIgnoreCase) ? ".mp3" : ".m4a";
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             try
             {
@@ -2108,9 +2120,9 @@ public sealed class MusicPlayer : ModuleBase
             }
             catch (Exception e)
             {
-                if (!disposed && ticket == playGeneration && e is not OperationCanceledException) playError = "音频下载失败: " + e.Message;
+                if (!disposed && ticket == playGeneration && e is not OperationCanceledException) playError = MusicPlayerText.Get("Text0096") + e.Message;
             }
-        });
+        }));
     }
 
     private void EngineTogglePause()
@@ -2183,7 +2195,7 @@ public sealed class MusicPlayer : ModuleBase
             }
             else
             {
-                playError = "本地音频播放失败（MCI 无法打开该文件）";
+                playError = MusicPlayerText.Get("Text0097");
                 try { File.Delete(mciFile); } catch { }
             }
         }
@@ -2253,7 +2265,7 @@ public sealed class MusicPlayer : ModuleBase
         TriggerCover(t);
 
         resolvingPlay = true;
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             try
             {
@@ -2265,27 +2277,27 @@ public sealed class MusicPlayer : ModuleBase
                     string.IsNullOrEmpty(config.QQMusicId))
                 {
                     url = null;
-                    playError = "未登录只能获取 m4a 音源（本机播放器不支持），请扫码登录后播放";
+                    playError = MusicPlayerText.Get("Text0098");
                 }
                 netCompletions.Enqueue(() => { if (!disposed && ticket == playGeneration) pendingPlayUrl = url; });
                 if (url == null && playError.Length == 0)
                 {
                     var loggedIn = !string.IsNullOrEmpty(config.QQMusicId);
                     playError = !loggedIn
-                        ? "VIP 歌曲：请先扫码登录（绿钻账号可播放）"
-                        : "获取播放地址失败：该歌曲版权受限或接口异常（详情见日志）";
+                        ? MusicPlayerText.Get("Text0099")
+                        : MusicPlayerText.Get("Text0100");
                 }
             }
             catch (Exception e)
             {
                 if (ticket == playGeneration) pendingPlayUrl = null;
-                if (!disposed && ticket == playGeneration && e is not OperationCanceledException) playError = "解析播放地址失败: " + e.Message;
+                if (!disposed && ticket == playGeneration && e is not OperationCanceledException) playError = MusicPlayerText.Get("Text0101") + e.Message;
             }
             finally
             {
                 if (ticket == playGeneration) resolvingPlay = false;
             }
-        });
+        }));
     }
 
     private void PlayQueueIndex(int i)
@@ -2341,7 +2353,7 @@ public sealed class MusicPlayer : ModuleBase
         keyword = (keyword ?? string.Empty).Trim();
         if (keyword.Length == 0)
         {
-            searchError = "请先输入歌名或歌手";
+            searchError = MusicPlayerText.Get("Text0102");
             searchDebug = "输入框为空，已忽略本次点击";
             return;
         }
@@ -2352,7 +2364,7 @@ public sealed class MusicPlayer : ModuleBase
         searchDebug = $"正在搜索「{keyword}」…";
 
         Log($"开始搜索：{keyword}");
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             try
             {
@@ -2362,15 +2374,15 @@ public sealed class MusicPlayer : ModuleBase
             }
             catch (Exception e)
             {
-                LogError($"搜索异常：{keyword} -> {e}");
-                searchError = $"搜索失败: {e.Message}";
+                LogError(string.Format(MusicPlayerText.Get("Text0103"), keyword, e));
+                searchError = string.Format(MusicPlayerText.Get("Text0104"), e.Message);
                 searchDebug = "请求异常：" + e.Message;
             }
             finally
             {
                 searching = false;
             }
-        });
+        }));
     }
 
     private async Task<(int Status, string Body)> HttpGetText(string url, string referer)
@@ -2391,7 +2403,7 @@ public sealed class MusicPlayer : ModuleBase
         recommendError = string.Empty;
         recommendTopName = topName;
 
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             try
             {
@@ -2402,19 +2414,19 @@ public sealed class MusicPlayer : ModuleBase
                 Log($"推荐榜单[{topName}]：HTTP {status}，{body.Length} 字符");
 
                 var tracks = ParseToplist(body);
-                if (tracks.Count == 0) recommendError = "没有取到榜单歌曲，可稍后重试";
+                if (tracks.Count == 0) recommendError = MusicPlayerText.Get("Text0105");
                 pendingRecommendTracks = tracks;
             }
             catch (Exception e)
             {
-                LogError("推荐榜单加载失败：" + e);
-                recommendError = "加载失败: " + e.Message;
+                LogError(MusicPlayerText.Get("Text0106") + e);
+                recommendError = MusicPlayerText.Get("Text0107") + e.Message;
             }
             finally
             {
                 loadingRecommend = false;
             }
-        });
+        }));
     }
 
     private static List<Track> ParseToplist(string body)
@@ -2445,7 +2457,7 @@ public sealed class MusicPlayer : ModuleBase
         }
         catch (Exception e)
         {
-            LogError("榜单解析异常：" + e.Message);
+            LogError(MusicPlayerText.Get("Text0108") + e.Message);
         }
         return tracks;
     }
@@ -2757,7 +2769,7 @@ public sealed class MusicPlayer : ModuleBase
         var body = await resp.Content.ReadAsStringAsync();
         if (body.Length > 12_000_000)
         {
-            LogError($"musicu 响应异常庞大（{body.Length} 字符），已拒收防止解析崩溃");
+            LogError(string.Format(MusicPlayerText.Get("Text0109"), body.Length));
             return "{}";
         }
         return body;
@@ -2798,7 +2810,7 @@ public sealed class MusicPlayer : ModuleBase
         currentLyrics.Clear();
         lyricCurrentIndex = -1;
 
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             try
             {
@@ -2809,14 +2821,14 @@ public sealed class MusicPlayer : ModuleBase
             }
             catch (Exception e)
             {
-                LogError($"歌词获取失败：{song.Title} -> {e}");
-                if (!disposed && ticket == lyricGeneration) lyricError = $"歌词获取失败: {e.Message}";
+                LogError(string.Format(MusicPlayerText.Get("Text0110"), song.Title, e));
+                if (!disposed && ticket == lyricGeneration) lyricError = string.Format(MusicPlayerText.Get("Text0111"), e.Message);
             }
             finally
             {
                 if (ticket == lyricGeneration) loadingLyric = false;
             }
-        });
+        }));
     }
 
     private async Task<string> GetQQLyric(string songMid)
@@ -2837,7 +2849,7 @@ public sealed class MusicPlayer : ModuleBase
         }
         catch (Exception e)
         {
-            LogError($"QQ歌曲详情异常：{e.Message}");
+            LogError(string.Format(MusicPlayerText.Get("Text0112"), e.Message));
         }
 
         try
@@ -2859,7 +2871,7 @@ public sealed class MusicPlayer : ModuleBase
         }
         catch (Exception e)
         {
-            LogError($"QQ歌词新版接口异常：{e.Message}");
+            LogError(string.Format(MusicPlayerText.Get("Text0113"), e.Message));
         }
 
         try
@@ -2876,7 +2888,7 @@ public sealed class MusicPlayer : ModuleBase
         }
         catch (Exception e)
         {
-            LogError($"QQ歌词旧接口异常：{e.Message}");
+            LogError(string.Format(MusicPlayerText.Get("Text0114"), e.Message));
         }
 
         return string.Empty;
@@ -2935,7 +2947,7 @@ public sealed class MusicPlayer : ModuleBase
         coverLoading.Add(t.CoverUrl);
         var coverUrl = t.CoverUrl;
         TriggerCoverBlur(coverUrl);
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             try
             {
@@ -2946,7 +2958,7 @@ public sealed class MusicPlayer : ModuleBase
             {
                 pendingCoverBytes = new CoverBytes { Url = coverUrl, Bytes = Array.Empty<byte>() };
             }
-        });
+        }));
     }
 
     private void TriggerCoverBlur(string coverUrl)
@@ -2957,7 +2969,7 @@ public sealed class MusicPlayer : ModuleBase
         var blurUrl = coverUrl.Substring(0, m.Index) + "R90x90M" + coverUrl[(m.Index + m.Length)..];
 
         blurLoading.Add(coverUrl);
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             IDalamudTextureWrap? wrap = null;
             try
@@ -2967,7 +2979,7 @@ public sealed class MusicPlayer : ModuleBase
             }
             catch { wrap = null; }
             pendingBlurTex = new TexResult { Url = coverUrl, Tex = wrap };
-        });
+        }));
     }
 
     private void EnsureCover()
@@ -2986,7 +2998,7 @@ public sealed class MusicPlayer : ModuleBase
             {
                 var bytesCopy = cb.Bytes;
                 var url = cb.Url;
-                _ = Task.Run(async () =>
+                _ = MusicPlayerText.Track(Task.Run(async () =>
                 {
                     try
                     {
@@ -3002,7 +3014,7 @@ public sealed class MusicPlayer : ModuleBase
                     {
                         pendingCoverTex = new TexResult { Url = url, Tex = null };
                     }
-                });
+                }));
             }
         }
 
@@ -3069,7 +3081,7 @@ public sealed class MusicPlayer : ModuleBase
     {
         if (glassTexRequested) return;
         glassTexRequested = true;
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             try
             {
@@ -3078,7 +3090,7 @@ public sealed class MusicPlayer : ModuleBase
                 pendingGlassTex = wrap;
             }
             catch { pendingGlassTex = null; }
-        });
+        }));
     }
 
     private IDalamudTextureWrap? GetCurrentCoverTexture()
@@ -3098,7 +3110,7 @@ public sealed class MusicPlayer : ModuleBase
         if (isNetease) { NetFavorites(); return; }
         if (string.IsNullOrEmpty(config.QQMusicId))
         {
-            if (!silent) favError = "请先登录 QQ音乐";
+            if (!silent) favError = MusicPlayerText.Get("Text0115");
             return;
         }
 
@@ -3106,7 +3118,7 @@ public sealed class MusicPlayer : ModuleBase
         favError = string.Empty;
         var uin = config.QQMusicId;
 
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             try
             {
@@ -3114,20 +3126,20 @@ public sealed class MusicPlayer : ModuleBase
                 var tracks = await FetchSongsByMids(mids);
                 if (tracks.Count == 0)
                 {
-                    favError = "「我喜欢的音乐」还没有歌曲，或登录态已失效（可重新扫码）";
+                    favError = MusicPlayerText.Get("Text0116");
                 }
                 pendingFavTracks = tracks;
             }
             catch (Exception e)
             {
-                LogError("我喜欢列表加载失败：" + e);
-                if (!silent) favError = "加载失败: " + e.Message;
+                LogError(MusicPlayerText.Get("Text0117") + e);
+                if (!silent) favError = MusicPlayerText.Get("Text0107") + e.Message;
             }
             finally
             {
                 loadingFav = false;
             }
-        });
+        }));
     }
 
     private async Task<List<string>> FetchLikedMids(long dirId, string uin)
@@ -3173,7 +3185,7 @@ public sealed class MusicPlayer : ModuleBase
                 }
                 catch (Exception e)
                 {
-                    LogError($"单曲详情失败 {mid}：{e.Message}");
+                    LogError(string.Format(MusicPlayerText.Get("Text0118"), mid, e.Message));
                 }
                 return null;
             });
@@ -3188,7 +3200,7 @@ public sealed class MusicPlayer : ModuleBase
         if (isNetease) { NetPlaylists(); return; }
         if (string.IsNullOrEmpty(config.QQMusicId))
         {
-            if (!silent) playlistError = "请先登录 QQ音乐";
+            if (!silent) playlistError = MusicPlayerText.Get("Text0115");
             return;
         }
 
@@ -3196,7 +3208,7 @@ public sealed class MusicPlayer : ModuleBase
         playlistError = string.Empty;
         var uin = config.QQMusicId;
 
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             try
             {
@@ -3229,19 +3241,19 @@ public sealed class MusicPlayer : ModuleBase
                 }
 
                 if (list.Count == 0)
-                    playlistError = "暂无其他歌单";
+                    playlistError = MusicPlayerText.Get("Text0119");
                 pendingPlaylists = list;
             }
             catch (Exception e)
             {
-                LogError("歌单列表加载失败：" + e);
-                if (!silent) playlistError = "加载失败: " + e.Message;
+                LogError(MusicPlayerText.Get("Text0120") + e);
+                if (!silent) playlistError = MusicPlayerText.Get("Text0107") + e.Message;
             }
             finally
             {
                 loadingPlaylists = false;
             }
-        });
+        }));
     }
 
     private void EnsurePlaylistTracks(PlaylistInfo pl)
@@ -3255,7 +3267,7 @@ public sealed class MusicPlayer : ModuleBase
         var name = pl.Name;
         Log($"加载歌单曲目：{name}（id={dirId}）");
 
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             var tracks = new List<Track>();
             try
@@ -3286,11 +3298,11 @@ public sealed class MusicPlayer : ModuleBase
             }
             catch (Exception e)
             {
-                LogError("歌单曲目加载失败：" + e);
-                playlistError = "歌单曲目加载失败: " + e.Message;
+                LogError(MusicPlayerText.Get("Text0121") + e);
+                playlistError = MusicPlayerText.Get("Text0122") + e.Message;
             }
             pendingPlaylistTrackCache = new PlTracksResult { DirId = dirId, Tracks = tracks };
-        });
+        }));
     }
 
     private static List<Track> ExtractSongList(string body)
@@ -3446,7 +3458,7 @@ public sealed class MusicPlayer : ModuleBase
         }
         catch (Exception e)
         {
-            LogError("导出 QQ 音乐 cookie 失败：" + e.Message);
+            LogError(MusicPlayerText.Get("Text0123") + e.Message);
         }
         return string.Join("; ", parts);
     }
@@ -3472,7 +3484,7 @@ public sealed class MusicPlayer : ModuleBase
         if (raw.Length == 0) return "{}";
         if (raw.Length > 8_000_000)
         {
-            LogError($"musics 响应异常庞大（{raw.Length} 字节），已拒收防止解析崩溃");
+            LogError(string.Format(MusicPlayerText.Get("Text0124"), raw.Length));
             return "{}";
         }
         return Ag1Decrypt(raw);
@@ -3506,13 +3518,13 @@ public sealed class MusicPlayer : ModuleBase
         }
         catch (Exception e)
         {
-            LogError("加密通道写请求异常：" + e.Message);
+            LogError(MusicPlayerText.Get("Text0125") + e.Message);
         }
 
         var probe = text.TrimStart();
         if (probe.Length == 0 || probe[0] != '{')
         {
-            LogError(probe.Length == 0 ? "加密通道无响应，回退明文 musicu" : "加密通道返回体不是 JSON，回退明文 musicu");
+            LogError(probe.Length == 0 ? MusicPlayerText.Get("Text0126") : MusicPlayerText.Get("Text0127"));
             text = await PostMusicu(payload);
             Log("musicu 明文写请求[" + module + "." + method + "]：" + Snip(text, 220));
         }
@@ -3541,7 +3553,7 @@ public sealed class MusicPlayer : ModuleBase
         if (song.SongId <= 0) return;
         if (string.IsNullOrEmpty(config.QQMusicId))
         {
-            QueueChat("请先登录 QQ音乐再收藏歌曲");
+            QueueChat(MusicPlayerText.Get("Ui2028"));
             return;
         }
 
@@ -3550,7 +3562,7 @@ public sealed class MusicPlayer : ModuleBase
 
         if (like) likedIds.Add(songId); else likedIds.Remove(songId);
 
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             var result = new FavToggleResult { SongId = songId, Mid = mid, Liked = like };
             try
@@ -3570,12 +3582,12 @@ public sealed class MusicPlayer : ModuleBase
 
                 result.Success = code == 0;
                 result.Message = code == 0
-                    ? (like ? "已加入「我喜欢的音乐」" : "已从「我喜欢的音乐」移除")
+                    ? (like ? MusicPlayerText.Get("Text0128") : MusicPlayerText.Get("Text0129"))
                     : code == 1000
-                        ? "收藏失败：登录态已失效，请重新扫码"
+                        ? MusicPlayerText.Get("Text0130")
                         : code == 500026
-                            ? (like ? "歌曲已在「我喜欢的音乐」里" : "歌曲不在「我喜欢的音乐」里")
-                            : "收藏失败（code=" + code + "），详情见日志";
+                            ? (like ? MusicPlayerText.Get("Text0131") : MusicPlayerText.Get("Text0132"))
+                            : MusicPlayerText.Get("Text0133") + code + MusicPlayerText.Get("Text0134");
                 if (code != 0 && data.ValueKind == JsonValueKind.Object)
                 {
                     try
@@ -3591,14 +3603,14 @@ public sealed class MusicPlayer : ModuleBase
             }
             catch (Exception e)
             {
-                LogError("收藏操作异常：" + e);
+                LogError(MusicPlayerText.Get("Text0135") + e);
                 result.Success = false;
-                result.Message = "收藏操作失败: " + e.Message;
+                result.Message = MusicPlayerText.Get("Text0136") + e.Message;
                 if (like) likedIds.Remove(songId); else likedIds.Add(songId);
             }
 
             pendingFavToggle = result;
-        });
+        }));
     }
 
     private void StartQQLogin()
@@ -3612,7 +3624,7 @@ public sealed class MusicPlayer : ModuleBase
         qrTextureKey = string.Empty;
         qrRequestedKey = string.Empty;
 
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             try
             {
@@ -3626,7 +3638,7 @@ public sealed class MusicPlayer : ModuleBase
                 }
                 catch (Exception ex)
                 {
-                    LogError("xlogin 前置请求失败（继续尝试）：" + ex.Message);
+                    LogError(MusicPlayerText.Get("Text0137") + ex.Message);
                 }
 
                 var qr = Array.Empty<byte>();
@@ -3657,13 +3669,13 @@ public sealed class MusicPlayer : ModuleBase
                     }
                     catch (Exception ex)
                     {
-                        LogError($"QQ二维码请求失败：{ex.Message}");
+                        LogError(string.Format(MusicPlayerText.Get("Text0138"), ex.Message));
                     }
                 }
 
                 if (qr.Length == 0)
                 {
-                    throw new Exception("二维码接口没有返回图片，可稍后重试");
+                    throw new Exception(MusicPlayerText.Get("Text0139"));
                 }
                 pendingQrBytes = qr;
 
@@ -3708,7 +3720,7 @@ public sealed class MusicPlayer : ModuleBase
                         }
                         catch (Exception ex)
                         {
-                            LogError("ptqrlogin HttpClient 异常：" + ex.Message);
+                            LogError(MusicPlayerText.Get("Text0140") + ex.Message);
                             useWinInet = true;
                             continue;
                         }
@@ -3810,7 +3822,7 @@ public sealed class MusicPlayer : ModuleBase
                     }
                     catch (Exception ex)
                     {
-                        LogError("QQ登录 authorize 步骤异常：" + ex.Message);
+                        LogError(MusicPlayerText.Get("Text0141") + ex.Message);
                     }
                     Log($"QQ登录授权 code 长度={authCode.Length}");
 
@@ -3899,7 +3911,7 @@ public sealed class MusicPlayer : ModuleBase
                             MusicId = musicId > 0 ? musicId.ToString(CultureInfo.InvariantCulture) : string.Empty,
                             Cookie = cookieDump,
                             Success = true,
-                            Message = $"QQ音乐登录成功：{nickname}"
+                            Message = string.Format(MusicPlayerText.Get("Text0142"), nickname)
                         };
                     }
                     else
@@ -3910,7 +3922,7 @@ public sealed class MusicPlayer : ModuleBase
                             MusicId = string.Empty,
                             Cookie = cookieDump,
                             Success = false,
-                            Message = $"QQ 扫码成功（{nickname}），但换取音乐登录态失败"
+                            Message = string.Format(MusicPlayerText.Get("Text0143"), nickname)
                         };
                         loginDebug = "已拿到 QQ 授权码，但音乐 musickey 未返回，请重新扫码再试一次";
                     }
@@ -3925,7 +3937,7 @@ public sealed class MusicPlayer : ModuleBase
             {
                 qqLoginStage = 4;
                 loginMsg = "QQ音乐登录失败: " + e.Message;
-                LogError("QQ登录异常：" + e);
+                LogError(MusicPlayerText.Get("Text0144") + e);
             }
             finally
             {
@@ -3933,7 +3945,7 @@ public sealed class MusicPlayer : ModuleBase
                 pendingQrBytes = null;
                 loginNick = string.Empty;
             }
-        });
+        }));
     }
 
     private static string GetCookieValue(string name)
@@ -4013,7 +4025,7 @@ public sealed class MusicPlayer : ModuleBase
         }
         catch (Exception e)
         {
-            LogError($"写 cookie 失败 {name}@{domain}：{e.Message}");
+            LogError(string.Format(MusicPlayerText.Get("Text0145"), name, domain, e.Message));
         }
     }
 
@@ -4182,7 +4194,7 @@ public sealed class MusicPlayer : ModuleBase
             pendingLyrics = null;
             currentLyrics.Clear();
             currentLyrics.AddRange(lyrics);
-            if (currentLyrics.Count == 0) lyricError = "未获取到歌词";
+            if (currentLyrics.Count == 0) lyricError = MusicPlayerText.Get("Text0146");
         }
 
         var login = pendingLogin;
@@ -4215,7 +4227,7 @@ public sealed class MusicPlayer : ModuleBase
             {
                 if (t.SongId > 0) likedIds.Add(t.SongId);
             }
-            QueueChat($"我喜欢的音乐已加载（{favTracks.Count}首）");
+            QueueChat(string.Format(MusicPlayerText.Get("Ui2029"), favTracks.Count));
         }
 
         var recs = pendingRecommendTracks;
@@ -4270,7 +4282,7 @@ public sealed class MusicPlayer : ModuleBase
         if (qrTextureKey == key || qrRequestedKey == key) return;
 
         qrRequestedKey = key;
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             try
             {
@@ -4286,7 +4298,7 @@ public sealed class MusicPlayer : ModuleBase
             catch
             {
             }
-        });
+        }));
     }
 
     private void ConsumeQrTexture()
@@ -4344,7 +4356,7 @@ public sealed class MusicPlayer : ModuleBase
     private bool platformReady;
 
     public MusicPlayer() { }
-    private MusicPlayer(MusicPlayer parent, MusicPlayerConfig settings)
+    private MusicPlayer(MusicPlayer parent, Settings settings)
     {
         isNetease = true;
         owner = parent;
@@ -4360,7 +4372,7 @@ public sealed class MusicPlayer : ModuleBase
     {
         if (owner != null) return;
         config.SelectedProvider = Math.Clamp(config.SelectedProvider, 0, 1);
-        config.Netease ??= new MusicPlayerConfig();
+        config.Netease ??= new Settings();
         neteasePlayer ??= new MusicPlayer(this, config.Netease);
         // The host may have restored the config object after construction.
         neteasePlayer.config = config.Netease;
@@ -4392,15 +4404,15 @@ public sealed class MusicPlayer : ModuleBase
 
     private void DrawPlatformPicker()
     {
-        ImGui.TextUnformatted("账号登录");
+        ImGui.TextUnformatted(MusicPlayerText.Get("Text0147"));
         ImGui.SameLine();
         ImGui.SetNextItemWidth(150f);
         if (ImGui.BeginCombo("##musicPlatform", PlatformName))
         {
             try
             {
-                if (ImGui.Selectable("QQ音乐", !isNetease)) Root.requestedProvider = 0;
-                if (ImGui.Selectable("网易云音乐", isNetease)) Root.requestedProvider = 1;
+                if (ImGui.Selectable(MusicPlayerText.Get("Text0148"), !isNetease)) Root.requestedProvider = 0;
+                if (ImGui.Selectable(MusicPlayerText.Get("Text0149"), isNetease)) Root.requestedProvider = 1;
             }
             finally { ImGui.EndCombo(); }
         }
@@ -4419,12 +4431,12 @@ public sealed class MusicPlayer : ModuleBase
         {
             try
             {
-                var save = typeof(ModuleBase).GetProperty("SaveHostConfig", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)?.GetValue(this) as Action;
+                var save = typeof(OmniModuleBase).GetProperty("SaveHostConfig", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)?.GetValue(this) as Action;
                 if (save == null) return;
                 save();
                 panelDirty = loginDirty = neteasePlayer.panelDirty = neteasePlayer.loginDirty = false;
             }
-            catch (Exception ex) { LogError("保存音乐设置失败：" + ex.Message); }
+            catch (Exception ex) { LogError(MusicPlayerText.Get("Text0150") + ex.Message); }
         }
     }
 
@@ -4433,11 +4445,11 @@ public sealed class MusicPlayer : ModuleBase
         bool changed = false;
         if (!string.IsNullOrEmpty(config.QQMusicId))
         {
-            ImGui.TextColored(new Vector4(.4f, .85f, .45f, 1f), "已登录：" + config.QQNickname);
+            ImGui.TextColored(new Vector4(.4f, .85f, .45f, 1f), MusicPlayerText.Get("Text0151") + config.QQNickname);
             ImGui.SameLine();
-            if (ImGui.Button("刷新数据##netRefresh")) { NetFavorites(); NetPlaylists(); }
+            if (ImGui.Button(MusicPlayerText.Get("Text0152"))) { NetFavorites(); NetPlaylists(); }
             ImGui.SameLine();
-            if (ImGui.Button("退出登录##netLogout"))
+            if (ImGui.Button(MusicPlayerText.Get("Text0153")))
             {
                 ResetNetSession();
                 netCookie = config.QQCookie = config.QQNickname = config.QQMusicId = "";
@@ -4448,8 +4460,8 @@ public sealed class MusicPlayer : ModuleBase
         }
         else
         {
-            ImGui.TextDisabled("未登录"); ImGui.SameLine();
-            if (ImGui.Button(loginRunning ? "重新生成二维码##netLogin" : "网易云音乐扫码登录##netLogin")) NetLogin();
+            ImGui.TextDisabled(MusicPlayerText.Get("Text0025")); ImGui.SameLine();
+            if (ImGui.Button(loginRunning ? MusicPlayerText.Get("Text0154") : MusicPlayerText.Get("Text0155"))) NetLogin();
         }
         var qr = netQr;
         if (qr != null)
@@ -4467,7 +4479,7 @@ public sealed class MusicPlayer : ModuleBase
                 }
             ImGui.Dummy(new Vector2(size));
         }
-        if (loginRunning && ImGui.Button("取消扫码##netCancel")) { ResetNetSession(); loginMsg = "已取消扫码"; }
+        if (loginRunning && ImGui.Button(MusicPlayerText.Get("Text0156"))) { ResetNetSession(); loginMsg = MusicPlayerText.Get("Ui2030"); }
         if (loginMsg.Length > 0) ImGui.TextWrapped(loginMsg);
         return changed;
     }
@@ -4491,12 +4503,12 @@ public sealed class MusicPlayer : ModuleBase
     {
         int session = netSession;
         var token = workCancellation.Token;
-        _ = Task.Run(async () =>
+        _ = MusicPlayerText.Track(Task.Run(async () =>
         {
             try { netOperationToken.Value = token; token.ThrowIfCancellationRequested(); await job(session); }
             catch (OperationCanceledException) { }
             catch (Exception ex) { NetPost(session, () => failed(ex.Message)); }
-        });
+        }));
     }
 
     // Decode owned MP3 bytes off the game thread. The playback device only sees PCM WAV.
@@ -4508,7 +4520,7 @@ public sealed class MusicPlayer : ModuleBase
             using var input = new MemoryStream(bytes, false);
             using var decoder = new OmniMusicMpeg.MpegFile(input);
             int channels = decoder.Channels, rate = decoder.SampleRate;
-            if (channels is < 1 or > 2 || rate is < 8000 or > 96000) throw new InvalidDataException("不支持的 MP3 音频参数");
+            if (channels is < 1 or > 2 || rate is < 8000 or > 96000) throw new InvalidDataException(MusicPlayerText.Get("Text0157"));
             using var output = File.Create(path);
             using var writer = new BinaryWriter(output, Encoding.ASCII, true);
             writer.Write(Encoding.ASCII.GetBytes("RIFF")); writer.Write(0);
@@ -4523,7 +4535,7 @@ public sealed class MusicPlayer : ModuleBase
                 token.ThrowIfCancellationRequested();
                 int count = decoder.ReadSamples(samples, 0, samples.Length);
                 if (count <= 0) break;
-                if ((long)total + count * 2 > 512 * 1024 * 1024) throw new InvalidDataException("音频过长，超过本地解码上限");
+                if ((long)total + count * 2 > 512 * 1024 * 1024) throw new InvalidDataException(MusicPlayerText.Get("Text0158"));
                 for (int i = 0; i < count; i++)
                 {
                     float sample = float.IsFinite(samples[i]) ? Math.Clamp(samples[i], -1f, 1f) : 0;
@@ -4532,7 +4544,7 @@ public sealed class MusicPlayer : ModuleBase
                 }
                 writer.Write(pcm, 0, count * 2); total += count * 2;
             }
-            if (total == 0) throw new InvalidDataException("未解码出有效音频");
+            if (total == 0) throw new InvalidDataException(MusicPlayerText.Get("Text0159"));
             output.Position = 4; writer.Write(total + 36); output.Position = 40; writer.Write(total);
             writer.Flush();
             return path;
@@ -4603,7 +4615,7 @@ public sealed class MusicPlayer : ModuleBase
             foreach (var set in cookies) foreach (var item in NetCookies(set.Split(';')[0])) jar[item.Key] = item.Value;
         long code = NetNumber(body, "code");
         if (requireSuccess && code != 200)
-            throw new InvalidOperationException(code is 301 or 302 ? "网易云登录已失效，请重新扫码" : "网易云请求失败（" + code + "）：" + NetString(body, "message", NetString(body, "msg", "请稍后重试")));
+            throw new InvalidOperationException(code is 301 or 302 ? MusicPlayerText.Get("Text0160") : MusicPlayerText.Get("Text0161") + code + "）：" + NetString(body, "message", NetString(body, "msg", MusicPlayerText.Get("Text0162"))));
         return new NetReply(body, string.Join("; ", jar.Select(x => x.Key + "=" + x.Value)));
     }
 
@@ -4707,7 +4719,7 @@ public sealed class MusicPlayer : ModuleBase
                 var rows = NetArray(reply.Body, "playlist").ToArray();
                 result.AddRange(rows.Select(x => new PlaylistInfo(NetNumber(x, "id").ToString(), NetString(x, "name"), (int)NetNumber(x, "trackCount"))));
                 if (rows.Length < 200 || !reply.Body.TryGetProperty("more", out var more) || more.ValueKind != JsonValueKind.True) break;
-                if (offset >= 10000) throw new InvalidOperationException("歌单数量过多，请减少收藏后刷新");
+                if (offset >= 10000) throw new InvalidOperationException(MusicPlayerText.Get("Text0163"));
             }
             NetPost(session, () => { pendingPlaylists = result; loadingPlaylists = false; });
         }, error => { playlistError = error; loadingPlaylists = false; });
@@ -4722,7 +4734,7 @@ public sealed class MusicPlayer : ModuleBase
 
     private void NetLike(Track song, bool like)
     {
-        if (netFavoriteWriting || config.QQMusicId.Length == 0) { QueueChat("请先登录网易云音乐，或等待上一项收藏操作完成"); return; }
+        if (netFavoriteWriting || config.QQMusicId.Length == 0) { QueueChat(MusicPlayerText.Get("Ui2031")); return; }
         netFavoriteWriting = true;
         NetJob(async session =>
         {
@@ -4731,9 +4743,9 @@ public sealed class MusicPlayer : ModuleBase
             {
                 netFavoriteWriting = false;
                 if (like) likedIds.Add(song.SongId); else likedIds.Remove(song.SongId);
-                QueueChat(like ? "已加入网易云「我喜欢的音乐」" : "已取消网易云喜欢"); NetFavorites();
+                QueueChat(like ? MusicPlayerText.Get("Ui2032") : MusicPlayerText.Get("Ui2033")); NetFavorites();
             });
-        }, error => { netFavoriteWriting = false; QueueChat("收藏失败：" + error); });
+        }, error => { netFavoriteWriting = false; QueueChat(MusicPlayerText.Get("Ui2034") + error); });
     }
 
     private async Task<(string? Url, bool IsMp3)> NetUrl(Track song)
@@ -4741,12 +4753,12 @@ public sealed class MusicPlayer : ModuleBase
         var reply = await NetApi("song/enhance/player/url", new() { ["ids"] = JsonSerializer.Serialize(new[] { song.SongId }), ["br"] = 128000 });
         var data = NetArray(reply.Body, "data").FirstOrDefault();
         string url = NetString(data, "url");
-        if (url.Length == 0) throw new InvalidOperationException("网易云未提供可播放音源：请检查版权或会员权益");
+        if (url.Length == 0) throw new InvalidOperationException(MusicPlayerText.Get("Text0164"));
         if (data.TryGetProperty("freeTrialInfo", out var trial) && trial.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
-            throw new InvalidOperationException("该歌曲仅返回试听片段，登录有相应权益的账号后重试");
+            throw new InvalidOperationException(MusicPlayerText.Get("Text0165"));
         string type = NetString(data, "type", "mp3");
         if (!type.Equals("mp3", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("当前本地播放后端暂不支持网易云返回的 " + type + " 音源");
+            throw new InvalidOperationException(MusicPlayerText.Get("Text0166") + type + MusicPlayerText.Get("Text0167"));
         return (url.Replace("http://", "https://"), true);
     }
 
@@ -4765,7 +4777,7 @@ public sealed class MusicPlayer : ModuleBase
             var body = keyReply.Body;
             string key = NetString(body, "unikey");
             if (key.Length == 0 && body.TryGetProperty("data", out var inner)) key = NetString(inner, "unikey");
-            if (key.Length == 0) throw new InvalidOperationException("网易云未返回二维码 key");
+            if (key.Length == 0) throw new InvalidOperationException(MusicPlayerText.Get("Text0168"));
             var qr = OmniMusicQr.QrCode.EncodeText("https://music.163.com/login?codekey=" + Uri.EscapeDataString(key), OmniMusicQr.QrCode.Ecc.Medium);
             NetPost(session, () => { netQr = qr; loginMsg = "请使用网易云音乐 App 扫码确认"; });
             var token = netOperationToken.Value;
@@ -4776,13 +4788,13 @@ public sealed class MusicPlayer : ModuleBase
                 var check = await NetApi("login/qrcode/client/login", new() { ["key"] = key, ["type"] = 3 }, cookie, false);
                 cookie = check.Cookie;
                 long code = NetNumber(check.Body, "code");
-                if (code == 800) throw new InvalidOperationException("二维码已过期，请重新生成");
+                if (code == 800) throw new InvalidOperationException(MusicPlayerText.Get("Text0169"));
                 if (code == 802) NetPost(session, () => loginMsg = "已扫码，请在网易云 App 中确认");
                 if (code == 803)
                 {
                     var account = await NetApi("w/nuser/account/get", new(), cookie);
                     if (!account.Body.TryGetProperty("profile", out var profile) || NetNumber(profile, "userId") == 0)
-                        throw new InvalidOperationException("登录确认成功，但未获取到用户信息，请重试");
+                        throw new InvalidOperationException(MusicPlayerText.Get("Text0170"));
                     string uid = NetNumber(profile, "userId").ToString(); string nick = NetString(profile, "nickname"); string savedCookie = account.Cookie;
                     NetPost(session, () =>
                     {
@@ -4792,9 +4804,9 @@ public sealed class MusicPlayer : ModuleBase
                     });
                     return;
                 }
-                if (code is not (801 or 802)) throw new InvalidOperationException("网易云扫码状态异常（" + code + "），请重试");
+                if (code is not (801 or 802)) throw new InvalidOperationException(MusicPlayerText.Get("Text0171") + code + MusicPlayerText.Get("Text0172"));
             }
-            throw new InvalidOperationException("扫码已超时，请重新生成二维码");
+            throw new InvalidOperationException(MusicPlayerText.Get("Text0173"));
         }, error => { netQr = null; loginRunning = false; loginMsg = error; });
     }
 
@@ -4802,6 +4814,252 @@ public sealed class MusicPlayer : ModuleBase
 }
 
 
+
+internal static class MusicPlayerText
+{
+    internal static readonly OmniToolbox.UI.ModuleLocalization Catalog = OmniToolbox.UI.ModuleLocalization.Create(
+        new System.Collections.Generic.Dictionary<string,string>
+        {
+            ["Text0001"] = "设置面板绘制异常：",
+            ["Text0002"] = "宏命令：/MusicPlayer 打开或关闭当前音乐平台的悬浮窗。",
+            ["Text0003"] = "关闭悬浮窗",
+            ["Text0004"] = "显示悬浮窗",
+            ["Text0005"] = "播放器###OmniMusicMain",
+            ["Text0006"] = "搜索",
+            ["Text0007"] = "推荐",
+            ["Text0008"] = "收藏",
+            ["Text0009"] = "播放列表",
+            ["Text0010"] = "曲库窗口绘制异常：",
+            ["Text0011"] = "音乐播放器设置###OmniMusicSettings",
+            ["Text0012"] = "固定到角色头顶（跟随角色移动）",
+            ["Text0013"] = "把悬浮窗拉回屏幕中央##ovRecenter",
+            ["Text0014"] = "换了分辨率/窗口模式后如果不在顺手的位置，点这里把它摆回屏幕中央。\n（悬浮窗现在拖不出游戏窗口——贴到边界就停住，不会再丢。）",
+            ["Text0015"] = "头顶高度",
+            ["Text0016"] = "悬浮窗大小",
+            ["Text0017"] = "背景不透明度（0=完全透明）",
+            ["Text0018"] = "封面不透明度（0=完全透明）",
+            ["Text0019"] = "悬浮窗显示当前歌词",
+            ["Text0020"] = "设置窗口绘制异常：",
+            ["Text0021"] = "打开或关闭当前音乐平台的悬浮窗。",
+            ["Text0022"] = "已登录：{0}",
+            ["Text0023"] = "刷新数据##qqRefresh",
+            ["Text0024"] = "退出登录##qqLogout",
+            ["Text0025"] = "未登录",
+            ["Text0026"] = "QQ音乐扫码登录##qqLogin",
+            ["Text0027"] = "(检测到残留登录态，可重新扫码)",
+            ["Text0028"] = "二维码图片解码中…",
+            ["Text0029"] = "输入歌名/歌手，按回车或点右侧搜索",
+            ["Text0030"] = "搜索##doSearchBtn",
+            ["Text0031"] = "经典老歌",
+            ["Text0032"] = "刷新榜单##recReload",
+            ["Text0033"] = "整榜播放##recPlayAll",
+            ["Text0034"] = "加载中...",
+            ["Text0035"] = "选择左侧榜单加载歌曲",
+            ["Text0036"] = "收藏内容需要登录 ",
+            ["Text0037"] = "。请先在上方扫码登录，登录成功后这里会自动加载。",
+            ["Text0038"] = "立即扫码登录##favGoLogin",
+            ["Text0039"] = "我喜欢的音乐",
+            ["Text0040"] = "刷新歌单##plReload",
+            ["Text0041"] = "{0}（{1}首）",
+            ["Text0042"] = "正在加载歌单...",
+            ["Text0043"] = "暂无歌单，请点击左侧刷新歌单",
+            ["Text0044"] = "刷新歌曲##favReload",
+            ["Text0045"] = "刷新歌曲##plTracksReload",
+            ["Text0046"] = "整单播放##favoritePlayAll",
+            ["Text0047"] = "正在加载歌曲...",
+            ["Text0048"] = "暂无歌曲，点击刷新歌曲重试",
+            ["Text0049"] = "清空播放列表##qClear",
+            ["Text0050"] = "共 {0} 首",
+            ["Text0051"] = "播放",
+            ["Text0052"] = "已喜欢",
+            ["Text0053"] = "移除",
+            ["Text0054"] = "[播放中] ",
+            ["Text0055"] = "播放列表为空，去\"搜索\"或\"我的歌单\"里添加吧",
+            ["Text0056"] = "VIP 歌曲：未登录或非会员可能无法播放",
+            ["Text0057"] = "未取到歌曲数字ID，无法收藏",
+            ["Text0058"] = "点击取消喜欢",
+            ["Text0059"] = "加入「我喜欢的音乐」",
+            ["Text0060"] = "正在播放：{0}",
+            ["Text0061"] = "上一曲##npPrev",
+            ["Text0062"] = "暂停##npToggle",
+            ["Text0063"] = "播放##npToggle",
+            ["Text0064"] = "下一曲##npNext",
+            ["Text0065"] = "解析播放地址...",
+            ["Text0066"] = "音量##npVol",
+            ["Text0067"] = "FlushChats 异常：",
+            ["Text0068"] = "ConsumePending 异常：",
+            ["Text0069"] = "PollPlayback 异常：",
+            ["Text0070"] = "EnsureCover 异常：",
+            ["Text0071"] = "UpdateLyricIndex 异常：",
+            ["Text0072"] = "悬浮窗绘制异常：",
+            ["Text0073"] = "悬浮窗连续异常已熔断，自动隐藏（重新开关悬浮窗可恢复）",
+            ["Text0074"] = "曲库窗口异常：",
+            ["Text0075"] = "设置窗口异常：",
+            ["Text0076"] = "聊天播报失败：",
+            ["Text0077"] = "窗口位置钳制异常：",
+            ["Text0078"] = "顶",
+            ["Text0079"] = "拖",
+            ["Text0080"] = "取消固定，改为自由拖动",
+            ["Text0081"] = "固定到角色头顶",
+            ["Text0082"] = "锁",
+            ["Text0083"] = "点击解锁悬浮窗",
+            ["Text0084"] = "锁定悬浮窗",
+            ["Text0085"] = "曲",
+            ["Text0086"] = "关闭曲库窗口",
+            ["Text0087"] = "打开曲库窗口（登录 / 搜索 / 榜单 / 收藏 / 播放列表）",
+            ["Text0088"] = "设",
+            ["Text0089"] = "关闭设置窗口",
+            ["Text0090"] = "打开设置窗口",
+            ["Text0091"] = "暂无播放内容",
+            ["Text0092"] = "点右上角「曲」打开曲库窗口",
+            ["Text0093"] = "无封面",
+            ["Text0094"] = "下一曲：{0}",
+            ["Text0095"] = "音量 {0}",
+            ["Text0096"] = "音频下载失败: ",
+            ["Text0097"] = "本地音频播放失败（MCI 无法打开该文件）",
+            ["Text0098"] = "未登录只能获取 m4a 音源（本机播放器不支持），请扫码登录后播放",
+            ["Text0099"] = "VIP 歌曲：请先扫码登录（绿钻账号可播放）",
+            ["Text0100"] = "获取播放地址失败：该歌曲版权受限或接口异常（详情见日志）",
+            ["Text0101"] = "解析播放地址失败: ",
+            ["Text0102"] = "请先输入歌名或歌手",
+            ["Text0103"] = "搜索异常：{0} -> {1}",
+            ["Text0104"] = "搜索失败: {0}",
+            ["Text0105"] = "没有取到榜单歌曲，可稍后重试",
+            ["Text0106"] = "推荐榜单加载失败：",
+            ["Text0107"] = "加载失败: ",
+            ["Text0108"] = "榜单解析异常：",
+            ["Text0109"] = "musicu 响应异常庞大（{0} 字符），已拒收防止解析崩溃",
+            ["Text0110"] = "歌词获取失败：{0} -> {1}",
+            ["Text0111"] = "歌词获取失败: {0}",
+            ["Text0112"] = "QQ歌曲详情异常：{0}",
+            ["Text0113"] = "QQ歌词新版接口异常：{0}",
+            ["Text0114"] = "QQ歌词旧接口异常：{0}",
+            ["Text0115"] = "请先登录 QQ音乐",
+            ["Text0116"] = "「我喜欢的音乐」还没有歌曲，或登录态已失效（可重新扫码）",
+            ["Text0117"] = "我喜欢列表加载失败：",
+            ["Text0118"] = "单曲详情失败 {0}：{1}",
+            ["Text0119"] = "暂无其他歌单",
+            ["Text0120"] = "歌单列表加载失败：",
+            ["Text0121"] = "歌单曲目加载失败：",
+            ["Text0122"] = "歌单曲目加载失败: ",
+            ["Text0123"] = "导出 QQ 音乐 cookie 失败：",
+            ["Text0124"] = "musics 响应异常庞大（{0} 字节），已拒收防止解析崩溃",
+            ["Text0125"] = "加密通道写请求异常：",
+            ["Text0126"] = "加密通道无响应，回退明文 musicu",
+            ["Text0127"] = "加密通道返回体不是 JSON，回退明文 musicu",
+            ["Text0128"] = "已加入「我喜欢的音乐」",
+            ["Text0129"] = "已从「我喜欢的音乐」移除",
+            ["Text0130"] = "收藏失败：登录态已失效，请重新扫码",
+            ["Text0131"] = "歌曲已在「我喜欢的音乐」里",
+            ["Text0132"] = "歌曲不在「我喜欢的音乐」里",
+            ["Text0133"] = "收藏失败（code=",
+            ["Text0134"] = "），详情见日志",
+            ["Text0135"] = "收藏操作异常：",
+            ["Text0136"] = "收藏操作失败: ",
+            ["Text0137"] = "xlogin 前置请求失败（继续尝试）：",
+            ["Text0138"] = "QQ二维码请求失败：{0}",
+            ["Text0139"] = "二维码接口没有返回图片，可稍后重试",
+            ["Text0140"] = "ptqrlogin HttpClient 异常：",
+            ["Text0141"] = "QQ登录 authorize 步骤异常：",
+            ["Text0142"] = "QQ音乐登录成功：{0}",
+            ["Text0143"] = "QQ 扫码成功（{0}），但换取音乐登录态失败",
+            ["Text0144"] = "QQ登录异常：",
+            ["Text0145"] = "写 cookie 失败 {0}@{1}：{2}",
+            ["Text0146"] = "未获取到歌词",
+            ["Text0147"] = "账号登录",
+            ["Text0148"] = "QQ音乐",
+            ["Text0149"] = "网易云音乐",
+            ["Text0150"] = "保存音乐设置失败：",
+            ["Text0151"] = "已登录：",
+            ["Text0152"] = "刷新数据##netRefresh",
+            ["Text0153"] = "退出登录##netLogout",
+            ["Text0154"] = "重新生成二维码##netLogin",
+            ["Text0155"] = "网易云音乐扫码登录##netLogin",
+            ["Text0156"] = "取消扫码##netCancel",
+            ["Text0157"] = "不支持的 MP3 音频参数",
+            ["Text0158"] = "音频过长，超过本地解码上限",
+            ["Text0159"] = "未解码出有效音频",
+            ["Text0160"] = "网易云登录已失效，请重新扫码",
+            ["Text0161"] = "网易云请求失败（",
+            ["Text0162"] = "请稍后重试",
+            ["Text0163"] = "歌单数量过多，请减少收藏后刷新",
+            ["Text0164"] = "网易云未提供可播放音源：请检查版权或会员权益",
+            ["Text0165"] = "该歌曲仅返回试听片段，登录有相应权益的账号后重试",
+            ["Text0166"] = "当前本地播放后端暂不支持网易云返回的 ",
+            ["Text0167"] = " 音源",
+            ["Text0168"] = "网易云未返回二维码 key",
+            ["Text0169"] = "二维码已过期，请重新生成",
+            ["Text0170"] = "登录确认成功，但未获取到用户信息，请重试",
+            ["Text0171"] = "网易云扫码状态异常（",
+            ["Text0172"] = "），请重试",
+            ["Text0173"] = "扫码已超时，请重新生成二维码",
+            ["Title"] = "游戏内音乐播放器",
+            ["Description"] = "QQ音乐与网易云音乐双平台：独立登录、曲库、队列及播放通道；扫码登录、搜索、榜单、歌词、封面、喜欢和歌单读取；推荐与收藏左侧竖向列表。网易云标准 MP3 内置解码，无需 Node 或外部解码服务。"
+        ,
+            ["Ui2001"] = "悬浮窗：取消/启用固定头顶 -> {0}",
+            ["Ui2002"] = "悬浮窗：位置重置到 ({0:F0},{1:F0})，屏幕 {2:F0}x{3:F0}",
+            ["Ui2003"] = "{0}悬浮窗已{1}",
+            ["Ui2004"] = "宏命令：/MusicPlayer（无需参数）",
+            ["Ui2005"] = "搜索触发：\"{0}\"（{1}字） searching={2}",
+            ["Ui2006"] = "上一次搜索还在进行中，请稍候",
+            ["Ui2007"] = "热歌榜",
+            ["Ui2008"] = "新歌榜",
+            ["Ui2009"] = "飙升榜",
+            ["Ui2010"] = "经典老歌",
+            ["Ui2011"] = "情歌榜",
+            ["Ui2012"] = "热歌榜",
+            ["Ui2013"] = "新歌榜",
+            ["Ui2014"] = "飙升榜",
+            ["Ui2015"] = "原创榜",
+            ["Ui2016"] = "已加载{0}（{1}首），开始播放",
+            ["Ui2017"] = "双击播放：{0}（列表 {1} 首，index={2}）",
+            ["Ui2018"] = "点击收藏：{0}（id={1}，like={2}）",
+            ["Ui2019"] = "音乐悬浮窗出现异常已自动隐藏，可在设置里重新打开",
+            ["Ui2020"] = "[构建]{0} scale={1:F2}(config {2:F2}) radius={3:F1} ",
+            ["Ui2021"] = "悬浮窗：切换锚定 -> {0}",
+            ["Ui2022"] = "悬浮窗：锁定 -> {0}",
+            ["Ui2023"] = "悬浮窗：曲库窗口 -> {0}",
+            ["Ui2024"] = "悬浮窗：设置窗口 -> {0}",
+            ["Ui2025"] = "悬浮窗：上一曲",
+            ["Ui2026"] = "悬浮窗：播放/暂停",
+            ["Ui2027"] = "悬浮窗：下一曲",
+            ["Ui2028"] = "请先登录 QQ音乐再收藏歌曲",
+            ["Ui2029"] = "我喜欢的音乐已加载（{0}首）",
+            ["Ui2030"] = "已取消扫码",
+            ["Ui2031"] = "请先登录网易云音乐，或等待上一项收藏操作完成",
+            ["Ui2032"] = "已加入网易云「我喜欢的音乐」",
+            ["Ui2033"] = "已取消网易云喜欢",
+            ["Ui2034"] = "收藏失败："
+});
+    private static System.WeakReference<OmniToolbox.Common.Module.Abstractions.OmniModuleBase>? owner;
+    private static TreeTools.Lifecycle.FeatureLifetime? lifetime;
+internal static void Bind(OmniToolbox.Common.Module.Abstractions.OmniModuleBase module, TreeTools.Lifecycle.FeatureLifetime scope)
+{
+    owner = new(module);
+    lifetime = scope;
+}
+internal static System.Threading.Tasks.Task Track(System.Threading.Tasks.Task task)
+{
+    var scope = lifetime;
+    if (!task.IsCompleted && scope is { IsStopping: false })
+    {
+        try { scope.Track(task); }
+        catch (System.InvalidOperationException) when (scope.IsStopping) { }
+    }
+    return task;
+}
+internal static System.Threading.Tasks.Task<T> Track<T>(System.Threading.Tasks.Task<T> task)
+{
+    Track((System.Threading.Tasks.Task)task);
+    return task;
+}
+    internal static string Get(string key)
+    {
+        if (owner != null && owner.TryGetTarget(out var module))
+            return OmniToolbox.UI.OmniLoc.Get(module, key).Replace('\u241f', '\0');
+        return Catalog.Get(key, OmniToolbox.UI.OmniLoc.CurrentLanguage).Replace('\u241f', '\0');
+    }
+}
 }
 
 #nullable disable
@@ -8837,7 +9095,7 @@ using System.Text;
                 fullText = fullText.Substring(1);
 
             // Split on the NUL separator between description and value
-            int nullIdx = fullText.IndexOf('\0');
+            int nullIdx = fullText.IndexOf('\u241f');
             if (nullIdx < 0) return;
 
             string desc = fullText.Substring(0, nullIdx);
@@ -8845,7 +9103,7 @@ using System.Text;
 
             // Value: " 00000000 DELAY PADDING SAMPLECOUNT ..."
             // UTF-16 frames carry a BOM before both the description and the value; strip it here too.
-            string value = fullText.Substring(nullIdx + 1).Trim('\0');
+            string value = fullText.Substring(nullIdx + 1).Trim('\u241f');
             if (value.Length > 0 && value[0] == '\uFEFF')
                 value = value.Substring(1);
             var parts = value.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);

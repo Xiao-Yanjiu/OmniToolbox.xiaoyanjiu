@@ -25,6 +25,8 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 */
+using Dalamud.Hooking;
+using FFXIVClientStructs.FFXIV.Client.Game.Network;
 using System;
 using System.Collections;
 using System.Collections.Concurrent;
@@ -65,15 +67,24 @@ using OmniToolbox.Host;
 using OmniToolbox.UI;
 using OmniToolbox.UI.Theme;
 using OmenTools.OmenService;
+using OmenTools.Extensions;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace OmniToolbox.LocalModules;
 
-public sealed class PhoneChat : ModuleBase
+[ModuleApiVersion(1)]
+public sealed class PhoneChat : OmniModuleBase
 {
-    public override ModuleInfo Info { get; } = new() { Title="手机app支持", Description="设备授权连接安卓手机，同步游戏聊天", Category=ModuleCategory.Automation, Author="小烟酒" };
+    public override OmniToolbox.UI.ModuleLocalization Localization => PhoneChatText.Catalog;
+
+    public override ModuleInfo Info { get; } = new() { Category=ModuleCategory.Automation, Author="小烟酒" };
     private sealed class Settings
     {
+        public List<string> PageOrder{get;set;}=new();public List<string> DisabledPages{get;set;}=new();
         public int Port { get; set; } = 18765;
+        public string StreamAdapter {get;set;}="";public bool StreamGpuDirect {get;set;}=true;public string StreamTransport {get;set;}="tcp";public int StreamUdpPort {get;set;}=0;public int StreamUdpExternalPort {get;set;}=0;
+        public bool StreamBringToFront {get;set;}=true;public bool HardwareStream {get;set;}=false;public string StreamEncoderPath {get;set;}="";public string StreamHardwareHelper {get;set;}="";
         public string PublicAddress { get; set; } = "";
         public int ExternalPort { get; set; } = 18765;
         public string ApkDownloadUrl { get; set; } = "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases";
@@ -88,6 +99,8 @@ public sealed class PhoneChat : ModuleBase
         public bool NotifyTarget { get; set; } = false;
         public int PushMode { get; set; } = 0;
         public int[] PushPriority { get; set; }
+        public int PushProvider { get; set; } = -1;
+        public bool QQNotifications { get; set; }
         public string QQBotAccount { get; set; } = "";
         public string QQNotifyTarget { get; set; } = "";
         public bool QQNotifyGroup { get; set; }
@@ -98,7 +111,7 @@ public sealed class PhoneChat : ModuleBase
         public string QQReplyUsers { get; set; } = "";
         public string QQReplyChannel { get; set; } = "小队";
         public bool QQAutoConnect { get; set; }
-        public List<string> QQChannels { get; set; } = new() { "悄悄话", "国服悄悄话", "小队", "团队", "部队", "国服" };
+        public List<string> QQChannels { get; set; } = new();public int QQSyncSchema{get;set;}
         public bool KeepDirectNotifications { get; set; } = false;
         public List<string> Channels { get; set; } = new() { "小队", "团队", "部队", "国服", "悄悄话", "国服悄悄话", "提醒" };
     }
@@ -121,7 +134,12 @@ public sealed class PhoneChat : ModuleBase
         public ushort kind { get; set; }
         public string[] tabs { get; set; } = Array.Empty<string>();
         public string color { get; set; } = "";
+        public int displayVersion { get; set; }
         public object[] parts { get; set; } = Array.Empty<object>();
+        public object[] senderParts { get; set; } = Array.Empty<object>();
+        public int worldAlias { get; set; }
+        public uint statusIcon { get; set; }
+        public RecruitmentLink recruitment { get; set; }
         public string historyKey { get; set; } = "";
         public byte sourceKind { get; set; }
         public byte targetKind { get; set; }
@@ -142,13 +160,20 @@ public sealed class PhoneChat : ModuleBase
     private static string PushFile=>Path.ChangeExtension(ConfigFile,"push");
     private string wxPushKey="",serverPushKey="";
     private PushRouter pushRouter;
-    private string pushStatus="云推送未启用";
+    private string pushStatus="";
     private bool showPushKeys;
-    private void RestorePushKeys(){try{if(!File.Exists(PushFile))return;using var data=JsonDocument.Parse(ProtectedData.Unprotect(File.ReadAllBytes(PushFile),null,DataProtectionScope.CurrentUser));wxPushKey=data.RootElement.GetProperty("wx").GetString()??"";serverPushKey=data.RootElement.GetProperty("server").GetString()??"";}catch{pushStatus="推送凭证无法读取，请重新填写";}}
-    private void SavePushKeys(){try{var data=ProtectedData.Protect(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new{wx=wxPushKey,server=serverPushKey})),null,DataProtectionScope.CurrentUser);Directory.CreateDirectory(Path.GetDirectoryName(PushFile));var temp=PushFile+".tmp";File.WriteAllBytes(temp,data);File.Move(temp,PushFile,true);}catch{pushStatus="推送凭证保存失败";}}
-    private PushProfile PushConfiguration(){lock(gate)return new PushProfile{mode=settings.PushMode,priority=settings.PushPriority,wx=wxPushKey.Trim(),server=serverPushKey.Trim(),qq=settings.QQNotifyTarget.Trim(),direct=HasDirectReceiver()};}
+    private void RestorePushKeys(){try{if(!File.Exists(PushFile))return;using var data=JsonDocument.Parse(ProtectedData.Unprotect(File.ReadAllBytes(PushFile),null,DataProtectionScope.CurrentUser));wxPushKey=data.RootElement.GetProperty("wx").GetString()??"";serverPushKey=data.RootElement.GetProperty("server").GetString()??"";}catch{pushStatus=PhoneChatText.Get("Text0001");}}
+    private void SavePushKeys(){try{var data=ProtectedData.Protect(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new{wx=wxPushKey,server=serverPushKey})),null,DataProtectionScope.CurrentUser);Directory.CreateDirectory(Path.GetDirectoryName(PushFile));var temp=PushFile+".tmp";File.WriteAllBytes(temp,data);File.Move(temp,PushFile,true);}catch{pushStatus=PhoneChatText.Get("Text0002");}}
+    private PushProfile PushConfiguration(){lock(gate)return new PushProfile{provider=settings.PushProvider,qqEnabled=settings.QQNotifications,mode=settings.PushMode,priority=settings.PushPriority,wx=wxPushKey.Trim(),server=serverPushKey.Trim(),qq=settings.QQNotifyTarget.Trim(),direct=HasDirectReceiver()};}
+    public sealed class QQReplayGate{
+        private readonly string path;private readonly HashSet<string> seen=new();private readonly Queue<string> order=new();private long since;public bool Healthy{get;private set;}=true;
+        public QQReplayGate(string path){this.path=path;try{if(File.Exists(path)){if(new FileInfo(path).Length>524288)throw new IOException(PhoneChatText.Get("Text0003"));foreach(var key in JsonSerializer.Deserialize<string[]>(File.ReadAllText(path))??Array.Empty<string>()){if(!Regex.IsMatch(key,"^[a-f0-9]{64}$"))throw new IOException(PhoneChatText.Get("Text0004"));if(seen.Add(key))order.Enqueue(key);}}}catch{Healthy=false;}}
+        public void BeginSession(DateTimeOffset at){lock(seen)since=(at.ToUnixTimeMilliseconds()+999)/1000;}
+        public bool IsFreshTimestamp(long sentAt,DateTimeOffset now){lock(seen)return Healthy&&since>0&&sentAt>=since&&sentAt<=now.ToUnixTimeSeconds()+5;}
+        public bool TryAccept(string bot,uint group,string messageId,long sentAt,DateTimeOffset now){lock(seen){if(!IsFreshTimestamp(sentAt,now)||!Regex.IsMatch(messageId??"","^-?[0-9]{1,20}$")||messageId=="0")return false;string key=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(bot+"|"+group+"|"+messageId))).ToLowerInvariant();if(!seen.Add(key))return false;order.Enqueue(key);while(order.Count>4096)seen.Remove(order.Dequeue());try{Directory.CreateDirectory(Path.GetDirectoryName(path));string temp=path+".tmp";File.WriteAllText(temp,JsonSerializer.Serialize(order.ToArray()));File.Move(temp,path,true);return true;}catch{Healthy=false;return false;}}}
+    }
     private void StartPush(){pushRouter?.Dispose();pushRouter=new PushRouter(PushConfiguration,text=>pushStatus=text,entry=>{lock(gate){if(!enabled)return;entries.Notify(new ChatEntry{channel=entry.channel,sender=entry.sender,target=entry.target,text=entry.text,time=DateTimeOffset.Now.ToString("O"),notify=true});}},qqSend:SendQQPush);}
-    public sealed class PushProfile {public int mode;public int[] priority;public bool direct;public string wx="",server="",qq="";}
+    public sealed class PushProfile {public int provider=-1;public bool qqEnabled;public int mode;public int[] priority;public bool direct;public string wx="",server="",qq="";}
     public sealed class PushResult {public bool ok;public string status="";}
     public sealed class PushRouter : IDisposable
     {
@@ -160,34 +185,163 @@ public sealed class PhoneChat : ModuleBase
         private readonly HttpClient http;
         private readonly Func<string,string,CancellationToken,Task<PushResult>> qqSend;
         private readonly object sync=new();private readonly Queue<(ChatEntry entry,int test,bool fallback)> jobs=new();
-        private readonly Dictionary<string,DateTime> cooling=new();
+        private readonly ConcurrentDictionary<string,DateTime> cooling=new();
         private readonly SemaphoreSlim signal=new(0);private readonly CancellationTokenSource stop=new();private readonly Task worker;
-        public PushRouter(Func<PushProfile> configuration,Action<string> status,Action<ChatEntry> directFallback,Func<int,string,string,CancellationToken,Task<PushResult>> transport=null,Func<DateTime> clock=null,bool start=true,Func<string,string,CancellationToken,Task<PushResult>> qqSend=null){this.qqSend=qqSend;this.configuration=configuration;this.status=status;this.directFallback=directFallback;this.clock=clock??(()=>DateTime.UtcNow);http=new HttpClient(new HttpClientHandler{AllowAutoRedirect=false}){Timeout=Timeout.InfiniteTimeSpan};send=transport??SendHttp;worker=start?Task.Run(Work):Task.CompletedTask;}
+        public PushRouter(Func<PushProfile> configuration,Action<string> status,Action<ChatEntry> directFallback,Func<int,string,string,CancellationToken,Task<PushResult>> transport=null,Func<DateTime> clock=null,bool start=true,Func<string,string,CancellationToken,Task<PushResult>> qqSend=null){this.qqSend=qqSend;this.configuration=configuration;this.status=status;this.directFallback=directFallback;this.clock=clock??(()=>DateTime.UtcNow);http=new HttpClient(new HttpClientHandler{AllowAutoRedirect=false}){Timeout=Timeout.InfiniteTimeSpan};send=transport??SendHttp;worker=start?PhoneChatText.Track(Task.Run(Work)):Task.CompletedTask;}
         public static bool ValidWx(string key)=>Regex.IsMatch(key??"","^SPT_[A-Za-z0-9_-]{4,250}$");
         public static bool ValidServer(string key)=>Regex.IsMatch(key??"","^(sctp[0-9]{1,20}t[A-Za-z0-9_-]{4,250}|SCT[A-Za-z0-9_-]{4,250})$");
         public static int[] Order(int mode)=>mode switch{1=>new[]{1},2=>new[]{2},3=>new[]{1,2},4=>new[]{2,1},_=>Array.Empty<int>()};
-        public static int[] Providers(PushProfile profile)=>profile.priority==null?Order(profile.mode):profile.priority.Take(3).Where(p=>p>=1&&p<=3).Distinct().ToArray();
+        public static int[] Providers(PushProfile profile)=>profile.provider>=0?new[]{profile.provider,profile.qqEnabled?3:0}.Where(p=>p>=1&&p<=3).Distinct().ToArray():profile.priority==null?Order(profile.mode):profile.priority.Take(3).Where(p=>p>=1&&p<=3).Distinct().ToArray();
         public static bool ValidQQ(string key)=>uint.TryParse(key,out var id)&&id>0;
         public static bool Configured(int p,PushProfile c)=>p==1?ValidWx(c.wx):p==2?ValidServer(c.server):ValidQQ(c.qq);
         public static string Name(int provider)=>provider==1?"WxPusher":provider==2?"Server酱":"个人QQ";
         public bool Enqueue(ChatEntry entry,int test=0,bool suppressDirect=true){var profile=configuration();if(test==0&&profile.direct)return false;if(!(test>0?new[]{test}:Providers(profile)).Any(provider=>Configured(provider,profile))){if(test>0||Providers(profile).Length>0)status("未填写有效推送凭证，保留直连提醒");return false;}lock(sync){if(stop.IsCancellationRequested||jobs.Count>=64){status("推送队列已满或已停止，保留直连提醒");return false;}jobs.Enqueue((new ChatEntry{channel=entry.channel,sender=entry.sender,target=entry.target,text=entry.text,time=entry.time},test,suppressDirect));signal.Release();return true;}}
-        private async Task Work(){try{while(!stop.IsCancellationRequested){await signal.WaitAsync(stop.Token);(ChatEntry entry,int test,bool fallback) job;lock(sync){if(jobs.Count==0)continue;job=jobs.Dequeue();}var profile=configuration();if(job.test>0){profile.priority=new[]{job.test};profile.direct=false;}if(job.test==0&&profile.direct){directFallback(job.entry);continue;}var result=await Deliver(job.entry,profile,stop.Token,job.test>0);status(result.status);if(!result.ok&&job.fallback&&job.test==0&&!stop.IsCancellationRequested)directFallback(job.entry);await Task.Delay(1300,stop.Token);}}catch(OperationCanceledException){}catch{status("推送工作线程停止，请重开模块");}}
-        public async Task<PushResult> Deliver(ChatEntry entry,PushProfile profile,CancellationToken token,bool test=false){string errors="";foreach(var expired in cooling.Where(pair=>pair.Value<=clock()).Select(pair=>pair.Key).ToArray())cooling.Remove(expired);if(cooling.Count>128)cooling.Clear();if(profile.direct&&!test)return new PushResult{ok=false,status="手机直连，使用直连通知"};var order=Providers(profile);foreach(int provider in order){token.ThrowIfCancellationRequested();string key=provider==1?profile.wx:provider==2?profile.server:profile.qq;if(!Configured(provider,profile)){errors+=Name(provider)+"未配置；";continue;}string identity=provider+":"+Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)));if(!test&&cooling.TryGetValue(identity,out var until)&&until>clock()){errors+=Name(provider)+"暂缓重试；";continue;}PushResult result;try{using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(TimeSpan.FromSeconds(8));result=provider==3?(qqSend==null?new PushResult{status="QQ 未连接"}:await qqSend(key,(string.IsNullOrWhiteSpace(entry.sender)?"":entry.sender+"：")+entry.text,deadline.Token)):await send(provider,key,Payload(provider,entry),deadline.Token);}catch(OperationCanceledException)when(!token.IsCancellationRequested){result=new PushResult{status="接口超时"};}catch(OperationCanceledException){throw;}catch{result=new PushResult{status="接口连接失败"};}if(result.ok){cooling.Remove(identity);return new PushResult{ok=true,status=Name(provider)+"接口已接收"+(provider!=order[0]?"（已切换备用）":"")};}cooling[identity]=clock().AddMinutes(1);errors+=Name(provider)+"："+result.status+"；";}return new PushResult{status=(errors.Length>0?errors:"云推送已关闭")+"未发送成功，保留直连提醒"};}
-        public static string Payload(int provider,ChatEntry entry){string title="小烟酒 · "+entry.channel;string text=(string.IsNullOrWhiteSpace(entry.sender)?"":entry.sender+"：")+entry.text;string query="channel="+Uri.EscapeDataString(entry.channel)+"&target="+Uri.EscapeDataString(entry.target??"");if(provider==1)return JsonSerializer.Serialize(new{summary=title,content=text,contentType=1,url="xiaoyanjiu://chat?"+query});string link="scopen://cn.xiaoyanjiu.ff14chat?"+query;return JsonSerializer.Serialize(new{title,desp=text+"\n\n[打开小烟酒]("+link+")",@short=text.Length>100?text[..100]:text,tags="FF14|"+entry.channel});}
-        public static string Endpoint(int provider,string key){if(provider==1){if(!ValidWx(key))throw new ArgumentException("SPT格式无效");return "https://wxpusher.zjiecode.com/api/send/message/simple-push";}if(!ValidServer(key))throw new ArgumentException("SendKey格式无效");var match=Regex.Match(key,"^sctp([0-9]{1,20})t");return match.Success?"https://"+match.Groups[1].Value+".push.ft07.com/send/"+key+".send":"https://sctapi.ftqq.com/"+key+".send";}
-        public static PushResult ParseResponse(int provider,int httpStatus,string body){if(httpStatus<200||httpStatus>=300)return new PushResult{status="HTTP "+httpStatus};try{using var response=JsonDocument.Parse(body);if(!response.RootElement.TryGetProperty("code",out var value)||!value.TryGetInt32(out int code))return new PushResult{status="接口响应格式不符"};return new PushResult{ok=code==(provider==1?1000:0),status="接口拒绝（代码 "+code+"）"};}catch{return new PushResult{status="接口响应格式不符"};}}
-        private async Task<PushResult> SendHttp(int provider,string key,string payload,CancellationToken token){using var data=JsonDocument.Parse(payload);var fields=data.RootElement.EnumerateObject().ToDictionary(p=>p.Name,p=>(object)p.Value.Clone());if(provider==1)fields["spt"]=key;using var request=new HttpRequestMessage(HttpMethod.Post,Endpoint(provider,key)){Content=new StringContent(JsonSerializer.Serialize(fields),Encoding.UTF8,"application/json")};using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,token);using var stream=await response.Content.ReadAsStreamAsync(token);using var output=new MemoryStream();var buffer=new byte[2048];int read;while((read=await stream.ReadAsync(buffer,token))>0){if(output.Length+read>16384)return new PushResult{status="接口响应过大"};output.Write(buffer,0,read);}return ParseResponse(provider,(int)response.StatusCode,Encoding.UTF8.GetString(output.ToArray()));}
+        private async Task Work(){try{while(!stop.IsCancellationRequested){await signal.WaitAsync(stop.Token);(ChatEntry entry,int test,bool fallback) job;lock(sync){if(jobs.Count==0)continue;job=jobs.Dequeue();}var profile=configuration();if(job.test>0){profile.provider=job.test;profile.qqEnabled=false;profile.priority=new[]{job.test};profile.direct=false;}if(job.test==0&&profile.direct){directFallback(job.entry);continue;}var result=await Deliver(job.entry,profile,stop.Token,job.test>0);status(result.status);if(!result.ok&&job.fallback&&job.test==0&&!stop.IsCancellationRequested)directFallback(job.entry);await Task.Delay(1300,stop.Token);}}catch(OperationCanceledException){}catch{status("推送工作线程停止，请重开模块");}}
+        public async Task<PushResult> Deliver(ChatEntry entry,PushProfile profile,CancellationToken token,bool test=false)
+        {
+            if(profile.direct&&!test)return new PushResult{status=PhoneChatText.Get("Text0005")};
+            foreach(var expired in cooling.Where(pair=>pair.Value<=clock()).Select(pair=>pair.Key).ToArray())cooling.TryRemove(expired,out _);
+            if(cooling.Count>128)cooling.Clear();
+            var providers=Providers(profile);if(providers.Length==0)return new PushResult{status=PhoneChatText.Get("Text0006")};
+            var results=await Task.WhenAll(providers.Select(provider=>DeliverOne(provider,entry,profile,token,test)));
+            return new PushResult{ok=results.Any(result=>result.ok),status=string.Join("；",results.Select(result=>result.status))};
+        }
+        private async Task<PushResult> DeliverOne(int provider,ChatEntry entry,PushProfile profile,CancellationToken token,bool test)
+        {
+            token.ThrowIfCancellationRequested();string label=Name(provider),key=provider==1?profile.wx:provider==2?profile.server:profile.qq;
+            if(!Configured(provider,profile))return new PushResult{status=label+PhoneChatText.Get("Text0007")};
+            string identity=provider+":"+Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+            if(!test&&cooling.TryGetValue(identity,out var until)&&until>clock())return new PushResult{status=label+PhoneChatText.Get("Text0008")};
+            PushResult result;
+            try{using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(TimeSpan.FromSeconds(8));result=provider==3?(qqSend==null?new PushResult{status=PhoneChatText.Get("Text0009")}:await qqSend(key,(string.IsNullOrWhiteSpace(entry.sender)?"":entry.sender+"：")+entry.text,deadline.Token)):await send(provider,key,Payload(provider,entry),deadline.Token);}
+            catch(OperationCanceledException)when(!token.IsCancellationRequested){result=new PushResult{status=PhoneChatText.Get("Text0010")};}
+            catch(OperationCanceledException){throw;}
+            catch{result=new PushResult{status=PhoneChatText.Get("Text0011")};}
+            if(result.ok){cooling.TryRemove(identity,out _);return new PushResult{ok=true,status=label+PhoneChatText.Get("Text0012")};}
+            cooling[identity]=clock().AddMinutes(1);return new PushResult{status=label+"："+result.status};
+        }
+        public static string Payload(int provider,ChatEntry entry){string title=PhoneChatText.Get("Text0013")+entry.channel;string text=(string.IsNullOrWhiteSpace(entry.sender)?"":entry.sender+"：")+entry.text;string query="channel="+Uri.EscapeDataString(entry.channel)+"&target="+Uri.EscapeDataString(entry.target??"");if(provider==1)return JsonSerializer.Serialize(new{summary=title,content=text,contentType=1,url="xiaoyanjiu://chat?"+query});string link="scopen://cn.xiaoyanjiu.ff14chat?"+query;return JsonSerializer.Serialize(new{title,desp=text+"\n\n[打开狒狒食柿]("+link+")",@short=text.Length>100?text[..100]:text,tags="FF14|"+entry.channel});}
+        public static string Endpoint(int provider,string key){if(provider==1){if(!ValidWx(key))throw new ArgumentException(PhoneChatText.Get("Text0014"));return "https://wxpusher.zjiecode.com/api/send/message/simple-push";}if(!ValidServer(key))throw new ArgumentException(PhoneChatText.Get("Text0015"));var match=Regex.Match(key,"^sctp([0-9]{1,20})t");return match.Success?"https://"+match.Groups[1].Value+".push.ft07.com/send/"+key+".send":"https://sctapi.ftqq.com/"+key+".send";}
+        public static PushResult ParseResponse(int provider,int httpStatus,string body){if(httpStatus<200||httpStatus>=300)return new PushResult{status="HTTP "+httpStatus};try{using var response=JsonDocument.Parse(body);if(!response.RootElement.TryGetProperty("code",out var value)||!value.TryGetInt32(out int code))return new PushResult{status=PhoneChatText.Get("Text0016")};return new PushResult{ok=code==(provider==1?1000:0),status=PhoneChatText.Get("Text0017")+code+"）"};}catch{return new PushResult{status=PhoneChatText.Get("Text0016")};}}
+        private async Task<PushResult> SendHttp(int provider,string key,string payload,CancellationToken token){using var data=JsonDocument.Parse(payload);var fields=data.RootElement.EnumerateObject().ToDictionary(p=>p.Name,p=>(object)p.Value.Clone());if(provider==1)fields["spt"]=key;using var request=new HttpRequestMessage(HttpMethod.Post,Endpoint(provider,key)){Content=new StringContent(JsonSerializer.Serialize(fields),Encoding.UTF8,"application/json")};using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,token);using var stream=await response.Content.ReadAsStreamAsync(token);using var output=new MemoryStream();var buffer=new byte[2048];int read;while((read=await stream.ReadAsync(buffer,token))>0){if(output.Length+read>16384)return new PushResult{status=PhoneChatText.Get("Text0018")};output.Write(buffer,0,read);}return ParseResponse(provider,(int)response.StatusCode,Encoding.UTF8.GetString(output.ToArray()));}
         public void Dispose(){stop.Cancel();lock(sync)jobs.Clear();http.Dispose();}
     }
-    public sealed class AuthorizedDevice {public string id{get;set;}="";public string name{get;set;}="";public string remark{get;set;}="";[System.Text.Json.Serialization.JsonIgnore]public DateTime lastPoll{get;set;}public string token{get;set;}="";public DateTime authorizedAt{get;set;}public DateTime lastSeen{get;set;}}
-    public sealed class DeviceRequest {public string id{get;set;}="";public string name{get;set;}="";public string secret{get;set;}="";public string code{get;set;}="";public string token{get;set;}="";public DateTime expires{get;set;}}
+    public sealed class AuthorizedDevice {public string id{get;set;}="";public string name{get;set;}="";public string remark{get;set;}="";[System.Text.Json.Serialization.JsonIgnore]public DateTime lastPoll{get;set;}public string token{get;set;}="";public bool? worldAuthorized{get;set;}public string worldAlias{get;set;}="";public DateTime authorizedAt{get;set;}public DateTime lastSeen{get;set;}}
+    public sealed class DeviceRequest {public string targetDevice{get;set;}="";public string worldAlias{get;set;}="";public string id{get;set;}="";public string name{get;set;}="";public string secret{get;set;}="";public string code{get;set;}="";public string token{get;set;}="";public DateTime expires{get;set;}}
     private List<AuthorizedDevice> authorizedDevices=new();
     private readonly Dictionary<string,DeviceRequest> deviceRequests=new();
     private string approvalCode="",approvalRemark="";
+
+
+    public static readonly string[] PageKeys={"accounts","chat","recruit","character","party","stream","glamour","fishing","wiki","risingStones","settings","itemSearch","collections","office"};
+    public static readonly string[] PageNames={"账号设置","聊天消息","招募频道","角色信息","队伍信息","游戏画面","Omni幻化管理","鱼糕","灰机Wiki","石之家","应用设置","Omni物品查询","Omni物品收录","国服频道（离线模式）"};
+    public static string[] NormalizePages(IEnumerable<string> order)=>(order??Array.Empty<string>()).Where(PageKeys.Contains).Distinct().Concat(PageKeys).Distinct().ToArray();
+    private volatile bool omniNavigationReady;private long omniNavigationCheckedAt;
+    public static bool OmniPage(string id)=>id=="itemSearch"||id=="collections"||id=="glamour";
+    public static bool NavigationPageEnabled(string id,bool configuredEnabled,bool omniReady)=>configuredEnabled&&(!OmniPage(id)||omniReady);
+    private void RefreshOmniNavigation(){long now=Environment.TickCount64;if(now-omniNavigationCheckedAt<2000)return;omniNavigationCheckedAt=now;bool found=FindOmniTreeHouseManager()!=null;lock(gate){if(found!=omniNavigationReady){omniNavigationReady=found;metadataRevision++;}}}
+    private bool PageEnabled(string id){lock(gate)return NavigationPageEnabled(id,!(settings.DisabledPages??new()).Contains(id),omniNavigationReady);}
+    private object[] PageNavigation(){lock(gate)return NormalizePages(settings.PageOrder).Select(id=>(object)new{id,name=PageNames[Array.IndexOf(PageKeys,id)],enabled=PageEnabled(id),available=!OmniPage(id)||omniNavigationReady,reason=OmniPage(id)&&!omniNavigationReady?"未检测到已加载的 Omni 插件":""}).ToArray();}
+    private void NavigationChanged(){lock(gate){metadataRevision++;Save();}if(!PageEnabled("stream"))StopStream();}
+    private void DrawPageNavigation(){
+        RefreshOmniNavigation();
+        if(!ImGui.CollapsingHeader(PhoneChatText.Get("Text0019")))return;
+        ImGui.TextWrapped(PhoneChatText.Get("Text0020"));
+        var order=NormalizePages(settings.PageOrder).ToList();string move="";int direction=0;
+        if(ImGui.BeginTable(PhoneChatText.Get("Text0021"),4,ImGuiTableFlags.SizingStretchProp)){
+            ImGui.TableSetupColumn(PhoneChatText.Get("Text0022"),ImGuiTableColumnFlags.WidthFixed,48);ImGui.TableSetupColumn(PhoneChatText.Get("Text0023"));ImGui.TableSetupColumn(PhoneChatText.Get("Text0024"),ImGuiTableColumnFlags.WidthFixed,60);ImGui.TableSetupColumn(PhoneChatText.Get("Text0025"),ImGuiTableColumnFlags.WidthFixed,60);
+            for(int i=0;i<order.Count;i++){string id=order[i];ImGui.PushID(id);ImGui.TableNextRow();ImGui.TableNextColumn();bool on=PageEnabled(id);bool available=!OmniPage(id)||omniNavigationReady;ImGui.BeginDisabled(!available);
+                if(ImGui.Checkbox(PhoneChatText.Get("Text0026"),ref on)){lock(gate){settings.DisabledPages??=new();settings.DisabledPages.RemoveAll(x=>x==id);if(!on)settings.DisabledPages.Add(id);}NavigationChanged();}
+                ImGui.EndDisabled();ImGui.TableNextColumn();ImGui.TextUnformatted(PageNames[Array.IndexOf(PageKeys,id)]);if(OmniPage(id)){ImGui.SameLine();ImGui.TextColored(omniNavigationReady?new Vector4(.4f,.8f,.5f,1):new Vector4(.95f,.6f,.35f,1),omniNavigationReady?PhoneChatText.Get("Text0027"):PhoneChatText.Get("Text0028"));}
+                ImGui.TableNextColumn();ImGui.BeginDisabled(i==0);if(ImGui.Button(PhoneChatText.Get("Text0024"))){move=id;direction=-1;}ImGui.EndDisabled();
+                ImGui.TableNextColumn();ImGui.BeginDisabled(i==order.Count-1);if(ImGui.Button(PhoneChatText.Get("Text0025"))){move=id;direction=1;}ImGui.EndDisabled();ImGui.PopID();
+            }ImGui.EndTable();
+        }
+        if(move.Length>0){int i=order.IndexOf(move);(order[i],order[i+direction])=(order[i+direction],order[i]);lock(gate)settings.PageOrder=order;NavigationChanged();}
+        if(ImGui.Button(PhoneChatText.Get("Text0029"))){lock(gate){settings.PageOrder=PageKeys.ToList();settings.DisabledPages=new();}NavigationChanged();}
+    }
+
+    public sealed class FishRow {public string key{get;set;}="";public string title{get;set;}="";public string body{get;set;}="";public long at{get;set;}public long expires{get;set;}}
+    public sealed class FishPlan {public bool enabled{get;set;}=true;public int mode{get;set;}public List<FishRow> rows{get;set;}=new();public Dictionary<string,long> sent{get;set;}=new();}
+    // Data only: schedules are supplied by the original fishing page, never recomputed from copied site code.
+    public sealed class FishSchedule {
+        public Dictionary<string,FishPlan> plans{get;set;}=new();
+        public static List<FishRow> Validate(JsonElement raw,long now){
+            if(raw.ValueKind!=JsonValueKind.Array||raw.GetArrayLength()>1000)throw new Exception(PhoneChatText.Get("Text0030"));
+            var rows=new List<FishRow>();var seen=new HashSet<string>();
+            foreach(var e in raw.EnumerateArray()){
+                string Text(string name,int max){var v=e.GetProperty(name).GetString()??"";if(v.Length>max||v.Any(char.IsControl))throw new Exception(PhoneChatText.Get("Text0031"));return v;}
+                var r=new FishRow{key=Text("key",140),title=Text("title",120),body=Text("body",500),at=e.GetProperty("at").GetInt64(),expires=e.GetProperty("expires").GetInt64()};
+                if(r.key.Length==0||r.title.Length==0||r.at>now+30L*86400000||r.expires<r.at||r.expires>now+31L*86400000)throw new Exception(PhoneChatText.Get("Text0032"));
+                if(r.at>now&&seen.Add(r.key))rows.Add(r);
+            }return rows.OrderBy(r=>r.at).ToList();
+        }
+        public FishPlan Get(string owner){if(!plans.TryGetValue(owner,out var p)){if(plans.Count>=32)throw new Exception(PhoneChatText.Get("Text0033"));plans[owner]=p=new();}return p;}
+        public void Replace(string owner,JsonElement raw,bool enabled,int mode,long now){if(mode<0||mode>2)throw new Exception(PhoneChatText.Get("Text0034"));var rows=Validate(raw,now);var p=Get(owner);p.sent=p.sent.Where(x=>x.Value>now-31L*86400000).ToDictionary(x=>x.Key,x=>x.Value);if(plans.Where(x=>x.Key!=owner).Sum(x=>x.Value.rows.Count)+rows.Count>4000)throw new Exception(PhoneChatText.Get("Text0035"));p.rows=rows.Where(r=>!p.sent.ContainsKey(r.key)).ToList();p.enabled=enabled;p.mode=mode;}
+        public List<(string owner,FishRow row,int mode)> TakeDue(long now){
+            var due=new List<(string,FishRow,int)>();
+            foreach(var pair in plans){var p=pair.Value;if(!p.enabled)continue;foreach(var r in p.rows.Where(r=>r.at<=now).ToArray()){
+                if(r.expires>now&&r.at>now-900000&&!p.sent.ContainsKey(r.key))due.Add((pair.Key,r,p.mode));
+                p.sent[r.key]=now;p.rows.Remove(r);if(p.sent.Count>1000)p.sent=p.sent.OrderByDescending(x=>x.Value).Take(1000).ToDictionary(x=>x.Key,x=>x.Value);
+            }}return due;
+        }
+    }
+    private readonly object fishGate=new();
+    private FishSchedule fishSchedule=new();
+    private System.Threading.Timer fishTimer;
+    private volatile bool fishRunning;
+    private PushRouter fishPushRouter;
+    private string fishStatus="";
+    private long fishTestAt;
+    private static string FishFile=>Path.Combine(Path.GetDirectoryName(ConfigFile),"OmniPhoneChat-Fishing.json");
+    private void SaveFish(){var temp=FishFile+".tmp";Directory.CreateDirectory(Path.GetDirectoryName(FishFile));File.WriteAllText(temp,JsonSerializer.Serialize(fishSchedule));File.Move(temp,FishFile,true);}
+    private void StartFishing(){
+        lock(fishGate){try{if(File.Exists(FishFile)){if(new FileInfo(FishFile).Length>8000000)throw new IOException();fishSchedule=JsonSerializer.Deserialize<FishSchedule>(File.ReadAllText(FishFile))??new();}}catch{fishSchedule=new();fishStatus=PhoneChatText.Get("Text0036");}}
+        fishPushRouter=new PushRouter(()=>{var p=PushConfiguration();p.direct=false;return p;},text=>fishStatus=text,entry=>{lock(gate){if(enabled)entries.Notify(entry);}},qqSend:SendQQPush);
+        fishRunning=true;fishTimer=new System.Threading.Timer(_=>TickFishing(),null,1000,1000);
+    }
+    private void StopFishing(){fishRunning=false;fishTimer?.Dispose();fishTimer=null;lock(fishGate){}fishPushRouter?.Dispose();fishPushRouter=null;}
+    private void DeliverFish(FishRow row,int mode)=>DeliverFishCore(row,mode,false);
+    private void DeliverFishCore(FishRow row,int mode,bool forceApp){
+        var entry=new ChatEntry{channel="鱼糕",sender=row.title,text=row.body,target=row.key,time=DateTimeOffset.UtcNow.ToString("O"),notify=true};
+        bool queued=mode==2?fishPushRouter?.Enqueue(entry,0,true)==true:mode==0&&!HasDirectReceiver()&&pushRouter?.Enqueue(entry,0,true)==true;
+        entry.externalPush=queued&&!forceApp;lock(gate){if(enabled)entries.Notify(entry);}
+        fishStatus=queued?PhoneChatText.Get("Text0037"):mode==2?PhoneChatText.Get("Text0038"):PhoneChatText.Get("Text0039");
+    }
+    private void TickFishing(){
+        if(!enabled||!fishRunning||!PageEnabled("fishing")||!Monitor.TryEnter(fishGate))return;
+        try{
+            HashSet<string> owners;lock(gate)owners=authorizedDevices.Select(d=>d.id).ToHashSet();
+            if(!fishRunning)return;
+            long now=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();if(!fishSchedule.plans.Any(x=>!owners.Contains(x.Key)||x.Value.enabled&&x.Value.rows.Any(r=>r.at<=now)))return;
+            string previous=JsonSerializer.Serialize(fishSchedule);
+            foreach(var owner in fishSchedule.plans.Keys.Where(k=>!owners.Contains(k)).ToArray()){fishSchedule.plans.Remove(owner);}
+            var due=fishSchedule.TakeDue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            try{SaveFish();}catch{fishSchedule=JsonSerializer.Deserialize<FishSchedule>(previous)??new();throw;}
+            foreach(var job in due){if(!enabled)return;DeliverFish(job.row,job.mode);}
+        }catch{fishStatus=PhoneChatText.Get("Text0040");}finally{Monitor.Exit(fishGate);}
+    }
+    private object FishingAction(JsonElement root,string auth){
+        if(!PageEnabled("fishing"))throw new Exception(PhoneChatText.Get("Text0041"));
+        string owner;lock(gate)owner=(authorizedDevices.FirstOrDefault(d=>Equal(auth,"Bearer "+d.token))??throw new Exception(PhoneChatText.Get("Text0042"))).id;
+        string action=root.GetProperty("action").GetString()??"";object testNotice=null;
+        lock(fishGate){
+            var p=fishSchedule.Get(owner);long now=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if(action=="sync"){string previous=JsonSerializer.Serialize(fishSchedule);try{fishSchedule.Replace(owner,root.GetProperty("rows"),root.GetProperty("enabled").GetBoolean(),root.GetProperty("mode").GetInt32(),now);SaveFish();}catch{fishSchedule=JsonSerializer.Deserialize<FishSchedule>(previous)??new();throw;}p=fishSchedule.Get(owner);}
+            else if(action=="notify"){if(!p.enabled)throw new Exception(PhoneChatText.Get("Text0043"));if(now-fishTestAt<10000)throw new Exception(PhoneChatText.Get("Text0044"));string title=root.GetProperty("title").GetString()??"",body=root.GetProperty("body").GetString()??"";if(title.Length==0||title.Length>120||body.Length>500||title.Contains('\0')||body.Contains('\0'))throw new Exception(PhoneChatText.Get("Text0045"));fishTestAt=now;DeliverFish(new FishRow{key="web:"+now,title=title,body=body},p.mode);}
+            else if(action=="test"){if(now-fishTestAt<10000)throw new Exception(PhoneChatText.Get("Text0046"));fishTestAt=now;var row=new FishRow{key="test:"+now,title="鱼糕测试通知",body="这是来自鱼糕的服务端测试通知！"};DeliverFishCore(row,p.mode,true);testNotice=new{row.key,row.title,row.body};}
+            else if(action!="status")throw new Exception(PhoneChatText.Get("Text0047"));
+            return new{ok=true,testNotice,version="0.3.106",p.enabled,p.mode,count=p.rows.Count(r=>r.at>now),next=p.rows.Where(r=>r.at>now).Select(r=>r.at).DefaultIfEmpty(0).Min(),status=fishStatus};
+        }
+    }
+
     private bool HasDirectReceiver(){lock(gate)return listener!=null&&authorizedDevices.Any(d=>d.lastPoll>DateTime.UtcNow.AddSeconds(-35));}
     private void MarkPoll(string auth){lock(gate){var device=authorizedDevices.FirstOrDefault(d=>Equal(auth,"Bearer "+d.token));if(device!=null)device.lastPoll=DateTime.UtcNow;}}
     private bool Authorized(string auth){lock(gate){var device=authorizedDevices.FirstOrDefault(d=>d.token.Length>0&&Equal(auth,"Bearer "+d.token));if(device==null)return false;device.lastSeen=DateTime.UtcNow;return true;}}
-    private bool ApproveDevice(string id,string code){lock(gate){if(!deviceRequests.TryGetValue(id,out var pending)||pending.expires<=DateTime.UtcNow||pending.token.Length>0||!Equal(code,pending.code)||(authorizedDevices.Count>=32&&!authorizedDevices.Any(d=>d.id==id)))return false;pending.token=Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();authorizedDevices.RemoveAll(d=>d.id==id);authorizedDevices.Add(new AuthorizedDevice{id=id,name=pending.name,remark=approvalRemark.Trim(),token=pending.token,authorizedAt=DateTime.UtcNow});PersistPairingFile();PersistGameState();return true;}}
+    private bool HasWorldIdentity()=>int.TryParse(phoneWorldAccount.alias,out var alias)&&alias>0;
+    private bool WorldAllowed(string auth){lock(gate){var device=authorizedDevices.FirstOrDefault(d=>Equal(auth,"Bearer "+d.token));if(device==null)return false;if(device.worldAuthorized==null){device.worldAuthorized=HasWorldIdentity();device.worldAlias=HasWorldIdentity()?phoneWorldAccount.alias:"";PersistPairingFile();}return device.worldAuthorized==true&&(device.worldAlias.Length==0||!int.TryParse(phoneWorldAccount.alias,out var currentAlias)||currentAlias<=0||device.worldAlias==phoneWorldAccount.alias);}}
+    private bool ApproveDevice(string id,string code){lock(gate){if(!deviceRequests.TryGetValue(id,out var pending)||pending.expires<=DateTime.UtcNow||pending.token.Length>0||!Equal(code,pending.code))return false;if(pending.targetDevice.Length>0){var device=authorizedDevices.FirstOrDefault(d=>d.id==pending.targetDevice);if(device==null||!HasWorldIdentity()||pending.worldAlias!=phoneWorldAccount.alias){status=PhoneChatText.Get("Text0048");return false;}device.worldAuthorized=true;device.worldAlias=pending.worldAlias;pending.token=device.token;}else{if(authorizedDevices.Count>=32&&!authorizedDevices.Any(d=>d.id==id))return false;pending.token=Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();authorizedDevices.RemoveAll(d=>d.id==id);authorizedDevices.Add(new AuthorizedDevice{id=id,name=pending.name,remark=approvalRemark.Trim(),token=pending.token,worldAuthorized=HasWorldIdentity(),worldAlias=HasWorldIdentity()?phoneWorldAccount.alias:"",authorizedAt=DateTime.UtcNow});}PersistPairingFile();PersistGameState();lock(gate)metadataRevision++;return true;}}
+
     private void RevokeDevice(string id){lock(gate){authorizedDevices.RemoveAll(d=>d.id==id);deviceRequests.Remove(id);if(id=="legacy")session="";PersistPairingFile();PersistGameState();}}
     private void RestorePairingFile()
     {
@@ -240,7 +394,7 @@ public sealed class PhoneChat : ModuleBase
         public DiskChatStore(string path,bool reset)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
-            if(sqlite3_open_v2(Utf8(path),out db,6|0x10000,IntPtr.Zero)!=0)throw new IOException("无法打开聊天缓存");
+            if(sqlite3_open_v2(Utf8(path),out db,6|0x10000,IntPtr.Zero)!=0)throw new IOException(PhoneChatText.Get("Text0049"));
             try {
                 Exec("PRAGMA journal_mode=WAL");Exec("PRAGMA synchronous=NORMAL");Exec("PRAGMA cache_size=-1024");Exec("PRAGMA busy_timeout=3000");
                 Exec("CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,channel TEXT,historyKey TEXT,stamp INTEGER,kind INTEGER,payload TEXT)");
@@ -281,6 +435,7 @@ public sealed class PhoneChat : ModuleBase
         public ChatEntry[] After(long id,int limit)=>Read("SELECT payload FROM messages WHERE origin<>'' AND id>"+id+" ORDER BY id LIMIT "+limit).ToArray();
         public ChatEntry[] Recent(int limit)=>Read("SELECT payload FROM messages WHERE origin<>'' ORDER BY id DESC LIMIT "+limit).Reverse().ToArray();
         public IEnumerable<ChatEntry> Pending(string channel,ushort kind,DateTimeOffset when)=>Read("SELECT payload FROM messages WHERE channel="+Quote(channel)+" AND kind="+kind+" AND historyKey='' AND stamp BETWEEN "+(when.UtcTicks-TimeSpan.FromSeconds(3).Ticks)+" AND "+(when.UtcTicks+TimeSpan.FromSeconds(3).Ticks)+" ORDER BY id");
+        public ChatEntry ById(long id)=>Read("SELECT payload FROM messages WHERE id="+id).FirstOrDefault();
         public IEnumerable<ChatEntry> WorldCandidates(string time)=>Read("SELECT payload FROM messages WHERE channel='国服'"+(DateTimeOffset.TryParse(time,out var when)?" AND stamp BETWEEN "+(when.UtcTicks-TimeSpan.FromSeconds(3).Ticks)+" AND "+(when.UtcTicks+TimeSpan.FromSeconds(3).Ticks):"")+" ORDER BY id");
         public string[] Channels(){var result=new List<string>();var stmt=Prepare("SELECT DISTINCT channel FROM messages WHERE origin<>''");try{while(sqlite3_step(stmt)==100)result.Add(System.Runtime.InteropServices.Marshal.PtrToStringUTF8(sqlite3_column_text(stmt,0)));}finally{sqlite3_finalize(stmt);}return result.ToArray();}
         public IEnumerator<ChatEntry> GetEnumerator()=>Read("SELECT payload FROM messages ORDER BY id").GetEnumerator();
@@ -310,11 +465,12 @@ public sealed class PhoneChat : ModuleBase
             return store;
         }
     }
-    private Settings settings = new();
+    private Settings config = new();
+    private Settings settings { get => config; set => config = value; }
     private DiskChatStore entries;
     private readonly Dictionary<string,long> duplicate = new();
     private long sequence;
-    private string session = "", pairCode = "", fingerprint = "", status = "服务未启动";
+    private string session = "", pairCode = "", fingerprint = "", status = PhoneChatText.Get("Text0050");
     private DateTime pairExpires;
     private TcpListener listener;
     private CancellationTokenSource cts;
@@ -353,16 +509,28 @@ public sealed class PhoneChat : ModuleBase
     private object[] phoneChannelInfo = Array.Empty<object>();
     private long metadataAt;
     private bool worldJoined, noviceJoined;
+    private object[] phoneWorldStates=Array.Empty<object>(),phoneNoviceStates=Array.Empty<object>();
+    private WorldAccount phoneWorldAccount=new();private GameAccount phoneGameAccount=new();private long membershipFastUntil,membershipCheckedAt;
+    public sealed class GameAccount{public string name{get;set;}="";public string world{get;set;}="";public uint job{get;set;}public byte level{get;set;}public bool loggedIn{get;set;}}private Dictionary<string,string> phoneWorldStatusIcons=new();
+    public sealed class WorldAccount{public string name{get;set;}="";public string alias{get;set;}="";public bool connected{get;set;}}
     private string metadataError = "";private string sourceError="";
     private long metadataRevision;
     private string metadataSignature = "";
     private string nativeFilterSignature = "";private string windowFilterSignature="";
     private static string ConfigFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"XIVLauncherCN","pluginConfigs","OmniPhoneChat.json");
-    public PhoneChat()
+    public PhoneChat() { }
+    private bool api1Initialized;
+    private void InitializeState()
     {
+        if (api1Initialized) return;
+        api1Initialized = true;
         try { if(File.Exists(ConfigFile)) settings=JsonSerializer.Deserialize<Settings>(File.ReadAllText(ConfigFile))??new(); } catch { }
+        settings.PageOrder=NormalizePages(settings.PageOrder).ToList();settings.DisabledPages=(settings.DisabledPages??new()).Where(PageKeys.Contains).Distinct().ToList();
         settings.Channels ??= new();settings.QQChannels??=new();
+        if(settings.QQSyncSchema<1){var oldPreset=new HashSet<string>(new[]{"悄悄话","国服悄悄话","小队","团队","部队","国服"});if(oldPreset.SetEquals(settings.QQChannels)||new HashSet<string>(AllChannels).SetEquals(settings.QQChannels)){settings.QQChannels.Clear();settings.QQMirror=false;}settings.QQSyncSchema=1;Save();}
         settings.PushPriority=(settings.PushPriority??PushRouter.Order(settings.PushMode)).Select(p=>p>=0&&p<=3?p:0).Concat(new[]{0,0,0}).Take(3).ToArray();
+        if(settings.PushProvider<0){settings.PushProvider=settings.PushPriority.FirstOrDefault(p=>p==1||p==2);settings.QQNotifications=settings.PushPriority.Contains(3);}
+        settings.PushProvider=Math.Clamp(settings.PushProvider,0,2);
         settings.PublicAddress ??= "";
         if(string.IsNullOrWhiteSpace(settings.ApkDownloadUrl))settings.ApkDownloadUrl="https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases";
         try {
@@ -376,9 +544,16 @@ public sealed class PhoneChat : ModuleBase
         } catch { }
         entries=OpenHistoryStore();RestorePairingFile();RestoreGameState();RestorePushKeys();
     }
-    protected override void OnEnable()
+    protected override void OnStart(TreeTools.Lifecycle.FeatureLifetime activation)
     {
-        enabled=true;StartPush();
+        PhoneChatText.Bind(this, activation);
+
+        api1Stopped = false;
+
+        activation.OnStopping(StopActivation);
+        InitializeState();
+
+        enabled=true;omniNavigationCheckedAt=0;RefreshOmniNavigation();StartPush();StartFishing();AttachDirectBoard();
         chat=GetService<IChatGui>("Dalamud.Game.Gui.ChatGui");
         framework=GetService<IFramework>("Dalamud.Game.Framework");
         objects=GetService<IObjectTable>("Dalamud.Game.ClientState.Objects.ObjectTable");
@@ -389,26 +564,31 @@ public sealed class PhoneChat : ModuleBase
         if(DalamudServices.PluginInterface!=null)DalamudServices.PluginInterface.UiBuilder.Draw+=DrawPanel;
         qqMirrorCursor=entries.LastId;qqMirrorSince=DateTimeOffset.UtcNow;StartServer();if(settings.QQAutoConnect)ConnectQQ(false);historyRequested=true;AttachWorld();if(objects?.LocalPlayer!=null){RefreshGameMetadata();LoadGameChatHistory();}
     }
-    protected override void OnDisable()
+    private bool api1Stopped = true;
+    private void StopActivation() { if (api1Stopped) return; api1Stopped = true; StopCore(); }
+    protected override void OnStop() => StopActivation();
+    private void StopCore()
     {
-        enabled=false;DisconnectQQ();pushRouter?.Dispose();pushRouter=null;
+        enabled=false;StopFishing();DisposePhoneItemReadServices();CancelStreamDownload();StopStream();DetachDirectBoard();DisposeWorldBoard();DisconnectQQ();pushRouter?.Dispose();pushRouter=null;
         if(chat!=null){chat.ChatMessageUnhandled-=OnChat;chat.ChatMessageHandled-=OnSuppressedChat;}
         if(framework!=null)framework.Update-=Update;
         lifecycle?.UnregisterListener(AddonEvent.PostSetup,"SelectYesno",OnPrompt);
         if(DalamudServices.PluginInterface!=null)DalamudServices.PluginInterface.UiBuilder.Draw-=DrawPanel;
         DetachWorld();StopServer();historyScan.Clear();panel=false;
     }
-    protected override void OnDispose() { DisconnectQQ();pushRouter?.Dispose();pushRouter=null;StopServer();lock(gate)entries?.Dispose(); }
+    protected override void OnDestroy() { StopFishing();DisposePhoneItemReadServices();CancelStreamDownload();StopStream();DetachDirectBoard();DisposeWorldBoard();DisconnectQQ();pushRouter?.Dispose();pushRouter=null;StopServer();lock(gate)entries?.Dispose(); }
     private void Save()
     {
         try { Directory.CreateDirectory(Path.GetDirectoryName(ConfigFile));File.WriteAllText(ConfigFile,JsonSerializer.Serialize(settings)); }
-        catch(Exception e){status="保存失败："+e.Message;}
+        catch(Exception e){status=PhoneChatText.Get("Text0051")+e.Message;}
     }
     private void Update(IFramework _)
     {
+        RefreshOmniNavigation();
         bool logged=objects?.LocalPlayer!=null;
         if(logged&&(historyRequested||Environment.TickCount64-historyAt>3000)){historyRequested=false;historyAt=Environment.TickCount64;LoadGameChatHistory();}
-        if(logged)MirrorQQ();wasLoggedIn=logged;
+        if(wasLoggedIn&&!logged){Interlocked.Increment(ref directBoardGeneration);directBoard.Clear();directAreaRows=Array.Empty<DirectListing[]>();directLastRequest=0;lock(gate){phoneGameAccount.loggedIn=false;metadataRevision++;}}MirrorQQ();wasLoggedIn=logged;
+        if(Environment.TickCount64<membershipFastUntil&&Environment.TickCount64-membershipCheckedAt>=100){membershipCheckedAt=Environment.TickCount64;RefreshMembershipState();}
         if(logged&&Environment.TickCount64-metadataAt>2000){metadataAt=Environment.TickCount64;RefreshGameMetadata();}
         if(worldClient==null&&Environment.TickCount64-retryAt>5000){retryAt=Environment.TickCount64;AttachWorld();}
         if(Environment.TickCount64-targetScanAt>500)
@@ -425,7 +605,7 @@ public sealed class PhoneChat : ModuleBase
         StopServer();RestoreGameState();
         try
         {
-            if(settings.Port<1024||settings.Port>65535)throw new Exception("端口须在 1024～65535 之间");
+            if(settings.Port<1024||settings.Port>65535)throw new Exception(PhoneChatText.Get("Text0052"));
             using var rsa=RSA.Create(2048);
             var request=new CertificateRequest("CN=FF14 Phone Chat",rsa,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);
             request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false,false,0,false));
@@ -435,16 +615,17 @@ public sealed class PhoneChat : ModuleBase
             PersistPairingFile();
             cts=new();listener=new TcpListener(IPAddress.Any,settings.Port);listener.Start(16);if(pairCode.Length==0||DateTime.UtcNow>=pairExpires)RotatePair();
             var current=listener;var cert=certificate;var token=cts.Token;
-            _=Task.Run(()=>AcceptLoop(current,cert,token));status="HTTPS 服务运行中";
+            _=PhoneChatText.Track(Task.Run(()=>AcceptLoop(current,cert,token)));status=PhoneChatText.Get("Text0053");
         }
-        catch(Exception e){StopServer();status="启动失败："+e.Message;}
+        catch(Exception e){StopServer();status=PhoneChatText.Get("Text0054")+e.Message;}
     }
     private void StopServer()
     {
+        StopStream();
         PersistGameState();try{cts?.Cancel();listener?.Stop();}catch{}
         listener=null;cts=null;lock(gate)foreach(var device in authorizedDevices)device.lastPoll=default;
         // Active connections own their certificate reference until cancellation closes them.
-        certificate=null;fingerprint="";qr=null;qrText="";status="服务已停止，本次游戏的记录与连接保留";
+        certificate=null;fingerprint="";qr=null;qrText="";status=PhoneChatText.Get("Text0055");
     }
     private void RotatePair()
     {
@@ -459,7 +640,7 @@ public sealed class PhoneChat : ModuleBase
             {
                 var client=await current.AcceptTcpClientAsync(token);
                 if(!connections.Wait(0)){client.Dispose();continue;}
-                _=Task.Run(async()=>{try{await Handle(client,cert,token);}catch{}finally{client.Dispose();connections.Release();}});
+                _=PhoneChatText.Track(Task.Run(async()=>{try{await Handle(client,cert,token);}catch{}finally{client.Dispose();connections.Release();}}));
             }
         }
         catch(OperationCanceledException){}catch(SocketException){}
@@ -468,7 +649,7 @@ public sealed class PhoneChat : ModuleBase
     private async Task Handle(TcpClient client,X509Certificate2 cert,CancellationToken token)
     {
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(TimeSpan.FromSeconds(35));var ct=deadline.Token;
-        using var tls=new SslStream(client.GetStream(),false);
+        client.NoDelay=true;using var tls=new SslStream(client.GetStream(),false);
         await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions{ServerCertificate=cert,EnabledSslProtocols=SslProtocols.Tls12|SslProtocols.Tls13},ct);
         var head=new List<byte>();var one=new byte[1];
         while(head.Count<8192)
@@ -481,11 +662,12 @@ public sealed class PhoneChat : ModuleBase
         var headers=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
         foreach(var line in lines.Skip(1)){var colon=line.IndexOf(':');if(colon>0)headers[line[..colon]]=line[(colon+1)..].Trim();}
         if(headers.ContainsKey("Transfer-Encoding")){await Reply(tls,400,new{error="不支持分块请求"},ct);return;}
-        int length=0;
-        if(headers.TryGetValue("Content-Length",out var size)&&(!int.TryParse(size,out length)||length<0||length>4096)){await Reply(tls,413,new{error="请求过长"},ct);return;}
+        int length=0;bool fishRequest=(first[1]=="/fishing-reminders"||first[1]=="/omni-glamour")&&first[0]=="POST";
+        if(fishRequest&&!Authorized(headers.TryGetValue("Authorization",out var fishAuth)?fishAuth:"")){await Reply(tls,401,new{error="设备未授权"},ct);return;}
+        if(headers.TryGetValue("Content-Length",out var size)&&(!int.TryParse(size,out length)||length<0||length>(first[1]=="/omni-glamour"?65536:fishRequest?1000000:4096))){await Reply(tls,413,new{error="请求过长"},ct);return;}
         var body=new byte[length];await tls.ReadExactlyAsync(body,ct);
         var uri=new Uri("https://localhost"+first[1]);
-        if(uri.AbsolutePath=="/pair-info"&&first[0]=="GET"){await Reply(tls,200,new{manualAuthorization=true,version="0.3.38"},ct);return;}
+        if(uri.AbsolutePath=="/pair-info"&&first[0]=="GET"){await Reply(tls,200,new{manualAuthorization=true,version="0.3.106"},ct);return;}
         if((uri.AbsolutePath=="/pair-request"||uri.AbsolutePath=="/pair-status")&&first[0]=="POST")
         {
             try{
@@ -495,12 +677,12 @@ public sealed class PhoneChat : ModuleBase
                 lock(gate){foreach(var expired in deviceRequests.Where(pair=>pair.Value.expires<=DateTime.UtcNow).Select(pair=>pair.Key).ToArray())deviceRequests.Remove(expired);
                     if(uri.AbsolutePath=="/pair-request"){
                         string pin=root.GetProperty("pin").GetString()??"",name=root.GetProperty("name").GetString()??"手机";
-                        if(!Equal(pin,fingerprint))error="服务器证书不一致";
+                        if(!Equal(pin,fingerprint))error=PhoneChatText.Get("Text0056");
                         else if(deviceRequests.TryGetValue(id,out var old)&&Equal(old.secret,secret))pending=old;
-                        else if(deviceRequests.Count>=12)error="待授权请求过多，请稍后重试";
+                        else if(deviceRequests.Count>=12)error=PhoneChatText.Get("Text0057");
                         else{pending=new DeviceRequest{id=id,name=new string(name.Where(c=>!char.IsControl(c)).Take(64).ToArray()),secret=secret,code=RandomNumberGenerator.GetInt32(100000,1000000).ToString(),expires=DateTime.UtcNow.AddMinutes(5)};deviceRequests[id]=pending;}
                     }else if(deviceRequests.TryGetValue(id,out var existing)&&Equal(existing.secret,secret))pending=existing;
-                    else error="授权请求已过期或已拒绝，请重新连接";
+                    else error=PhoneChatText.Get("Text0058");
                 }
                 if(pending==null){await Reply(tls,400,new{error},ct);return;}
                 await Reply(tls,200,new{code=pending.code,approved=pending.token.Length>0,token=pending.token,expires=pending.expires},ct);
@@ -510,6 +692,86 @@ public sealed class PhoneChat : ModuleBase
         string auth=headers.TryGetValue("Authorization",out var value)?value:"";
         bool valid=Authorized(auth);
         if(!valid){await Reply(tls,401,new{error="设备未授权或授权已撤销，请重新连接"},ct);return;}
+        string feature=uri.AbsolutePath switch{"/omni-glamour" or "/glamour-frames"=>"glamour","/character"=>"character","/party"=>"party","/recruit-board" or "/recruit" or "/world-board"=>"recruit",_=>""};
+        if(feature.Length>0&&!PageEnabled(feature)){await Reply(tls,403,new{error="服务端已停用该页面功能"},ct);return;}
+        if(uri.AbsolutePath.StartsWith("/stream")&&!PageEnabled("stream")){
+            bool cleanup=false;try{using var data=JsonDocument.Parse(body);cleanup=data.RootElement.TryGetProperty("action",out var action)&&new[]{"stop","release"}.Contains(action.GetString());}catch{}
+            if(!cleanup){await Reply(tls,403,new{error="服务端已停用游戏画面"},ct);return;}
+        }
+        if(uri.AbsolutePath=="/omni-items"){bool collection=false;try{using var data=JsonDocument.Parse(body);collection=data.RootElement.GetProperty("action").GetString()?.StartsWith("collection-")==true;}catch{}
+            if(collection?!PageEnabled("collections"):!PageEnabled("itemSearch")&&!PageEnabled("collections")){await Reply(tls,403,new{error="服务端已停用该物品页面功能"},ct);return;}
+        }
+        if(uri.AbsolutePath=="/fishing-reminders"&&first[0]=="POST"){try{using var data=JsonDocument.Parse(body);await Reply(tls,200,FishingAction(data.RootElement,auth),ct);}catch(Exception e){await Reply(tls,400,new{error=e.Message},ct);}return;}
+        if(uri.AbsolutePath=="/world-permission"&&first[0]=="POST"){
+            try{using var data=JsonDocument.Parse(body);var root=data.RootElement;string action=root.GetProperty("action").GetString()??"",id=root.GetProperty("id").GetString()??"",secret=root.GetProperty("secret").GetString()??"";if(!Guid.TryParse(id,out _)||!Regex.IsMatch(secret,"^[a-f0-9]{64}$"))throw new Exception(PhoneChatText.Get("Text0059"));DeviceRequest request;lock(gate){var device=authorizedDevices.FirstOrDefault(d=>Equal(auth,"Bearer "+d.token))??throw new Exception(PhoneChatText.Get("Text0042"));if(action=="request"){if(!HasWorldIdentity())throw new Exception(PhoneChatText.Get("Text0060"));foreach(var expired in deviceRequests.Where(p=>p.Value.expires<=DateTime.UtcNow).Select(p=>p.Key).ToArray())deviceRequests.Remove(expired);if(deviceRequests.Count>=12)throw new Exception(PhoneChatText.Get("Text0061"));request=new DeviceRequest{id=id,name=device.name+" · 附加国服授权",secret=secret,targetDevice=device.id,worldAlias=phoneWorldAccount.alias,code=RandomNumberGenerator.GetInt32(100000,1000000).ToString(),expires=DateTime.UtcNow.AddMinutes(5)};deviceRequests[id]=request;}else if(action=="status"&&deviceRequests.TryGetValue(id,out request)&&request.targetDevice==device.id&&Equal(secret,request.secret)&&request.expires>DateTime.UtcNow){}else throw new Exception(PhoneChatText.Get("Text0062"));}await Reply(tls,200,new{code=request.code,approved=request.token.Length>0,expires=request.expires},ct);}catch(Exception e){await Reply(tls,400,new{error=e.Message},ct);}return;}
+        if(uri.AbsolutePath=="/display-assets"&&first[0]=="GET")
+        {
+            try
+            {
+                string kind=uri.Query.Contains("kind=bitmap")?"bitmap":uri.Query.Contains("kind=jobs")?"jobs":uri.Query.Contains("kind=status")?"status":"font";
+                if(kind=="bitmap")await Reply(tls,200,new{bitmapIcons=GameBitmapIcons()},ct);
+                else if(kind=="jobs")await Reply(tls,200,new{jobIcons=GameJobIcons()},ct);
+                else if(kind=="status")await Reply(tls,200,new{statusIcons=GameStatusIcons()},ct);
+                else{var path=Path.Combine(DalamudServices.PluginInterface.DalamudAssetDirectory.FullName,"UIRes","LodestoneGameSymbol.ttf");var font=File.ReadAllBytes(path);if(font.Length>2*1024*1024)throw new Exception(PhoneChatText.Get("Text0063"));await Reply(tls,200,new{symbolFont=Convert.ToBase64String(font)},ct);}
+            }catch{await Reply(tls,503,new{error="游戏显示资源暂不可用"},ct);}return;
+        }
+        if(uri.AbsolutePath=="/glamour-frames"&&first[0]=="GET"){
+            string id=System.Web.HttpUtility.ParseQueryString(uri.Query)["id"]??"";
+            if(!Regex.IsMatch(id,"^[a-fA-F0-9]{32}$")){await Reply(tls,400,new{error="方案标识无效"},ct);return;}
+            if(!await glamourFrameSlots.WaitAsync(0,ct)){await Reply(tls,429,new{error="预览连接已满"},ct);return;}
+            deadline.CancelAfter(Timeout.InfiniteTimeSpan);
+            try{await GlamourFrames(tls,auth,id,ct);}finally{glamourFrameSlots.Release();}return;
+        }
+        if(uri.AbsolutePath=="/omni-glamour"&&first[0]=="POST"){
+            try{
+                if(body.Length>65536)throw new Exception(PhoneChatText.Get("Text0064"));
+                using var data=JsonDocument.Parse(body,new JsonDocumentOptions{MaxDepth=20});
+                var request=data.RootElement.Clone();string action=request.GetProperty("action").GetString()??"";
+                if(!new[]{"read","frame","select","save","preview-draft","search","import","import-website","export","delete","apply","restore","camera","button","stop"}.Contains(action))throw new Exception(PhoneChatText.Get("Text0065"));
+                var result=await OnGame(()=>{
+                    string json;
+                    try{json=DalamudServices.PluginInterface.GetIpcSubscriber<string,string>("Omni.Glamour.Management.V1").InvokeFunc(request.GetRawText());}
+                    catch(Exception){throw new Exception(PhoneChatText.Get("Text0066"));}
+                    using var reply=JsonDocument.Parse(json);return reply.RootElement.Clone();
+                });
+                await Reply(tls,200,result,ct);
+            }catch(Exception e){await Reply(tls,400,new{ok=false,error=(e.InnerException??e).Message},ct);}return;
+        }
+        if(uri.AbsolutePath=="/omni-items"&&first[0]=="POST"){
+            try{using var data=JsonDocument.Parse(body);var request=data.RootElement.Clone();var result=await OnGame(()=>OmniItemsAction(request,auth));await Reply(tls,200,result,ct);}
+            catch(Exception e){await Reply(tls,400,new{error=(e.InnerException??e).Message},ct);}return;
+        }
+        if(uri.AbsolutePath=="/character-model"&&first[0]=="POST"){await Reply(tls,410,new{error="人物预览已移除，不再打开游戏角色窗口"},ct);return;}
+        if(uri.AbsolutePath=="/stream-pointer"&&first[0]=="POST"){try{using var data=JsonDocument.Parse(body);await Reply(tls,200,ApplyStreamPointer(data.RootElement,auth),ct);}catch(Exception e){await Reply(tls,400,new{error=e.Message},ct);}return;}
+        if(uri.AbsolutePath=="/stream-ime"&&first[0]=="POST"){try{using var data=JsonDocument.Parse(body);await Reply(tls,200,ApplyStreamIme(data.RootElement,auth),ct);}catch(Exception e){await Reply(tls,400,new{error=e.Message},ct);}return;}
+        if(uri.AbsolutePath=="/stream-text"&&first[0]=="POST"){try{using var data=JsonDocument.Parse(body);await Reply(tls,200,ApplyStreamText(data.RootElement,auth),ct);}catch(Exception e){await Reply(tls,400,new{error=e.Message},ct);}return;}
+        if(uri.AbsolutePath=="/stream-control"&&first[0]=="POST"){try{using var data=JsonDocument.Parse(body);await Reply(tls,200,ApplyStreamControl(data.RootElement,auth),ct);}catch(Exception e){await Reply(tls,400,new{error=e.Message},ct);}return;}
+        if(uri.AbsolutePath=="/stream-input"&&first[0]=="POST"){
+            try{using var data=JsonDocument.Parse(body);var result=ApplyStreamKeys(data.RootElement,auth);await Reply(tls,200,result,ct);}catch(Exception e){await Reply(tls,400,new{error=(e.InnerException??e).Message},ct);}return;}
+        if(uri.AbsolutePath=="/stream-video"&&first[0]=="GET"){
+            string videoSession=System.Web.HttpUtility.ParseQueryString(uri.Query)["session"]??"";
+            lock(streamGate){if(!Equal(auth,streamOwner)||streamProcess==null||!streamH264||!Equal(videoSession,streamInputSession)||videoSession.Length==0)return;}
+            deadline.CancelAfter(Timeout.InfiniteTimeSpan);await StreamVideo(tls,auth,videoSession,ct);return;}
+        if(uri.AbsolutePath=="/stream"&&first[0]=="POST"){
+            try{using var data=JsonDocument.Parse(body);var root=data.RootElement;string action=root.GetProperty("action").GetString()??"";var result=await StreamAction(action,root,auth,ct);await Reply(tls,200,result,ct);}catch(Exception e){await Reply(tls,400,new{error=(e.InnerException??e).Message},ct);}return;}
+        if(uri.AbsolutePath=="/icons"&&first[0]=="POST"){
+            try{using var data=JsonDocument.Parse(body);var values=data.RootElement.GetProperty("ids").EnumerateArray().Select(v=>v.GetUInt32()).Distinct().ToArray();if(values.Length>12||values.Any(v=>v==0||v>500000))throw new Exception(PhoneChatText.Get("Text0067"));var icons=await PhoneChatText.Track(Task.Run(()=>values.ToDictionary(v=>v.ToString(),v=>GameIconImage(v)),ct));await Reply(tls,200,new{ok=true,icons},ct);}catch(Exception e){await Reply(tls,400,new{error=(e.InnerException??e).Message},ct);}return;}
+        if(uri.AbsolutePath=="/item"&&first[0]=="POST"){
+            try{using var data=JsonDocument.Parse(body);uint id=data.RootElement.GetProperty("itemId").GetUInt32();var result=await OnGame(()=>ReadItem(id));await Reply(tls,200,result,ct);}catch(Exception e){await Reply(tls,400,new{error=(e.InnerException??e).Message},ct);}return;}
+        if(uri.AbsolutePath=="/character"&&first[0]=="POST"){
+            try{using var data=JsonDocument.Parse(body);string section=data.RootElement.GetProperty("section").GetString()??"character";var result=await OnGame(()=>ReadCharacterSection(section));await Reply(tls,200,result,ct);}catch(Exception e){await Reply(tls,400,new{error=(e.InnerException??e).Message},ct);}return;}
+        if(uri.AbsolutePath=="/party"&&first[0]=="POST"){
+            try{using var data=JsonDocument.Parse(body);var root=data.RootElement;string action=root.GetProperty("action").GetString()??"read";string member=root.TryGetProperty("memberId",out var mid)?mid.GetString()??"":"";var result=await OnGame(()=>PartyAction(action,member,auth));await Reply(tls,200,result,ct);}catch(Exception e){await Reply(tls,400,new{error=(e.InnerException??e).Message},ct);}return;}
+        if(uri.AbsolutePath=="/world-board"&&first[0]=="POST"){
+            try{if(!WorldAllowed(auth))throw new Exception(PhoneChatText.Get("Text0068"));if(!worldJoined)throw new Exception(PhoneChatText.Get("Text0069"));using var data=JsonDocument.Parse(body);var root=data.RootElement;string action=root.GetProperty("action").GetString()??"read";string post=root.TryGetProperty("postId",out var pid)?pid.GetString()??"":"";int offset=root.TryGetProperty("offset",out var off)?off.GetInt32():0;uint? category=root.TryGetProperty("category",out var cat)&&cat.ValueKind==JsonValueKind.Number?cat.GetUInt32():null;string mode=root.TryGetProperty("mode",out var md)&&md.ValueKind==JsonValueKind.String?md.GetString():null;if(category>65536||mode?.Length>32)throw new Exception(PhoneChatText.Get("Text0070"));var result=await WorldBoardAction(action,post,offset,ct,category,mode);await Reply(tls,200,result,ct);}catch(Exception e){await Reply(tls,400,new{error=(e.InnerException??e).Message},ct);}return;}
+        if(uri.AbsolutePath=="/recruit-board"&&first[0]=="POST")
+        {
+            try{using var data=JsonDocument.Parse(body);var root=data.RootElement;string action=root.GetProperty("action").GetString()??"";string view=root.TryGetProperty("viewId",out var key)?key.GetString()??"":"";int index=root.TryGetProperty("index",out var number)?number.GetInt32():0;var result=await RecruitmentBoardAction(action,view,index,auth,ct);await Reply(tls,200,result,ct);}catch(Exception e){await Reply(tls,400,new{error=(e.InnerException??e).Message},ct);}return;
+        }
+        if(uri.AbsolutePath=="/recruit"&&first[0]=="POST")
+        {
+            try{using var data=JsonDocument.Parse(body);var root=data.RootElement;string action=root.GetProperty("action").GetString()??"";string board=root.TryGetProperty("boardView",out var boardKey)?boardKey.GetString()??"":"";string listing=root.TryGetProperty("listingId",out var listingKey)?listingKey.GetString()??"":"";string view=root.TryGetProperty("viewId",out var key)?key.GetString()??"":"";long id=root.TryGetProperty("messageId",out var messageValue)?messageValue.GetInt64():0;var result=await RecruitmentAction(action,id,view,auth,ct,board,listing);await Reply(tls,200,result,ct);}catch(Exception e){await Reply(tls,400,new{error=(e.InnerException??e).Message},ct);}return;
+        }
         if(uri.AbsolutePath=="/reload"&&first[0]=="POST")
         {
             try{await ReloadGameHistory();await Reply(tls,200,new{ok=true},ct);}catch(Exception e){await Reply(tls,503,new{error=e.Message},ct);}return;
@@ -517,16 +779,16 @@ public sealed class PhoneChat : ModuleBase
         if(uri.AbsolutePath=="/poll"&&first[0]=="GET")
         {
             MarkPoll(auth);
-            long noticeAfter=0;long routeAfter=0;long after=0;var query=uri.Query.TrimStart('?').Split('&');foreach(var part in query)if(part.StartsWith("after="))long.TryParse(part[6..],out after);foreach(var part in query)if(part.StartsWith("routeAfter="))long.TryParse(part[11..],out routeAfter);foreach(var part in query)if(part.StartsWith("noticeAfter="))long.TryParse(part[12..],out noticeAfter);
+            long noticeAfter=0;long routeAfter=0;long metadataAfter=-1;long after=0;var query=uri.Query.TrimStart('?').Split('&');foreach(var part in query)if(part.StartsWith("after="))long.TryParse(part[6..],out after);foreach(var part in query)if(part.StartsWith("routeAfter="))long.TryParse(part[11..],out routeAfter);foreach(var part in query)if(part.StartsWith("noticeAfter="))long.TryParse(part[12..],out noticeAfter);foreach(var part in query)if(part.StartsWith("metadataAfter="))long.TryParse(part[14..],out metadataAfter);
             var until=DateTime.UtcNow.AddSeconds(8);
             long revision;lock(gate)revision=metadataRevision;
-            while(!query.Contains("initial=1")&&DateTime.UtcNow<until){lock(gate){if(entries.LastTrustedId>after||entries.NoticesAfter(noticeAfter).Length>0||revision!=metadataRevision)break;}await Task.Delay(250,ct);}
+            while(!query.Contains("initial=1")&&DateTime.UtcNow<until){lock(gate){if(entries.LastTrustedId>after||entries.NoticesAfter(noticeAfter).Length>0||(metadataAfter>=0?metadataAfter!=metadataRevision:revision!=metadataRevision))break;}await Task.Delay(250,ct);}
             if(!Authorized(auth)){await Reply(tls,401,new{error="设备授权已撤销"},ct);return;}
             ChatEntry[] messages,notices;string[] channels;bool allow;lock(gate){messages=entries.After(after,100);notices=entries.NoticesAfter(noticeAfter);channels=AllChannels.Concat(new[]{"默语"}).Concat(entries.Channels()).Distinct().ToArray();allow=settings.AllowCommands;}
             lock(gate){foreach(var message in messages){var assigned=MatchEntryTabs(message);message.tabs=assigned;}}
             PhoneTab[] tabs;object[] macros,commands,routes,channelInfo;bool world,novice,hasMoreRoutes;long nextRouteAfter;string warning;
             lock(gate){tabs=phoneTabs;macros=allow?phoneMacros:Array.Empty<object>();commands=allow?phoneCommands:Array.Empty<object>();var routeBatch=entries.After(routeAfter,400);nextRouteAfter=routeBatch.LastOrDefault()?.id??routeAfter;hasMoreRoutes=entries.HasAfter(nextRouteAfter);routes=routeBatch.Select(e=>{e.tabs=MatchEntryTabs(e);return (object)new{e.id,e.tabs};}).ToArray();channelInfo=phoneChannelInfo;world=worldJoined;novice=noviceJoined;warning=metadataError;}
-            await Reply(tls,200,new{historyVersion=gameState.TryGetValue("historyVersion",out var historyVersion)?(string)historyVersion:"",historyLoading=historyRequested,gameId=(string)gameState["gameId"],hasMore=entries.HasAfter(messages.LastOrDefault()?.id??after),nextRouteAfter,hasMoreRoutes,messages,notices,channels,filterOptions=phoneFilters,allowCommands=allow,tabs,macros,commands,routes,channelInfo,worldJoined=world,noviceJoined=novice,metadataError=warning},ct);return;
+            await Reply(tls,200,new{pageNavigation=PageNavigation(),metadataRevision,historyVersion=gameState.TryGetValue("historyVersion",out var historyVersion)?(string)historyVersion:"",historyLoading=historyRequested,gameId=(string)gameState["gameId"],hasMore=entries.HasAfter(messages.LastOrDefault()?.id??after),nextRouteAfter,hasMoreRoutes,messages,notices,channels,filterOptions=phoneFilters,allowCommands=allow,tabs,macros,commands,routes,channelInfo,worldJoined=world,noviceJoined=novice,worldStates=phoneWorldStates,worldStatusIcons=phoneWorldStatusIcons,noviceStates=phoneNoviceStates,gameAccount=phoneGameAccount,worldAccount=WorldAllowed(auth)?phoneWorldAccount:new WorldAccount(),worldAuthorized=WorldAllowed(auth),metadataError=warning},ct);return;
         }
         if(uri.AbsolutePath=="/send"&&first[0]=="POST")
         {
@@ -535,7 +797,8 @@ public sealed class PhoneChat : ModuleBase
                 using var document=JsonDocument.Parse(body);var root=document.RootElement;
                 string channel=root.GetProperty("channel").GetString()??"",text=root.GetProperty("text").GetString()??"",target=root.TryGetProperty("target",out var dest)?dest.GetString()??"":"";
                 var completion=new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                if(framework==null)throw new Exception("游戏框架未就绪");
+                if((channel.StartsWith("国服")||(channel=="频道操作"&&text.StartsWith("国服")))&&!WorldAllowed(auth))throw new Exception(PhoneChatText.Get("Text0071"));
+                if(framework==null)throw new Exception(PhoneChatText.Get("Text0072"));
                 _=framework.RunOnFrameworkThread(async()=>{try{await Send(channel,target,text);completion.TrySetResult(true);}catch(Exception e){completion.TrySetException(e);}});
                 await completion.Task.WaitAsync(TimeSpan.FromSeconds(10),ct);
                 await Reply(tls,200,new{ok=true},ct);
@@ -568,7 +831,7 @@ public sealed class PhoneChat : ModuleBase
     }
     private async Task ReloadGameHistory()
     {
-        if(framework==null)throw new Exception("游戏框架未就绪");
+        if(framework==null)throw new Exception(PhoneChatText.Get("Text0072"));
         var done=new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _=framework.RunOnFrameworkThread(()=>{try{nativeHistoryCursor=-1;historyScan.Clear();historyRequested=true;RefreshGameMetadata();LoadGameChatHistory();done.TrySetResult(true);}catch(Exception e){done.TrySetException(e);}return Task.CompletedTask;});
         await done.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -606,38 +869,41 @@ public sealed class PhoneChat : ModuleBase
             }
             sourceError="";historyScan.Clear();if(historyRepaired){lock(gate){gameState["historyVersion"]=Guid.NewGuid().ToString("N");metadataRevision++;historyRepaired=false;}}
         }
-        catch(Exception e){historyScan.Clear();sourceError="游戏窗口记录读取："+e.Message;metadataError=sourceError;}
+        catch(Exception e){historyScan.Clear();sourceError=PhoneChatText.Get("Text0073")+e.Message;metadataError=sourceError;}
     }
     private void ImportNativeHistory(byte[] senderBytes,byte[] messageBytes,ushort kind,int stamp,string sourceKey,byte source=0,byte targetRelation=0,bool omni=false,int? windowIndex=null)
     {
         string origin=omni?"omni-native":"native";string canonical=sourceKey+":"+kind+":"+stamp;string key="window-"+origin+":"+(omni&&windowIndex.HasValue?nativeHistoryContent+":"+windowIndex.Value+":"+kind+":"+stamp:canonical);if(omni&&int.TryParse(sourceKey[(sourceKey.LastIndexOf(':')+1)..],out int nativeIndex)&&nativeIndex<0)canonical="omni-only:"+key;
-        if(entries.ByKey(key)!=null)return;
+        var saved=entries.ByKey(key);if(saved!=null&&saved.displayVersion>=4)return;
         var senderString=Dalamud.Game.Text.SeStringHandling.SeString.Parse(senderBytes);var message=Dalamud.Game.Text.SeStringHandling.SeString.Parse(messageBytes);
         string text=message.TextValue,sender=senderString.TextValue.Trim();
         var payload=senderString.Payloads.OfType<Dalamud.Game.Text.SeStringHandling.Payloads.PlayerPayload>().FirstOrDefault();sender=NormalizePlayerName(sender,payload?.World.Value.Name.ToString()??"");
         bool outgoing=(XivChatType)kind==XivChatType.TellOutgoing;var hidden=Regex.Match(sender,@"^冒险者(\d+)已隐藏(?:@.*)?$");
         string channel=hidden.Success?"国服悄悄话":Label((XivChatType)kind),recipient=hidden.Success?hidden.Groups[1].Value:payload!=null||channel=="悄悄话"?sender:"";
         string time=stamp>0?DateTimeOffset.FromUnixTimeSeconds(stamp).ToLocalTime().ToString("O"):DateTimeOffset.Now.ToString("O");
-        var entry=new ChatEntry{channel=channel,sender=sender,senderIdentity=sender,target=recipient,text=text,time=time,outgoing=outgoing,historyKey=key,recordKey=canonical,recordSource=origin,kind=kind,sourceKind=source,targetKind=targetRelation,parts=FormatParts(message,ChatColor(channel)),color=ChatColor(channel)};
+        var entry=new ChatEntry{displayVersion=4,channel=channel,sender=sender,senderIdentity=sender,target=recipient,text=text,time=time,outgoing=outgoing,historyKey=key,recordKey=canonical,recordSource=origin,kind=kind,sourceKind=source,targetKind=targetRelation,parts=FormatParts(message,ChatColor(channel)),color=ChatColor(channel),recruitment=NativeRecruitment(message),senderParts=FormatParts(senderString,ChatColor(channel))};
         entry.systemOrigin=message.Payloads.OfType<Dalamud.Game.Text.SeStringHandling.Payloads.DalamudLinkPayload>().Any()?"plugin":entries.Origin(canonical);
         entry.tabs=MatchEntryTabs(entry);if(entry.tabs.Length==0)return;
-        lock(gate){var prior=entries.ByKey(key);if(prior!=null){if(prior.systemOrigin!=entry.systemOrigin){entry.id=prior.id;entries.Put(entry);historyRepaired=true;}return;}entry.id=++sequence;entries.Put(entry);}
+        lock(gate){var prior=entries.ByKey(key);if(prior!=null){if(prior.systemOrigin!=entry.systemOrigin||prior.displayVersion<4){entry.id=prior.id;entries.Put(entry);historyRepaired=true;}return;}entry.id=++sequence;entries.Put(entry);}
     }
     private static string NormalizePlayerName(string name,string world)
     {name=name.Trim();return name.Length>0&&!name.Contains('@')&&!string.IsNullOrWhiteSpace(world)?name+"@"+world:name;}
     private void ImportWorldHistory(object message,Guid? windowMessageId=null)
     {
         if(message==null)return;var type=message.GetType();string identity=ReadValue(type,message,"MessageID")?.ToString()??"";
-        var guid=windowMessageId??(Guid.TryParse(identity,out var parsed)?parsed:Guid.Empty);if(guid==Guid.Empty)throw new InvalidOperationException("Omni 窗口记录缺少有效消息编号");
+        var guid=windowMessageId??(Guid.TryParse(identity,out var parsed)?parsed:Guid.Empty);if(guid==Guid.Empty)throw new InvalidOperationException(PhoneChatText.Get("Text0074"));
         string key="window-omni-world:"+guid.ToString("N");var existing=entries.ByKey(key);
         string text=ReadMember(type,message,"Text");if(string.IsNullOrWhiteSpace(text))return;
         string alias=ReadValue(type,message,"AliasID")?.ToString()??"";bool system=ReadValue(type,message,"IsSystem") is true;
         string sender=system?"":WorldSender(message);
-        var stamp=ReadValue(type,message,"SentAt");if(stamp is not long epoch||epoch<=0)throw new InvalidOperationException("Omni 窗口记录缺少有效时间");
+        var stamp=ReadValue(type,message,"SentAt");if(stamp is not long epoch||epoch<=0)throw new InvalidOperationException(PhoneChatText.Get("Text0075"));
         string time=(epoch>100000000000?DateTimeOffset.FromUnixTimeMilliseconds(epoch):DateTimeOffset.FromUnixTimeSeconds(epoch)).ToLocalTime().ToString("O");
         lock(gate){
-            var entry=new ChatEntry{id=existing?.id??0,channel="国服",sender=sender,senderIdentity="world:"+alias,text=text,time=time,historyKey=key,recordKey=guid.ToString("N"),recordSource="omni-world",outgoing=ReadValue(worldClient?.GetType(),worldClient,"SelfAliasID")?.ToString()==alias,color=ChatColor("国服")};entry.tabs=MatchEntryTabs(entry);if(entry.tabs.Length==0)return;
-            if(existing!=null&&existing.sender==entry.sender&&existing.text==entry.text)return;
+            string originalWorldText=text;var recruitment=WorldRecruitment(message,ref text);
+            if(originalWorldText.Contains("<pfinder>",StringComparison.Ordinal)){var shared=Value(message,"SharedPost");string display=Text(shared,"DisplayName");recruitment=new RecruitmentLink{kind="worldpost",source="omni-world",postId="live:"+alias,title="队员招募（"+(display.Length>0?display:sender)+"）"};text=originalWorldText.Replace("<pfinder>",recruitment.title,StringComparison.Ordinal);}
+
+            var entry=new ChatEntry{displayVersion=3,worldAlias=int.TryParse(alias,out var aliasNumber)?aliasNumber:0,statusIcon=WorldStatusIcon(message),recruitment=recruitment,id=existing?.id??0,channel="国服",sender=sender,senderIdentity="world:"+alias,text=text,time=time,historyKey=key,recordKey=guid.ToString("N"),recordSource="omni-world",outgoing=ReadValue(worldClient?.GetType(),worldClient,"SelfAliasID")?.ToString()==alias,color=ChatColor("国服")};entry.tabs=MatchEntryTabs(entry);if(entry.tabs.Length==0)return;
+            if(existing!=null&&existing.displayVersion>=3&&existing.sender==entry.sender&&existing.text==entry.text&&JsonSerializer.Serialize(existing.recruitment)==JsonSerializer.Serialize(entry.recruitment))return;
             if(existing==null)entry.id=++sequence;entries.Put(entry);if(existing!=null)historyRepaired=true;
         }
     }
@@ -670,7 +936,7 @@ public sealed class PhoneChat : ModuleBase
             if((definition!=typeof(SortedDictionary<,>)&&definition!=typeof(Dictionary<,>))||arguments.Length!=2||arguments[1].DeclaringType!=window.GetType()||(arguments[0]!=typeof(int)&&arguments[0]!=typeof(Guid)))continue;
             found=true;if(field.GetValue(window) is IEnumerable collection&&!ImportCachedCollection(collection,false,deadline))return false;
         }
-        if(!found)throw new InvalidOperationException("Omni 窗口记录接口不匹配，未使用其他消息来源补录");
+        if(!found)throw new InvalidOperationException(PhoneChatText.Get("Text0076"));
         return true;
     }
     private unsafe void ImportOptimizedRecord(object record,int depth,int? windowIndex=null,Guid? windowMessageId=null)
@@ -686,9 +952,9 @@ public sealed class PhoneChat : ModuleBase
         foreach(var nested in fields)if(nested.FieldType.DeclaringType==record.GetType().DeclaringType||nested.FieldType.Name=="OmniWorldChatMessage")ImportOptimizedRecord(nested.GetValue(record),depth+1,windowIndex,windowMessageId);
     }
 
-    private void OnSuppressedChat(IChatMessage message){historyRequested=true;}
+    private void OnSuppressedChat(IChatMessage message){historyRequested=true;ObserveRecruitmentFailure(message);MirrorNativeEvent(message);}
     private void OnChat(IChatMessage message)
-    {
+    {ObserveRecruitmentFailure(message);MirrorNativeEvent(message);
         RecordSourceProof(message);
         var kind=message.LogKind;var text=message.Message.TextValue;var sender=(message.Sender?.TextValue??"").Trim();
         if(sender.Length==0)NotifyRequest(text);
@@ -741,30 +1007,30 @@ public sealed class PhoneChat : ModuleBase
     }
     private async Task Send(string channel,string target,string text)
     {
-        if(!enabled||listener==null||objects?.LocalPlayer==null)throw new Exception("角色未登录或服务已停止");
+        if(!enabled||listener==null)throw new Exception(PhoneChatText.Get("Text0077"));
+        if(channel!="国服"&&channel!="国服悄悄话"&&objects?.LocalPlayer==null)throw new Exception(PhoneChatText.Get("Text0078"));
         if(channel=="频道操作"){ChannelAction(text);RefreshGameMetadata();return;}
-        if(channel=="游戏宏"){if(!settings.AllowCommands)throw new Exception("电脑未允许宏指令");ExecuteGameMacro(target,text);return;}
-        text=text.Trim();target=target.Trim();if(text.Length==0||text.Contains('\n')||text.Contains('\r')||Encoding.UTF8.GetByteCount(text)>500)throw new Exception("消息须为单行且不超过 500 字节");
-        lock(gate){if(channel!="宏"&&!AllChannels.Contains(channel))throw new Exception("此频道不支持发送");}
+        if(channel=="游戏宏"){if(!settings.AllowCommands)throw new Exception(PhoneChatText.Get("Text0079"));ExecuteGameMacro(target,text);return;}
+        text=text.Trim();target=target.Trim();if(text.Length==0||text.Contains('\n')||text.Contains('\r')||Encoding.UTF8.GetByteCount(text)>500)throw new Exception(PhoneChatText.Get("Text0080"));
+        lock(gate){if(channel!="宏"&&!AllChannels.Contains(channel))throw new Exception(PhoneChatText.Get("Text0081"));}
         if(channel=="国服"||channel=="国服悄悄话")
         {
-            var client=worldClient??FindOmniWorldChatClient()??throw new Exception("请启用 Omni 聊天框优化");
-            if(ReadValue(client.GetType(),client,"Connected") is not true)throw new Exception("国服频道尚未连接");
-            if(channel=="国服"&&target.Length==0)
-            {if(DalamudServices.CommandManager?.ProcessCommand("/omni chatcn "+text)!=true)throw new Exception("未找到 /omni chatcn 指令");return;}
-            int alias=ResolveAlias(client,target);
+            var client=worldClient??FindOmniWorldChatClient()??throw new Exception(PhoneChatText.Get("Text0082"));
+            if(ReadValue(client.GetType(),client,"Connected") is not true)throw new Exception(PhoneChatText.Get("Text0083"));
+
+            int alias=channel=="国服"&&target.Length==0?0:ResolveAlias(client,target);
             var method=client.GetType().GetMethod(channel=="国服悄悄话"?"SendWhisper":"SendAsync",channel=="国服悄悄话"?new[]{typeof(int),typeof(string)}:new[]{typeof(string),typeof(int)});
             object[] args=channel=="国服悄悄话"?new object[]{alias,text}:new object[]{text,alias};
-            if(method?.Invoke(client,args) is not Task<bool> task||!await task)throw new Exception("发送失败，请检查连接、屏蔽或发送频率");
+            if(method?.Invoke(client,args) is not Task<bool> task||!await task)throw new Exception(PhoneChatText.Get("Text0084"));
             Add(channel,"我",channel=="国服悄悄话"?alias.ToString():"",text,true);return;
         }
         string command;
         if(channel=="宏")
-        {if(!settings.AllowCommands)throw new Exception("电脑未允许宏指令");if(!text.StartsWith('/'))throw new Exception("宏指令须以 / 开头");command=text;}
+        {if(!settings.AllowCommands)throw new Exception(PhoneChatText.Get("Text0079"));if(!text.StartsWith('/'))throw new Exception(PhoneChatText.Get("Text0085"));command=text;}
         else if(channel=="悄悄话")
-        {if(!Regex.IsMatch(target,@"^[^\s\""/]+@[^\s\""/]+$"))throw new Exception("收件人格式：姓名@服务器");command="/t "+target+" "+text;}
+        {if(!Regex.IsMatch(target,@"^[^\s\""/]+@[^\s\""/]+$"))throw new Exception(PhoneChatText.Get("Text0086"));command="/t "+target+" "+text;}
         else if(Commands.TryGetValue(channel,out var prefix))command=prefix+" "+text;
-        else throw new Exception("此频道只支持查看");
+        else throw new Exception(PhoneChatText.Get("Text0087"));
         if(channel=="宏"&&DalamudServices.CommandManager?.ProcessCommand(command)==true)return;
         else ChatManager.Instance().SendMessage(command);
     }
@@ -774,31 +1040,32 @@ public sealed class PhoneChat : ModuleBase
         if(list!=null)foreach(var member in list){if(member==null)continue;var type=member.GetType();if(ReadValue(type,member,"AliasID") is int id&&id>0&&(target==id.ToString()||target==ReadMember(type,member,"DisplayName")))ids.Add(id);}
         // Hidden identities from received whispers need not appear in the public member list.
         if(ids.Count==0&&int.TryParse(target,out int direct)&&direct>0)return direct;
-        if(ids.Count!=1)throw new Exception(ids.Count==0?"未找到频道用户，请使用昵称或 AliasID":"昵称重名，请使用 AliasID");return ids[0];
+        if(ids.Count!=1)throw new Exception(ids.Count==0?PhoneChatText.Get("Text0088"):PhoneChatText.Get("Text0089"));return ids[0];
     }
+    private unsafe void RefreshMembershipState(){var client=worldClient??FindOmniWorldChatClient();bool world=client!=null&&ReadValue(client.GetType(),client,"Connected") is true;var proxy=InfoProxyNoviceNetwork.Instance();bool novice=proxy!=null&&proxy->IsInNoviceNetwork;lock(gate){if(worldJoined!=world||noviceJoined!=novice){worldJoined=world;noviceJoined=novice;metadataRevision++;}if(client!=null){var self=Value(client,"SelfMember");string alias=Text(client,"SelfAliasID");if(phoneWorldAccount.alias!=alias){phoneWorldAccount.alias=alias;phoneWorldAccount.name=Text(self,"DisplayName");metadataRevision++;}phoneWorldAccount.connected=world;}}}
     private unsafe void ChannelAction(string action)
-    {
-        if(action=="国服加入"||action=="国服退出")
+    {membershipFastUntil=Environment.TickCount64+10000;lock(gate)metadataRevision++;
+        if(action=="国服加入"||action=="国服退出"||action=="国服游戏内加入"||action=="国服游戏内退出")
         {
-            var client=worldClient??FindOmniWorldChatClient()??throw new Exception("请启用 Omni 聊天框优化");
-            var method=client.GetType().GetMethod(action=="国服加入"?"Join":"Leave");
-            if(method==null)throw new Exception("Omni 版本未提供频道操作接口");
-            method.Invoke(client,action=="国服加入"?Array.Empty<object>():new object[]{true});
+            var client=worldClient??FindOmniWorldChatClient()??throw new Exception(PhoneChatText.Get("Text0082"));
+            var method=client.GetType().GetMethod(action.EndsWith("加入")?"Join":"Leave");
+            if(method==null)throw new Exception(PhoneChatText.Get("Text0090"));
+            method.Invoke(client,action.EndsWith("加入")?Array.Empty<object>():new object[]{true});
         }
         else if(action=="新人加入"||action=="新人退出")
         {
-            var novice=InfoProxyNoviceNetwork.Instance();if(novice==null)throw new Exception("新人频道尚未就绪");
+            var novice=InfoProxyNoviceNetwork.Instance();if(novice==null)throw new Exception(PhoneChatText.Get("Text0091"));
             if(action=="新人加入")novice->SendJoinRequest();else InfoProxyNoviceNetwork.Leave();
         }
-        else throw new Exception("未知频道操作");
+        else throw new Exception(PhoneChatText.Get("Text0092"));
     }
     private unsafe void ExecuteGameMacro(string setText,string indexText)
     {
-        if(!uint.TryParse(setText,out var set)||set>1||!uint.TryParse(indexText,out var index)||index>=100)throw new Exception("宏编号无效");
+        if(!uint.TryParse(setText,out var set)||set>1||!uint.TryParse(indexText,out var index)||index>=100)throw new Exception(PhoneChatText.Get("Text0093"));
         var module=RaptureMacroModule.Instance();var shell=RaptureShellModule.Instance();
-        if(module==null||shell==null)throw new Exception("宏系统未就绪");
-        if(shell->MacroCurrentLine>=0)throw new Exception("游戏正在执行宏，请稍后重试");
-        var macro=module->GetMacro(set,index);if(macro==null||!macro->IsNotEmpty())throw new Exception("该宏为空");
+        if(module==null||shell==null)throw new Exception(PhoneChatText.Get("Text0094"));
+        if(shell->MacroCurrentLine>=0)throw new Exception(PhoneChatText.Get("Text0095"));
+        var macro=module->GetMacro(set,index);if(macro==null||!macro->IsNotEmpty())throw new Exception(PhoneChatText.Get("Text0096"));
         shell->ExecuteMacro(macro);
     }
     private string[] MatchEntryTabs(ChatEntry entry)
@@ -806,14 +1073,14 @@ public sealed class PhoneChat : ModuleBase
     private static byte[][] DecodeNativeFilters(byte[] data)
     {
         const int stride=0x150, rows=0x133;
-        if(data.Length!=stride*4)throw new InvalidOperationException("原生聊天过滤数据版本不支持");
+        if(data.Length!=stride*4)throw new InvalidOperationException(PhoneChatText.Get("Text0097"));
         var result=new byte[4][];
         for(int tab=0;tab<4;tab++)
         {
             int offset=tab*stride;
-            if(BitConverter.ToUInt16(data,offset)!=tab||BitConverter.ToUInt32(data,offset+4)!=0x140)throw new InvalidOperationException("原生聊天过滤数据格式不支持");
+            if(BitConverter.ToUInt16(data,offset)!=tab||BitConverter.ToUInt32(data,offset+4)!=0x140)throw new InvalidOperationException(PhoneChatText.Get("Text0098"));
             result[tab]=data.Skip(offset+16).Take(rows).ToArray();
-            if(result[tab].Any(value=>value>2))throw new InvalidOperationException("原生聊天过滤标记无效");
+            if(result[tab].Any(value=>value>2))throw new InvalidOperationException(PhoneChatText.Get("Text0099"));
         }
         return result;
     }
@@ -826,44 +1093,1152 @@ public sealed class PhoneChat : ModuleBase
     private unsafe Func<ushort,byte,byte,bool>[] ReadNativeFilters()
     {
         var config=LogFilterConfig.Instance();
-        if(config==null)throw new InvalidOperationException("原生聊天过滤配置尚未加载");
+        if(config==null)throw new InvalidOperationException(PhoneChatText.Get("Text0100"));
         uint capacity=config->GetDataSize();
-        if(capacity<0x540||capacity>65536)throw new InvalidOperationException("原生聊天过滤缓存尺寸不支持");
+        if(capacity<0x540||capacity>65536)throw new InvalidOperationException(PhoneChatText.Get("Text0101"));
         var buffer=new byte[capacity];uint length;
         fixed(byte* ptr=buffer)length=config->WriteFile(ptr,capacity);
-        if(length>buffer.Length)throw new InvalidOperationException("原生聊天过滤缓存长度无效");
+        if(length>buffer.Length)throw new InvalidOperationException(PhoneChatText.Get("Text0102"));
         var serialized=buffer.Take((int)length).ToArray();
         var enabled=DecodeNativeFilters(serialized);
         nativeFilterSignature=Convert.ToHexString(SHA256.HashData(serialized));
         var sheet=GetService<IDataManager>("Dalamud.Data.DataManager")?.GetExcelSheet<Lumina.Excel.Sheets.LogFilter>();
-        if(sheet==null)throw new InvalidOperationException("LogFilter 数据表尚未加载");
+        if(sheet==null)throw new InvalidOperationException(PhoneChatText.Get("Text0103"));
         var rows=sheet.Select(r=>(id:r.RowId,kind:r.LogKind,category:r.Category,caster:r.Caster,target:r.Target)).ToArray();
         phoneFilters=sheet.Where(r=>r.Category!=0&&r.LogKind!=0&&!string.IsNullOrWhiteSpace(r.Name.ToString())).OrderBy(r=>r.Category).ThenBy(r=>r.DisplayOrder).Select(r=>(object)new{id="f:"+r.LogKind+":"+r.Caster+":"+r.Target,name=r.Name.ToString(),category=r.Category,kind=r.LogKind,caster=r.Caster,target=r.Target,channel=Label((XivChatType)r.LogKind)}).ToArray();
-        if(rows.Any(r=>r.category!=0&&r.kind!=0&&r.id>=enabled[0].Length))throw new InvalidOperationException("LogFilter 数据表与原生配置版本不一致");
+        if(rows.Any(r=>r.category!=0&&r.kind!=0&&r.id>=enabled[0].Length))throw new InvalidOperationException(PhoneChatText.Get("Text0104"));
         return enabled.Select(flags=>CreateNativeFilter(flags,rows)).ToArray();
     }
-    private static object[] FormatParts(Dalamud.Game.Text.SeStringHandling.SeString message,string fallback)
+
+    private long noviceDataRequestedAt;
+    private unsafe void RefreshNoviceStates()
     {
-        var parts=new List<object>();var plain=new StringBuilder();string color=fallback;
+        var states=new List<object>();var member=InfoProxyNoviceNetworkMember.Instance();var mentor=InfoProxyNoviceNetworkMentor.Instance();
+        if(noviceJoined&&HasDirectReceiver()&&Environment.TickCount64-noviceDataRequestedAt>15000){noviceDataRequestedAt=Environment.TickCount64;if(member!=null)member->RequestData();if(mentor!=null)mentor->RequestData();}
+        if(member!=null)ReadNoviceList((InfoProxyCommonList*)member,states);if(mentor!=null)ReadNoviceList((InfoProxyCommonList*)mentor,states);
+        lock(gate)phoneNoviceStates=states.ToArray();
+    }
+    private static unsafe void ReadNoviceList(InfoProxyCommonList* proxy,List<object> states)
+    {
+        if(proxy==null||proxy->CharData==null||proxy->EntryCount>512)return;
+        var statusSheet=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.OnlineStatus>();var worlds=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.World>();
+        for(int i=0;i<Math.Min((int)proxy->EntryCount,(int)proxy->DataSize);i++)
+        {
+            var character=proxy->CharData[i];string name=character.NameString;if(name.Length==0)continue;string world=worlds?.GetRow(character.HomeWorld).Name.ToString()??"";
+            var icons=new List<uint>();ulong bits=(ulong)character.State;
+            foreach(uint flag in new uint[]{11,27,28,29,30,31,32})if((bits&(1UL<<(int)flag))!=0){uint icon=statusSheet?.GetRow(flag).Icon??0;if(icon>0)icons.Add(icon);}
+            states.Add(new{target=NormalizePlayerName(name,world),icons});
+        }
+    }
+    private static uint WorldStatusIcon(object member)
+    {
+        try{var status=ReadValue(member.GetType(),member,"OnlineStatusID");uint id=Convert.ToUInt32(status??0);var sheet=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.OnlineStatus>();uint direct=sheet?.GetRow(id).Icon??0;if(direct>0)return direct;if(sheet!=null)foreach(var row in sheet){string name=row.Name.ToString();if(row.Icon>0&&(name=="在线"||name.Equals("Online",StringComparison.OrdinalIgnoreCase)))return row.Icon;}return 0;}catch{return 0;}
+    }
+    private void RefreshWorldStates(object client)
+    {
+        var states=new List<object>();var icons=new Dictionary<string,string>();var account=new WorldAccount{connected=worldJoined};
+        if(client!=null)
+        {
+            var type=client.GetType();var self=ReadValue(type,client,"SelfMember");account.alias=ReadValue(type,client,"SelfAliasID")?.ToString()??"";account.name=self==null?"":ReadMember(self.GetType(),self,"DisplayName");
+            if(ReadValue(type,client,"Members") is IEnumerable members)foreach(var member in members){if(member==null)continue;var mt=member.GetType();string alias=ReadValue(mt,member,"AliasID")?.ToString()??"";if(alias.Length>0){uint icon=WorldStatusIcon(member);if(icon>0&&!icons.ContainsKey(icon.ToString()))icons[icon.ToString()]=GameIconImage(icon);states.Add(new{alias,name=ReadMember(mt,member,"DisplayName"),statusIcon=icon,identityParts=WorldIdentityParts(client,member)});}}
+        }
+        lock(gate){phoneWorldStates=states.ToArray();phoneWorldStatusIcons=icons;phoneWorldAccount=account;}
+    }
+    private static object[] WorldIdentityParts(object client,object member){try{var method=client.GetType().GetMethod("FormatIdentity",new[]{typeof(int),typeof(string),typeof(uint),typeof(string),typeof(bool)});if(method==null)return Array.Empty<object>();var result=method.Invoke(client,new object[]{Convert.ToInt32(Value(member,"AliasID")),Text(member,"DisplayName"),Convert.ToUInt32(Value(member,"HomeWorldID")??0),Text(member,"HomeWorldName"),Value(member,"WorldHidden") is true});if(result is Lumina.Text.ReadOnly.ReadOnlySeString identity)return FormatParts(Dalamud.Game.Text.SeStringHandling.SeString.Parse(identity.Data.Span),"#8ec1fa");}catch{}return Array.Empty<object>();}
+    private static Dictionary<string,string> statusIconCache,bitmapIconCache;
+    private static Dictionary<string,string> GameStatusIcons()
+    {
+        lock(displayAssetGate)
+        {
+            if(statusIconCache!=null)return statusIconCache;var result=new Dictionary<string,string>();
+            var sheet=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.OnlineStatus>();
+            if(sheet!=null)foreach(var status in sheet)if(status.Icon>0&&!result.ContainsKey(status.Icon.ToString()))try{var path=DalamudServices.TextureProvider.GetIconPath(new Dalamud.Interface.Textures.GameIconLookup(status.Icon));var image=GameImage(path);if(image.Length>0)result[status.Icon.ToString()]=image;}catch{}
+            if(result.Count>0)statusIconCache=result;return result;
+        }
+    }
+    // GFD table layout follows the documented Dalamud game font format; no game assets are bundled.
+    // https://github.com/goatcorp/Dalamud/blob/master/Dalamud/Interface/ImGuiSeStringRenderer/Internal/GfdFile.cs
+    private static Dictionary<string,string> GameBitmapIcons()
+    {
+        lock(displayAssetGate)
+        {
+            if(bitmapIconCache!=null)return bitmapIconCache;var result=new Dictionary<string,string>();
+            var data=DalamudServices.DataManager.GetFile("common/font/gfdata.gfd")?.Data;
+            var tex=DalamudServices.DataManager.GetFile<Lumina.Data.Files.TexFile>("common/font/fonticon_ps3.tex");
+            result=DecodeBitmapIcons(data,tex);
+            if(result.Count>0)bitmapIconCache=result;return result;
+        }
+    }
+    private static Dictionary<string,string> DecodeBitmapIcons(byte[] data,Lumina.Data.Files.TexFile tex)
+    {
+        var result=new Dictionary<string,string>();
+            if(data==null||data.Length<16||Encoding.ASCII.GetString(data,0,8)!="gftd0100")return result;
+            int count=BitConverter.ToInt32(data,8);if(count<0||count>4096||data.Length<16+count*16)return result;
+            var table=new Dictionary<ushort,(int x,int y,int w,int h,ushort redirect)>();
+            for(int i=0;i<count;i++){int n=16+i*16;table[BitConverter.ToUInt16(data,n)]=(BitConverter.ToUInt16(data,n+2),BitConverter.ToUInt16(data,n+4),BitConverter.ToUInt16(data,n+6),BitConverter.ToUInt16(data,n+8),BitConverter.ToUInt16(data,n+12));}
+            if(tex==null)return result;
+            foreach(var item in table)
+            {
+                var entry=item.Value;var seen=new HashSet<ushort>{item.Key};while(entry.redirect!=0&&seen.Add(entry.redirect)&&table.TryGetValue(entry.redirect,out var next))entry=next;
+                if(entry.w<=0||entry.h<=0)continue;
+                int x=entry.x*2,y=entry.y*2+341,w=entry.w*2,h=entry.h*2;
+                if(x+w>tex.Header.Width||y+h>tex.Header.Height){x=entry.x;y=entry.y;w=entry.w;h=entry.h;}
+                var png=GameImage(tex,x,y,w,h);if(png.Length>0)result[item.Key.ToString()]=png;
+            }
+        return result;
+    }
+    private static readonly ConcurrentDictionary<string,string> gamePartImages=new();
+    private static unsafe string GamePartImage(AtkUldPartsList* list,uint index)
+    {
+        if(list==null||list->Parts==null||index>=list->PartCount)return "";var part=list->Parts[index];var asset=part.UldAsset;if(asset==null||asset->AtkTexture.Resource==null||asset->AtkTexture.Resource->TexFileResourceHandle==null)return "";
+        string path=asset->AtkTexture.Resource->TexFileResourceHandle->FileName.ToString();if(!(path.StartsWith("ui/")||path.StartsWith("common/"))||!path.EndsWith(".tex"))return "";
+        string key=path+"|"+part.U+","+part.V+","+part.Width+","+part.Height;if(gamePartImages.TryGetValue(key,out var saved))return saved;
+        var tex=DalamudServices.DataManager.GetFile<Lumina.Data.Files.TexFile>(path);if(tex==null)return "";var image=GameImage(tex,part.U,part.V,part.Width,part.Height);if(image.Length>0)gamePartImages.TryAdd(key,image);return image;
+    }
+    private static readonly ConcurrentDictionary<uint,string> gameIconImages=new();
+    private static string GameIconImage(uint id)
+    {if(id==0)return "";try{if(gameIconImages.TryGetValue(id,out var saved))return saved;var image=GameImage(DalamudServices.TextureProvider.GetIconPath(new Dalamud.Interface.Textures.GameIconLookup(id)));if(image.Length>0)gameIconImages.TryAdd(id,image);return image;}catch{return "";}}
+    private static string GameImage(string path)
+    {var tex=DalamudServices.DataManager.GetFile<Lumina.Data.Files.TexFile>(path);return tex==null?"":GameImage(tex,0,0,tex.Header.Width,tex.Header.Height);}
+    private static string GameImage(Lumina.Data.Files.TexFile tex,int x,int y,int width,int height)
+    {
+        if(width<=0||height<=0||width>256||height>256||x<0||y<0||x+width>tex.Header.Width||y+height>tex.Header.Height)return "";
+        var bytes=tex.ImageData;if(bytes.Length<tex.Header.Width*tex.Header.Height*4)return "";
+        using var bitmap=new System.Drawing.Bitmap(width,height,System.Drawing.Imaging.PixelFormat.Format32bppArgb);var locked=bitmap.LockBits(new System.Drawing.Rectangle(0,0,width,height),System.Drawing.Imaging.ImageLockMode.WriteOnly,System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try{for(int line=0;line<height;line++)System.Runtime.InteropServices.Marshal.Copy(bytes,((y+line)*tex.Header.Width+x)*4,locked.Scan0+line*locked.Stride,width*4);}finally{bitmap.UnlockBits(locked);}
+        using var output=new MemoryStream();bitmap.Save(output,System.Drawing.Imaging.ImageFormat.Png);return "data:image/png;base64,"+Convert.ToBase64String(output.ToArray());
+    }
+    private static readonly object displayAssetGate=new();private static Dictionary<string,string> jobIconCache;
+    private static Dictionary<string,string> GameJobIcons()
+    {
+        lock(displayAssetGate)
+        {
+            if(jobIconCache!=null)return jobIconCache;
+            var icons=new Dictionary<string,string>();
+            for(uint job=1;job<=42;job++)try
+            {
+                var path=DalamudServices.TextureProvider.GetIconPath(new Dalamud.Interface.Textures.GameIconLookup(62000+job));
+                var tex=DalamudServices.DataManager.GetFile<Lumina.Data.Files.TexFile>(path);if(tex==null)continue;
+                int width=tex.Header.Width,height=tex.Header.Height;if(width<=0||height<=0||width>256||height>256)continue;
+                var bytes=tex.ImageData;if(bytes.Length<width*height*4)continue;
+                using var bitmap=new System.Drawing.Bitmap(width,height,System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                var locked=bitmap.LockBits(new System.Drawing.Rectangle(0,0,width,height),System.Drawing.Imaging.ImageLockMode.WriteOnly,System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                try{for(int y=0;y<height;y++)System.Runtime.InteropServices.Marshal.Copy(bytes,y*width*4,locked.Scan0+y*locked.Stride,width*4);}finally{bitmap.UnlockBits(locked);}
+                using var image=new MemoryStream();bitmap.Save(image,System.Drawing.Imaging.ImageFormat.Png);
+                icons[job.ToString()]="data:image/png;base64,"+Convert.ToBase64String(image.ToArray());
+            }catch{}
+            if(icons.Count>0)jobIconCache=icons;return icons;
+        }
+    }
+    public sealed class RecruitmentLink
+    {public string listingId{get;set;}="";public string kind{get;set;}="listing";public string source{get;set;}="game";public string title{get;set;}="队伍招募";public string comment{get;set;}="";public string postId{get;set;}="";}
+    private static RecruitmentLink NativeRecruitment(Dalamud.Game.Text.SeStringHandling.SeString message)
+    {var links=message.Payloads.OfType<Dalamud.Game.Text.SeStringHandling.Payloads.PartyFinderPayload>().ToArray();var link=links.FirstOrDefault(p=>p.ListingId>0);if(link!=null)return new RecruitmentLink{listingId=link.ListingId.ToString()};return links.Any(p=>p.LinkType==Dalamud.Game.Text.SeStringHandling.Payloads.PartyFinderPayload.PartyFinderLinkType.PartyFinderNotification)?new RecruitmentLink{kind="board",title="队员招募面板"}:null;}
+    private static RecruitmentLink WorldRecruitment(object message,ref string text)
+    {
+        var postType=message.GetType().Assembly.GetType("OmniToolbox.TreePublic.OmniRecruitmentPostLink");var postDecode=postType?.GetMethod("TryDecode",BindingFlags.Public|BindingFlags.Static);if(postDecode!=null){object[] postArgs={text,null};if(postDecode.Invoke(null,postArgs) is true&&Guid.TryParse(Text(postArgs[1],"PostID"),out var sharedId)&&sharedId!=Guid.Empty){string label=Text(postArgs[1],"Text");text=label.Length>0?label:"国服队员招募";return new RecruitmentLink{kind="worldpost",source="omni-world",postId=sharedId.ToString(),title=text};}}
+        var recruitment=ReadValue(message.GetType(),message,"Recruitment");
+        var type=message.GetType().Assembly.GetType("OmniToolbox.TreePublic.OmniWorldChatRecruitment");
+        if(recruitment==null&&type!=null)
+        {
+            var decode=type.GetMethods(BindingFlags.Public|BindingFlags.Static).FirstOrDefault(m=>m.Name=="TryDecode"&&m.GetParameters().Length is 2 or 3&&m.GetParameters()[0].ParameterType==typeof(string));
+            if(decode!=null){object[] args=decode.GetParameters().Length==3?new object[]{text,null,ReadValue(message.GetType(),message,"WorldHidden") is true}:new object[]{text,null};if(decode.Invoke(null,args) is true)recruitment=args[1];}
+        }
+        if(recruitment==null){var shared=ReadValue(message.GetType(),message,"SharedPost");string post=ReadValue(message.GetType(),message,"SharedPostID")?.ToString()??"";if(Guid.TryParse(post,out var sharedPostId)&&sharedPostId!=Guid.Empty){if(shared!=null)text="队员招募（"+ReadMember(shared.GetType(),shared,"DisplayName")+"）";return new RecruitmentLink{kind="worldpost",source="omni-world",postId=post,title="国服队员招募"};}return null;}
+        var rt=recruitment.GetType();string id=ReadValue(rt,recruitment,"ListingID")?.ToString()??"";
+        if(!ulong.TryParse(id,out var number)||number==0)return null;
+        string comment=ReadMember(rt,recruitment,"Comment"),title=ReadMember(rt,recruitment,"DutyName");
+        text="[队伍招募] "+(title.Length>0?title:"招募详情")+(comment.Length>0?" · "+comment:"");
+        return new RecruitmentLink{listingId=id,source="omni-world",title=title.Length>0?title:"队伍招募",comment=comment};
+    }
+    private object FindWorldFeature(string name){var manager=FindOmniTreeHouseManager();if(ReadValue(manager?.GetType(),manager,"Modules") is IEnumerable modules)foreach(var module in modules){if(module==null||module.GetType().Name!="ChatFrameOptimization")continue;var feature=FirstFieldOfType(module,name);if(feature!=null)return feature;}return null;}
+    private static object Value(object o,string key)=>o==null?null:ReadValue(o.GetType(),o,key);
+    private static string Text(object o,string key)=>Value(o,key)?.ToString()??"";
+    private static object WorldPost(object p)=>new{postId=Text(p,"PostID"),title=Text(p,"Title"),content=Text(p,"Content"),alias=Text(p,"AliasID"),leader=Text(p,"DisplayName"),world=Text(p,"HomeWorldName"),mode=Text(p,"Mode"),expiresAt=Text(p,"ExpiresAt"),slots=Value(p,"SlotJobs"),applicationStatus=Text(p,"ApplicationStatus"),category=Value(p,"Category"),dutyId=Value(p,"DutyID"),authorJob=Value(p,"AuthorJobID"),worldHidden=Value(p,"WorldHidden")};
+    private object DecodeWorldLive(object member){var state=Value(member,"Recruitment");string encoded=Text(state,"ListingID");if(encoded.Length==0)return null;if(long.TryParse(Text(state,"ExpiresAt"),out long earlyExpiry)&&earlyExpiry>0&&(earlyExpiry>100000000000?DateTimeOffset.FromUnixTimeMilliseconds(earlyExpiry):DateTimeOffset.FromUnixTimeSeconds(earlyExpiry))<=DateTimeOffset.UtcNow)return null;if(ulong.TryParse(encoded,out ulong numeric)&&numeric>0)return new{ListingID=numeric,Category=(uint?)null,DutyID=(uint?)null,DutyName="",Comment=""};var type=member.GetType().Assembly.GetType("OmniToolbox.TreePublic.OmniWorldChatRecruitment");var method=type?.GetMethods(BindingFlags.Public|BindingFlags.Static).FirstOrDefault(m=>m.Name=="TryDecode"&&m.GetParameters().Length==3);if(method==null)return null;object[] args={encoded,null,Value(member,"WorldHidden") is true};if(method.Invoke(null,args) is not true)return new{ListingID=encoded,Category=(uint?)null,DutyID=(uint?)null,DutyName="",Comment=""};var decoded=args[1];if(!ulong.TryParse(Text(decoded,"ListingID"),out ulong id)||id==0)return null;string expires=Text(state,"ExpiresAt");if(long.TryParse(expires,out long expiry)&&expiry>0&&(expiry>100000000000?DateTimeOffset.FromUnixTimeMilliseconds(expiry):DateTimeOffset.FromUnixTimeSeconds(expiry))<=DateTimeOffset.UtcNow)return null;return decoded;}
+    private object FindLiveMember(string post){var world=worldClient??FindOmniWorldChatClient();if(Value(world,"Members") is not IEnumerable members)return null;foreach(var member in members){var decoded=DecodeWorldLive(member);if(decoded!=null&&(post=="live:"+Text(member,"AliasID")||post=="live:"+Text(member,"AliasID")+":"+Text(decoded,"ListingID")))return member;}return null;}
+    private object ownedWorldProjection,ownedWorldTransport;private Dictionary<string,object> worldLiveProjection=new();private Dictionary<string,int> worldLiveOrder=new();
+    private async Task RefreshWorldLiveProjection(object client,CancellationToken ct){
+        await OnGame(()=>{ownedWorldProjection??=Activator.CreateInstance(client.GetType(),ownedWorldTransport);return true;});
+        var task=await OnGame(()=>(Task)ownedWorldProjection.GetType().GetMethod("LoadAsync").Invoke(ownedWorldProjection,new object[]{0,null,"realtime"}));
+        await task.WaitAsync(TimeSpan.FromSeconds(8),ct);
+        await OnGame(()=>{
+            var members=Value(worldClient??FindOmniWorldChatClient(),"Members")??throw new Exception(PhoneChatText.Get("Text0105"));
+            ownedWorldProjection.GetType().GetMethod("RefreshWorldProjection").Invoke(ownedWorldProjection,new[]{members});
+            var posts=(Value(ownedWorldProjection,"Posts") as IEnumerable)?.Cast<object>().ToArray()??Array.Empty<object>();
+            var live=posts.Where(p=>Text(p,"Mode") is not ("" or "static")||Text(p,"PostID")==Guid.Empty.ToString()).ToArray();
+            worldProjectionDiagnostics=new object[]{new{requested="realtime",actual=Text(ownedWorldProjection,"Mode"),error=Text(ownedWorldProjection,"ErrorKey"),count=posts.Length,live=live.Length,members=(members as IEnumerable)?.Cast<object>().Count()??0}};
+            worldLivePosts=live;worldLiveProjection=new();worldLiveOrder=new();int index=0;
+            foreach(var p in live){string alias=Text(p,"AliasID");if(alias.Length==0||worldLiveProjection.ContainsKey(alias))continue;worldLiveProjection[alias]=p;worldLiveOrder[alias]=index++;}
+            return true;
+        });
+    }
+    private object[] worldProjectionDiagnostics=Array.Empty<object>();
+
+    private object[] worldLivePosts=Array.Empty<object>();
+    private object[] WorldLiveRows()=>worldLivePosts.Select(p=>{
+        if(Guid.TryParse(Text(p,"PostID"),out var id)&&id!=Guid.Empty)return WorldPost(p);
+        var members=Value(worldClient??FindOmniWorldChatClient(),"Members") as IEnumerable;
+        var member=members?.Cast<object>().FirstOrDefault(m=>Text(m,"AliasID")==Text(p,"AliasID"));
+        return member==null?null:PresentWorldLive(member);
+    }).Where(p=>p!=null).ToArray();
+    private object PresentWorldLive(object member){string alias=Text(member,"AliasID");if(!worldLiveProjection.TryGetValue(alias,out var post))return null;var decoded=DecodeWorldLive(member);if(decoded==null)return null;return new{postId="live:"+alias+":"+Text(decoded,"ListingID"),title=Text(post,"Title"),content=Text(post,"Content"),alias,leader=Text(post,"DisplayName"),world=Value(post,"WorldHidden") is true?"":Text(post,"HomeWorldName"),mode="live",expiresAt=Text(post,"ExpiresAt"),slots=Value(post,"SlotJobs"),category=Value(post,"Category"),dutyId=Value(post,"DutyID"),authorJob=Value(post,"AuthorJobID"),worldHidden=Value(post,"WorldHidden"),source="public-world-projection"};}
+
+    private object selectedWorldLive;
+    private object ownedWorldBoard;
+    private object GetWorldBoardClient(){if(ownedWorldBoard!=null)return ownedWorldBoard;var world=worldClient??FindOmniWorldChatClient();var transport=FindWorldFeature("IOmniWorldChatTransport")??(world==null?null:FirstFieldOfType(world,"IOmniWorldChatTransport"));var type=world?.GetType().Assembly.GetType("OmniToolbox.TreePublic.OmniRecruitmentBoardClient");if(type==null||transport==null)throw new Exception(PhoneChatText.Get("Text0106"));ownedWorldTransport=transport;return ownedWorldBoard=Activator.CreateInstance(type,transport);}
+    private void DisposeWorldBoard(){try{if(ownedWorldBoard is IDisposable disposable)disposable.Dispose();}catch(Exception e){LogDebug("国服招募板清理失败："+e.Message);}finally{if(ownedWorldProjection is IDisposable projection)projection.Dispose();ownedWorldProjection=null;ownedWorldTransport=null;worldLiveProjection.Clear();worldLiveOrder.Clear();worldLivePosts=Array.Empty<object>();ownedWorldBoard=null;}}
+    private readonly SemaphoreSlim worldBoardLock=new(1,1);
+    private async Task<object> WorldBoardAction(string action,string post,int offset,CancellationToken ct,uint? category=null,string mode=null){await worldBoardLock.WaitAsync(ct);try{return await WorldBoardActionCore(action,post,offset,ct,category,mode);}finally{worldBoardLock.Release();}}
+    private async Task<object> WorldBoardActionCore(string action,string post,int offset,CancellationToken ct,uint? category=null,string mode=null){
+        if(string.IsNullOrWhiteSpace(mode))mode=null;
+        if(action is not ("open" or "read" or "refresh" or "page" or "select" or "join" or "close"))throw new Exception(PhoneChatText.Get("Text0107"));var client=await OnGame(GetWorldBoardClient);await RefreshWorldLiveProjection(client,ct);int livePrefixCount=await OnGame(()=>WorldLiveRows().Count(p=>!category.HasValue||Value(p,"category")!=null&&Convert.ToUInt32(Value(p,"category"))==category.Value));
+        if(action=="close")return new{ok=true};
+        if(action is "select" or "join"&&post.StartsWith("live:",StringComparison.Ordinal)){return await OnGame(()=>{var member=FindLiveMember(post)??throw new Exception(PhoneChatText.Get("Text0108"));if(action=="select"){selectedWorldLive=PresentWorldLive(member);return (object)new{ok=true,rows=Array.Empty<object>(),selected=selectedWorldLive,pageSize=20,offset=0,hasMore=false};}var world=worldClient??FindOmniWorldChatClient();var capture=Value(world,"CaptureRecruitment") as Delegate??throw new Exception(PhoneChatText.Get("Text0109"));var captured=capture.DynamicInvoke();var identity=captured?.GetType().GetField("Item2")?.GetValue(captured)??throw new Exception(PhoneChatText.Get("Text0110"));world.GetType().GetMethod("RequestJoin").Invoke(world,new object[]{Guid.NewGuid(),Convert.ToInt32(Value(member,"AliasID")),Text(Value(member,"Recruitment"),"ListingID"),identity,(Guid?)null});return (object)new{ok=true,status="已提交参加申请，等待游戏确认"};});}
+        if(action=="join")return await OnGame(()=>{if(!Guid.TryParse(post,out var postId))throw new Exception(PhoneChatText.Get("Text0111"));var selected=Value(client,"SelectedPost");if(selected==null||Text(selected,"PostID")!=postId.ToString())throw new Exception(PhoneChatText.Get("Text0112"));if(!int.TryParse(Text(selected,"AliasID"),out var alias))throw new Exception(PhoneChatText.Get("Text0113"));var world=worldClient??FindOmniWorldChatClient();var members=Value(world,"Members") as IEnumerable;var member=members?.Cast<object>().FirstOrDefault(m=>Text(m,"AliasID")==alias.ToString());var recruitment=Value(member,"Recruitment");string listing=Text(recruitment,"ListingID");if(listing.Length==0)throw new Exception(PhoneChatText.Get("Text0114"));if(long.TryParse(Text(recruitment,"ExpiresAt"),out var expiry)&&expiry>0&&(expiry>100000000000?DateTimeOffset.FromUnixTimeMilliseconds(expiry):DateTimeOffset.FromUnixTimeSeconds(expiry))<DateTimeOffset.UtcNow)throw new Exception(PhoneChatText.Get("Text0115"));var capture=Value(world,"CaptureRecruitment") as Delegate;if(capture==null)throw new Exception(PhoneChatText.Get("Text0109"));var captured=capture.DynamicInvoke();var identity=captured?.GetType().GetField("Item2")?.GetValue(captured);if(identity==null)throw new Exception(PhoneChatText.Get("Text0110"));world.GetType().GetMethod("RequestJoin").Invoke(world,new object[]{Guid.NewGuid(),alias,listing,identity,(Guid?)postId});return (object)new{ok=true,status="已向国服招募队长提交参加申请，等待游戏确认"};});
+        if(action is "open" or "refresh" or "page" or "select"&&mode!="live"){var waitUntil=DateTime.UtcNow.AddSeconds(8);while(await OnGame(()=>Value(client,"IsBusy") is true)){if(DateTime.UtcNow>=waitUntil)throw new Exception(PhoneChatText.Get("Text0116"));await Task.Delay(80,ct);}if(action!="select"){var task=await OnGame(()=>(Task)client.GetType().GetMethod("LoadAsync").Invoke(client,new object[]{Math.Clamp(mode==null||mode.Length==0?offset-livePrefixCount:offset,0,100000),category,"static"}));await task.WaitAsync(TimeSpan.FromSeconds(8),ct);}}
+        if(action=="select"){if(!Guid.TryParse(post,out var id))throw new Exception(PhoneChatText.Get("Text0111"));var task=await OnGame(()=>(Task)client.GetType().GetMethod("SelectAsync").Invoke(client,new object[]{id,0}));await task.WaitAsync(TimeSpan.FromSeconds(8),ct);}
+        var settle=DateTime.UtcNow.AddSeconds(8);while(await OnGame(()=>Value(client,"IsBusy") is true)){if(DateTime.UtcNow>=settle)throw new Exception(PhoneChatText.Get("Text0117"));await Task.Delay(60,ct);}
+        if(action=="select")await OnGame(()=>{if(Text(Value(client,"SelectedPost"),"PostID")!=post)throw new Exception(PhoneChatText.Get("Text0118"));return true;});
+        return await OnGame(()=>{string error=Text(client,"ErrorKey");if(mode!="live"&&error.Length>0)throw new Exception(PhoneChatText.Get("Text0119")+error);if(Value(client,"IsBusy") is true)throw new Exception(PhoneChatText.Get("Text0120"));var posts=Value(client,"Posts") as IEnumerable??throw new Exception(PhoneChatText.Get("Text0121"));var selected=Value(client,"SelectedPost");var members=Value(worldClient??FindOmniWorldChatClient(),"Members") as IEnumerable;var live=WorldLiveRows();var allLive=live;if(category.HasValue)live=live.Where(p=>Value(p,"category")!=null&&Convert.ToUInt32(Value(p,"category"))==category.Value).ToArray();var staticRows=posts.Cast<object>().Where(p=>Text(p,"Mode") is not ("live" or "realtime")&&Text(p,"PostID")!="00000000-0000-0000-0000-000000000000").Select(WorldPost).ToArray();int? staticTotal=Value(client,"Total")==null?null:Convert.ToInt32(Value(client,"Total"));var combined=(mode=="live"?live.Skip(offset):mode=="static"?staticRows:live.Concat(staticRows).Skip(Math.Min(offset,live.Length))).Take(20).ToArray();int? total=mode=="live"?live.Length:staticTotal.HasValue?staticTotal.Value+(mode=="static"?0:live.Length):null;var serverCounts=Value(client,"CategoryCounts") as IEnumerable;var countMap=serverCounts?.Cast<object>().ToDictionary(c=>Convert.ToUInt32(Value(c,"Category")??0),c=>Convert.ToInt32(Value(c,"Count")??0));var keys=(countMap?.Keys??Enumerable.Empty<uint>()).Concat(allLive.Where(p=>Value(p,"category")!=null).Select(p=>Convert.ToUInt32(Value(p,"category")))).Distinct();var counts=keys.Select(key=>new{category=key,count=mode=="live"?(int?)allLive.Count(p=>Value(p,"category")!=null&&Convert.ToUInt32(Value(p,"category"))==key):countMap==null?null:(countMap.TryGetValue(key,out int count)?count:0)+(mode=="static"?0:allLive.Count(p=>Value(p,"category")!=null&&Convert.ToUInt32(Value(p,"category"))==key))}).ToArray();return (object)new{ok=true,projectionDiagnostics=worldProjectionDiagnostics,rows=combined,selected=selected==null?null:WorldPost(selected),total,modeCounts=new{live=allLive.Length,@static=staticTotal},category=category,mode=mode??"",categoryCounts=counts,offset=Math.Max(0,offset),hasMore=total.HasValue?offset+combined.Length<total.Value:Value(client,"HasMore") is true||offset+combined.Length<live.Length,error=Text(client,"ErrorKey"),pageSize=Convert.ToInt32(client.GetType().GetField("PAGE_SIZE")?.GetRawConstantValue()??20)};});
+    }
+    private string partyPending="",partyPendingName="",partyOwner="";private long partyIssued;private uint partyConfirmId;
+    private unsafe AddonSelectYesno* PartyConfirmation(string auth){if(partyPending.Length==0||!Equal(auth,partyOwner)||Environment.TickCount64-partyIssued>30000)return null;var addon=(AddonSelectYesno*)GetService<IGameGui>("Dalamud.Game.Gui.GameGui")?.GetAddonByName("SelectYesno",1).Address;if(addon==null||!addon->IsVisible)return null;string prompt=RecruitText(addon->PromptText);bool relevant=partyPending switch{"leave"=>prompt.Contains("离开")||prompt.Contains("leave",StringComparison.OrdinalIgnoreCase),"disband"=>prompt.Contains("解散")||prompt.Contains("disband",StringComparison.OrdinalIgnoreCase),_=>partyPendingName.Length>0&&prompt.Contains(partyPendingName)};if(!relevant)return null;if(partyConfirmId==0)partyConfirmId=addon->Id;return addon->Id==partyConfirmId?addon:null;}
+    private unsafe object PartyAction(string action,string memberId,string auth){
+        if(objects?.LocalPlayer==null)throw new Exception(PhoneChatText.Get("Text0122"));var manager=FFXIVClientStructs.FFXIV.Client.Game.Group.GroupManager.Instance();if(manager==null)throw new Exception(PhoneChatText.Get("Text0123"));var group=manager->GetGroup();if(group==null)throw new Exception(PhoneChatText.Get("Text0123"));int count=Math.Min((int)group->MemberCount,8);bool leader=group->IsEntityIdPartyLeader(objects.LocalPlayer.EntityId);
+        if(action.StartsWith("confirm-")){var confirm=PartyConfirmation(auth);if(confirm==null)throw new Exception(PhoneChatText.Get("Text0124"));if(action=="confirm-yes")confirm->YesButton->Click();else if(action=="confirm-no")confirm->NoButton->Click();else throw new Exception(PhoneChatText.Get("Text0125"));partyPending="";partyConfirmId=0;action="read";}
+        if(action!="read"){
+            var existing=(AddonSelectYesno*)GetService<IGameGui>("Dalamud.Game.Gui.GameGui")?.GetAddonByName("SelectYesno",1).Address;if(existing!=null&&existing->IsVisible)throw new Exception(PhoneChatText.Get("Text0126"));
+            if(count<2)throw new Exception(PhoneChatText.Get("Text0127"));var proxy=InfoProxyPartyMember.Instance();if(proxy==null)throw new Exception(PhoneChatText.Get("Text0128"));
+            if(action=="leave"){if(!proxy->LeaveParty())throw new Exception(PhoneChatText.Get("Text0129"));}
+            else if(action=="disband"){if(!leader)throw new Exception(PhoneChatText.Get("Text0130"));if(!proxy->DisbandParty())throw new Exception(PhoneChatText.Get("Text0131"));}
+            else if(action=="kick"||action=="promote"){if(!leader)throw new Exception(PhoneChatText.Get("Text0132"));if(!ulong.TryParse(memberId,out var cid)||cid==0)throw new Exception(PhoneChatText.Get("Text0133"));var member=group->GetPartyMemberByContentId(cid);if(member==null||member->EntityId==objects.LocalPlayer.EntityId)throw new Exception(PhoneChatText.Get("Text0134"));partyPendingName=member->NameString;var agent=AgentPartyMember.Instance();if(agent==null)throw new Exception(PhoneChatText.Get("Text0135"));if(action=="kick")agent->Kick(member->NameString,member->HomeWorld,cid);else agent->Promote(member->NameString,member->HomeWorld,cid);}
+            else throw new Exception(PhoneChatText.Get("Text0136"));
+            partyPending=action;partyOwner=auth;partyIssued=Environment.TickCount64;partyConfirmId=0;
+        }
+        var rows=new List<object>();for(int i=0;i<count;i++){var member=group->GetPartyMemberByIndex(i);if(member==null)continue;string world=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.World>()?.GetRow(member->HomeWorld).Name.ToString()??"";rows.Add(new{id=member->ContentId.ToString(),name=member->NameString,world,job=member->ClassJob,level=member->Level,self=member->EntityId==objects.LocalPlayer.EntityId,leader=i==group->PartyLeaderIndex,target=NormalizePlayerName(member->NameString,world)});}
+        var confirmation=PartyConfirmation(auth);string confirmPrompt=confirmation==null?"":RecruitText(confirmation->PromptText);
+        return new{ok=true,confirmation=confirmPrompt,members=rows,isLeader=leader,inParty=count>1,status=action=="read"?"":"操作已提交游戏，请以游戏返回的队伍状态为准"};
+    }
+    private string boardView="",boardOwner="";private HashSet<ulong> boardListings=new();
+    public sealed class DirectListing
+    {
+        public ulong id;public uint category;public ushort duty,dutyType,itemLevel,secondsRemaining;public ushort homeWorld,currentWorld;public byte area,totalSlots,filledSlots;public string leader="",comment="";public byte[] leaderData=Array.Empty<byte>(),commentData=Array.Empty<byte>();public byte[] jobs=Array.Empty<byte>();public ulong[] slotFlags=Array.Empty<ulong>();public long expires;
+    }
+    public sealed class DirectBoardCache
+    {
+        private readonly object sync=new();private Dictionary<ulong,DirectListing> staged=new(),current=new();private bool receiving,received;private long lastPacket,requestedAt,updatedAt;
+        public void Begin(long now){lock(sync){receiving=true;received=false;staged.Clear();requestedAt=now;lastPacket=0;}}
+        public void Packet(IEnumerable<DirectListing> rows,long now){lock(sync){if(!receiving||now-requestedAt>6000)return;foreach(var row in rows)if(row.id!=0&&staged.Count<500)staged[row.id]=row;received=true;lastPacket=now;}}
+        public bool Complete(long now){lock(sync){if(!receiving||!received||now-lastPacket<350)return false;current=staged;staged=new();receiving=false;updatedAt=now;return true;}}
+        public void Cancel(){lock(sync){receiving=false;staged.Clear();}}
+        public void Clear(){lock(sync){receiving=false;received=false;staged.Clear();current.Clear();updatedAt=0;}}
+        public DirectListing[] Snapshot(long now){lock(sync)return current.Values.Where(r=>r.expires>now).ToArray();}
+        public DirectListing Get(ulong id,long now){lock(sync)return current.TryGetValue(id,out var row)&&row.expires>now?row:null;}
+        public bool IsReceiving{get{lock(sync)return receiving;}}
+        public long UpdatedAt{get{lock(sync)return updatedAt;}}
+    }
+    public sealed class DirectInteropServices{[Dalamud.IoC.PluginService] public IGameInteropProvider Interop{get;private set;}}
+    private int directBoardGeneration;
+    private DirectListing[][] directAreaRows=Array.Empty<DirectListing[]>();
+    private DirectBoardCache directBoard=new();private Dalamud.Hooking.Hook<InfoProxyCrossRealm.Delegates.ReceiveListing> directBoardHook;private string directBoardError="";private int directArea,directCategory,directPage;private long directLastRequest;
+    private unsafe void AttachDirectBoard()
+    {
+        try{if(directBoardHook!=null)return;var address=InfoProxyCrossRealm.Addresses.ReceiveListing.Value;if(address==0)throw new Exception(PhoneChatText.Get("Text0137"));var services=DalamudServices.PluginInterface?.Create<DirectInteropServices>();if(services?.Interop==null)throw new Exception(PhoneChatText.Get("Text0138"));directBoardHook=services.Interop.HookFromAddress<InfoProxyCrossRealm.Delegates.ReceiveListing>(address,ReceiveDirectListings);directBoardHook.Enable();directBoardError="";}
+        catch(Exception e){try{directBoardHook?.Dispose();}catch{}directBoardHook=null;directBoardError=PhoneChatText.Get("Text0139")+e.Message;LogDebug(directBoardError);}
+    }
+    private void DetachDirectBoard(){directBoard?.Cancel();try{directBoardHook?.Dispose();}finally{directBoardHook=null;}}
+    private unsafe void ReceiveDirectListings(InfoProxyCrossRealm* proxy,ServerIpcSegment<CrossRealmListingSegmentPacket>* packet)
+    {
+        List<DirectListing> rows=null;long now=Environment.TickCount64;
+        try{if(enabled&&packet!=null&&directBoard.IsReceiving){rows=new();foreach(ref var row in packet->Payload.Entries){if(row.ListingId==0)continue;rows.Add(new DirectListing{id=row.ListingId,category=row.Category,duty=row.Duty,dutyType=row.DutyType,itemLevel=row.AvgItemLv,secondsRemaining=row.TimeLeft,homeWorld=row.HomeWorldId,currentWorld=row.CurrentWorldId,area=row.JoinConditionFlags,totalSlots=row.TotalSlots,filledSlots=row.SlotsFilled,leaderData=row.Name.ToArray(),commentData=row.Description.ToArray(),jobs=row.JobsPresent.ToArray(),slotFlags=row.SlotFlags.ToArray(),expires=now+row.TimeLeft*1000L});}}}
+        catch(Exception e){directBoardError=PhoneChatText.Get("Text0140")+e.Message;LogDebug(directBoardError);}
+        // This observer never edits the packet or suppresses the game's original receiver.
+        directBoardHook.Original(proxy,packet);
+        if(rows!=null)directBoard.Packet(rows,now);
+    }
+    private unsafe (byte area,byte category) DirectBoardSelection()
+    {
+        if(objects?.LocalPlayer==null)throw new Exception(PhoneChatText.Get("Text0141"));
+        var agent=AgentLookingForGroup.Instance();if(agent==null)throw new Exception(PhoneChatText.Get("Text0142"));
+        return(agent->SearchAreaTab,agent->CategoryTab);
+    }
+    // Bind only the documented data proxy when the agent has never been opened.
+    // Do not Show/Hide the agent or create a native recruitment addon.
+    private unsafe bool EnsureDirectBoard(){if(objects?.LocalPlayer==null)throw new Exception(PhoneChatText.Get("Text0141"));var agent=AgentLookingForGroup.Instance();if(agent==null)throw new Exception(PhoneChatText.Get("Text0142"));if(agent->InfoProxyCrossRealm==null){var proxy=FFXIVClientStructs.FFXIV.Client.UI.Info.InfoProxyCrossRealm.Instance();if(proxy==null)throw new Exception(PhoneChatText.Get("Text0143"));agent->InfoProxyCrossRealm=proxy;}return true;}
+    private unsafe bool DirectBoardInitialized(){var agent=AgentLookingForGroup.Instance();return agent!=null&&agent->InfoProxyCrossRealm!=null;}
+    private unsafe bool RequestDirectBoard(int area)
+    {
+        if(objects?.LocalPlayer==null)throw new Exception(PhoneChatText.Get("Text0141"));if(directBoardHook==null)throw new Exception(directBoardError.Length>0?directBoardError:PhoneChatText.Get("Text0144"));
+        var agent=AgentLookingForGroup.Instance();if(agent==null||agent->InfoProxyCrossRealm==null)throw new Exception(PhoneChatText.Get("Text0145"));
+        agent->SearchAreaTab=(byte)area;
+        // The native request may finish on a later framework tick. Keep its selection
+        // until the response is collected instead of restoring it in this call.
+        bool sent=agent->RequestCategoryListings(0);return sent||agent->RequestListingsUpdate();
+    }
+    private unsafe bool RestoreDirectBoardSelection(byte area,byte category,int requested)
+    {
+        var agent=AgentLookingForGroup.Instance();if(agent!=null&&agent->SearchAreaTab==requested&&agent->CategoryTab==0){agent->SearchAreaTab=area;agent->CategoryTab=category;}return true;
+    }
+    private void PublishDirectArea(int area,DirectListing[] rows)
+    {
+        var next=new DirectListing[3][];if(directAreaRows.Length==3)Array.Copy(directAreaRows,next,3);
+        next[area]=rows;directAreaRows=next;
+    }
+    private async Task RefreshDirectBoard(CancellationToken ct)
+    {
+        long now=Environment.TickCount64;if(now-directLastRequest<5000&&directAreaRows.Length==3&&directAreaRows.All(rows=>rows!=null))return;
+        int expectedGeneration=Volatile.Read(ref directBoardGeneration);await OnGame(EnsureDirectBoard);var original=await OnGame(DirectBoardSelection);
+        var errors=new List<string>();string[] names={"全部","服务器内招募","带密码招募"};int requested=-1;
+        try{
+            var initDeadline=Environment.TickCount64+2000;while(!await OnGame(DirectBoardInitialized)){if(Environment.TickCount64>=initDeadline)throw new Exception(PhoneChatText.Get("Text0146"));await Task.Delay(50,ct);}
+            foreach(int area in new[]{directArea}){
+                if(expectedGeneration!=Volatile.Read(ref directBoardGeneration))throw new OperationCanceledException(PhoneChatText.Get("Text0147"));
+                long remaining=5500-(Environment.TickCount64-directLastRequest);if(remaining>0)await Task.Delay((int)remaining,ct);
+                directBoardError="";directBoard.Begin(Environment.TickCount64);directLastRequest=Environment.TickCount64;requested=area;
+                // Confirm completion from packet receipt, not the native return flag.
+                await OnGame(()=>RequestDirectBoard(area));
+                var until=Environment.TickCount64+5000;bool complete=false;
+                while(Environment.TickCount64<until){
+                    if(directBoard.Complete(Environment.TickCount64)){
+                        var rows=directBoard.Snapshot(Environment.TickCount64);
+                        await OnGame(()=>{if(expectedGeneration!=Volatile.Read(ref directBoardGeneration))throw new OperationCanceledException(PhoneChatText.Get("Text0148"));PublishDirectArea(area,rows);return true;});
+                        complete=true;break;
+                    }
+                    if(directBoardError.Length>0)break;await Task.Delay(50,ct);
+                }
+                if(!complete){directBoard.Cancel();errors.Add(names[area]+"未收到返回，保留上次结果");}
+            }
+            directBoardError=string.Join("；",errors);
+            if(directAreaRows.Length!=3||directAreaRows[directArea]==null)throw new Exception(names[directArea]+PhoneChatText.Get("Text0149"));
+        }
+        finally{
+            directBoard.Cancel();
+            if(expectedGeneration==Volatile.Read(ref directBoardGeneration))try{await OnGame(()=>RestoreDirectBoardSelection(original.area,original.category,requested));}catch{}
+        }
+    }
+    private int?[] DirectAreaCounts(long now)=>Enumerable.Range(0,3).Select(area=>directAreaRows.Length==3&&directAreaRows[area]!=null?(int?)DirectAreaSnapshot(area,now).Length:null).ToArray();
+    private DirectListing[] DirectAreaSnapshot(int area,long now)=>directAreaRows.Length==3&&directAreaRows[area]!=null?directAreaRows[area].Where(r=>r.expires>now).ToArray():Array.Empty<DirectListing>();
+    private DirectListing FindDirectListing(ulong id,long now)=>directAreaRows.Where(rows=>rows!=null).SelectMany(rows=>rows).FirstOrDefault(r=>r.id==id&&r.expires>now);
+    private static uint DirectJobRole(uint job){try{return DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ClassJob>().GetRow(job).Role;}catch{return 0;}}
+    private object PresentDirectListing(DirectListing row)
+    {
+        string dutyName="无",icon="";try{var data=DalamudServices.DataManager;if(row.dutyType==1){var roulette=data.GetExcelSheet<Lumina.Excel.Sheets.ContentRoulette>()?.GetRow(row.duty);if(roulette.HasValue){dutyName=roulette.Value.Name.ToString();icon=GameIconImage(roulette.Value.ContentType.Value.Icon);}}else if(row.dutyType==2){var duty=data.GetExcelSheet<Lumina.Excel.Sheets.ContentFinderCondition>()?.GetRow(row.duty);if(duty.HasValue){dutyName=duty.Value.Name.ToString();icon=GameIconImage(duty.Value.ContentType.Value.Icon);}}}catch{}
+        var leader=Dalamud.Game.Text.SeStringHandling.SeString.Parse(row.leaderData.Length>0?row.leaderData:System.Text.Encoding.UTF8.GetBytes(row.leader));var comment=Dalamud.Game.Text.SeStringHandling.SeString.Parse(row.commentData.Length>0?row.commentData:System.Text.Encoding.UTF8.GetBytes(row.comment));
+        return new{listingId=row.id.ToString(),category=row.category,duty=dutyName,dutyIcon=icon,leader=leader.TextValue,leaderParts=FormatParts(leader,"#d8efed"),comment=comment.TextValue,commentParts=FormatParts(comment,"#b1b3ac"),itemLevel=row.itemLevel==0?"无":row.itemLevel.ToString(),slots=Enumerable.Range(0,Math.Min(48,(int)row.totalSlots)).Select(i=>new{filled=i<row.filledSlots,job=i<row.jobs.Length?row.jobs[i]:0,role=i<row.jobs.Length?DirectJobRole(row.jobs[i]):0,flags=i<row.slotFlags.Length?row.slotFlags[i].ToString():"0"}).ToArray()};
+    }
+    public static bool MatchesDirectArea(DirectListing row,int area)=>area==2?(row.area&2)!=0:area==1?(row.area&8)!=0:(row.area&2)==0;
+    private Action<ushort,bool> streamKeyWriter=SendStreamKey;private Func<nint> streamFocusProbe=GetForegroundWindow;
+    private readonly HashSet<ushort> streamHeldKeys=new();private long streamKeySequence,streamKeyTouched;private string streamInputSession="";private Timer streamKeyWatchdog;
+    private static readonly Dictionary<string,ushort> StreamKeys=new(StringComparer.Ordinal){{"ESC",27},{"M",77},{"SPACE",32},{"W",87},{"A",65},{"S",83},{"D",68},{"UP",38},{"DOWN",40},{"LEFT",37},{"RIGHT",39},{"NUM0",96},{"NUM1",97},{"NUM2",98},{"NUM4",100},{"NUM6",102},{"NUM8",104},{"MOUSELEFT",1},{"MOUSERIGHT",2}};
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit,Size=40)]private struct StreamKeyInput{[System.Runtime.InteropServices.FieldOffset(0)]public uint Type;[System.Runtime.InteropServices.FieldOffset(8)]public ushort Vk;[System.Runtime.InteropServices.FieldOffset(10)]public ushort Scan;[System.Runtime.InteropServices.FieldOffset(12)]public uint Flags;}
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern nint GetForegroundWindow();
+    [System.Runtime.InteropServices.DllImport("user32.dll",EntryPoint="MapVirtualKeyW")]private static extern uint MapStreamVirtualKey(uint key,uint kind);
+    [System.Runtime.InteropServices.DllImport("user32.dll",SetLastError=true)]private static extern uint SendInput(uint count,StreamKeyInput[] inputs,int size);
+    private static long streamNativeKeyEvents,streamNativeMouseMoves,streamNativeMouseButtons;
+    private static void SendStreamKey(ushort key,bool down){if(key is 1 or 2){var mouse=new StreamMouseInput{Flags=key==1?(down?2u:4u):(down?8u:16u)};if(SendMouseInput(1,new[]{mouse},40)!=1)throw new Exception(PhoneChatText.Get("Text0150"));Interlocked.Increment(ref streamNativeMouseButtons);return;}var scan=MapStreamVirtualKey(key,0);if(scan==0)throw new Exception(PhoneChatText.Get("Text0151"));var input=new StreamKeyInput{Type=1,Scan=(ushort)scan,Flags=8u|(down?0u:2u)|(key is >=37 and <=40?1u:0u)};if(SendInput(1,new[]{input},40)!=1)throw new Exception(PhoneChatText.Get("Text0152"));Interlocked.Increment(ref streamNativeKeyEvents);}
+    private void ReleaseStreamKeys(){foreach(var key in streamHeldKeys.ToArray()){try{if(key!=1||!streamPointerDown)streamKeyWriter(key,false);}catch{}streamHeldKeys.Remove(key);}streamKeyTouched=0;}
+    private object ApplyStreamKeys(JsonElement root,string auth){string nonce=root.GetProperty("session").GetString()??"";long sequence=root.GetProperty("sequence").GetInt64();var requested=root.GetProperty("keys").EnumerateArray().Select(e=>e.GetString()??"").ToArray();if(requested.Length>8||requested.Any(k=>!StreamKeys.ContainsKey(k))||sequence<1)throw new Exception(PhoneChatText.Get("Text0153"));var wanted=requested.Select(k=>StreamKeys[k]).ToHashSet();lock(streamGate){if(!Equal(auth,streamOwner)||streamProcess==null||streamWindow==0||nonce.Length==0||!Equal(nonce,streamInputSession))throw new Exception(PhoneChatText.Get("Text0154"));if(!root.TryGetProperty("control",out var epoch)||epoch.GetInt64()!=streamControlSequence)throw new Exception(PhoneChatText.Get("Text0155"));if(sequence<=streamKeySequence)return new{ok=true,ignored=true};streamKeySequence=sequence;if(wanted.Count>0&&!streamControlEnabled)throw new Exception(PhoneChatText.Get("Text0156"));if(wanted.Count>0&&streamFocusProbe()!=streamWindow){ReleaseStreamKeys();throw new Exception(PhoneChatText.Get("Text0157"));}long up=root.TryGetProperty("wheelUp",out var wu)?wu.GetInt64():streamWheelUp,down=root.TryGetProperty("wheelDown",out var wd)?wd.GetInt64():streamWheelDown;if(up<streamWheelUp||down<streamWheelDown||up-streamWheelUp>20||down-streamWheelDown>20)throw new Exception(PhoneChatText.Get("Text0158"));if((up!=streamWheelUp||down!=streamWheelDown)&&(!streamControlEnabled||streamFocusProbe()!=streamWindow))throw new Exception(PhoneChatText.Get("Text0159"));int ticks=(int)((up-streamWheelUp)-(down-streamWheelDown));if(ticks!=0)streamWheelWriter(ticks);streamWheelUp=up;streamWheelDown=down;foreach(var key in streamHeldKeys.Except(wanted).ToArray()){if(key!=1||!streamPointerDown)streamKeyWriter(key,false);streamHeldKeys.Remove(key);}try{foreach(var key in wanted.Except(streamHeldKeys)){if(key!=1||!streamPointerDown)streamKeyWriter(key,true);streamHeldKeys.Add(key);}}catch{ReleaseStreamKeys();throw;}streamKeyTouched=Environment.TickCount64;return new{ok=true};}}
+    private void CheckStreamKeys(){string owner;lock(streamGate)owner=streamOwner;bool authorized=owner.Length>0&&Authorized(owner);lock(streamGate){if(owner!=streamOwner)return;if(!authorized||streamWindow==0||streamFocusProbe()!=streamWindow){ReleaseStreamKeys();ReleaseStreamPointer();streamControlEnabled=false;}else{if((streamHeldKeys.Count>0&&Environment.TickCount64-streamKeyTouched>500)||(streamPointerDown&&Environment.TickCount64-streamPointerTouched>500)){ReleaseStreamKeys();ReleaseStreamPointer();streamControlEnabled=false;}}}}
+    private long streamTextSequence;private Action<string> streamTextWriter=WriteStreamText;
+    private static void WriteStreamText(string text){var input=new StreamKeyInput[text.Length*2];for(int i=0;i<text.Length;i++){input[i*2]=new StreamKeyInput{Type=1,Scan=text[i],Flags=4};input[i*2+1]=new StreamKeyInput{Type=1,Scan=text[i],Flags=6};}if(SendInput((uint)input.Length,input,40)!=(uint)input.Length)throw new Exception(PhoneChatText.Get("Text0160"));Interlocked.Add(ref streamNativeKeyEvents,input.Length);}
+    private object ApplyStreamIme(JsonElement root,string auth){string session=root.GetProperty("session").GetString()??"",text=root.GetProperty("text").GetString()??"";int deletes=root.GetProperty("delete").GetInt32();long sequence=root.GetProperty("sequence").GetInt64();if(sequence<1||text.Length>500||text.Any(char.IsControl)||deletes<0||deletes>100||(deletes==0&&text.Length==0)||(deletes>0&&text.Length>0))throw new Exception(PhoneChatText.Get("Text0161"));lock(streamGate){if(!Equal(auth,streamOwner)||streamProcess==null||string.IsNullOrEmpty(session)||!Equal(session,streamInputSession))throw new Exception(PhoneChatText.Get("Text0162"));if(sequence<=streamTextSequence)return new{ok=true,ignored=true};if(streamFocusProbe()!=streamWindow)throw new Exception(PhoneChatText.Get("Text0163"));ReleaseStreamKeys();ReleaseStreamPointer();streamTextSequence=sequence;if(deletes>0){for(int i=0;i<deletes;i++){streamKeyWriter(8,true);streamKeyWriter(8,false);}}else streamTextWriter(text);return new{ok=true};}}
+    private object ApplyStreamText(JsonElement root,string auth){string nonce=root.GetProperty("session").GetString()??"",text=root.GetProperty("text").GetString()??"";long sequence=root.GetProperty("sequence").GetInt64();if(sequence<1||text.Length<1||text.Length>500||text.Any(char.IsControl))throw new Exception(PhoneChatText.Get("Text0164"));lock(streamGate){if(!Equal(auth,streamOwner)||streamProcess==null||!Equal(nonce,streamInputSession)||nonce.Length==0)throw new Exception(PhoneChatText.Get("Text0162"));if(sequence<=streamTextSequence)return new{ok=true,ignored=true};if(streamFocusProbe()!=streamWindow)throw new Exception(PhoneChatText.Get("Text0165"));ReleaseStreamKeys();ReleaseStreamPointer();streamTextSequence=sequence;streamTextWriter(text);return new{ok=true};}}
+    private long streamWheelUp,streamWheelDown;private Action<int> streamWheelWriter=SendStreamWheel;private static void SendStreamWheel(int ticks){var input=new StreamMouseInput{Flags=0x800,MouseData=unchecked((uint)(ticks*120))};if(SendMouseInput(1,new[]{input},40)!=1)throw new Exception(PhoneChatText.Get("Text0166"));Interlocked.Increment(ref streamNativeMouseButtons);}
+    private long streamPointerSequence,streamPointerTouched;private bool streamPointerDown;private float streamPointerX=.5f,streamPointerY=.5f;
+    private Action<nint,float,float> streamRelativeMover=MoveStreamRelative;private Action<bool> streamPointerButtonWriter=WriteStreamPointerButton;private Action<nint,float,float,bool> streamPointerWriter=WriteStreamPointer;private Action<nint,float,float> streamPointerMover=MoveStreamPointer;private bool streamControlEnabled;private long streamControlSequence;
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]private struct StreamPoint{public int X,Y;}
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit,Size=40)]private struct StreamMouseInput{[System.Runtime.InteropServices.FieldOffset(0)]public uint Type;[System.Runtime.InteropServices.FieldOffset(8)]public int X;[System.Runtime.InteropServices.FieldOffset(12)]public int Y;[System.Runtime.InteropServices.FieldOffset(16)]public uint MouseData;[System.Runtime.InteropServices.FieldOffset(20)]public uint Flags;}
+    [System.Runtime.InteropServices.DllImport("user32.dll",EntryPoint="SendInput",SetLastError=true)]private static extern uint SendMouseInput(uint count,StreamMouseInput[] inputs,int size);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern bool ClientToScreen(nint window,ref StreamPoint point);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern int GetSystemMetrics(int index);
+    private static void MoveStreamPointer(nint window,float x,float y){if(!GetClientRect(window,out var rect))throw new Exception(PhoneChatText.Get("Text0167"));var point=new StreamPoint{X=(int)Math.Round(x*Math.Max(0,rect.Right-1)),Y=(int)Math.Round(y*Math.Max(0,rect.Bottom-1))};if(!ClientToScreen(window,ref point))throw new Exception(PhoneChatText.Get("Text0168"));int left=GetSystemMetrics(76),top=GetSystemMetrics(77),width=GetSystemMetrics(78),height=GetSystemMetrics(79);if(width<2||height<2)throw new Exception(PhoneChatText.Get("Text0169"));var input=new StreamMouseInput{X=(int)Math.Round((point.X-left)*65535d/(width-1)),Y=(int)Math.Round((point.Y-top)*65535d/(height-1)),Flags=0xC001u};if(SendMouseInput(1,new[]{input},40)!=1)throw new Exception(PhoneChatText.Get("Text0170"));Interlocked.Increment(ref streamNativeMouseMoves);}
+    private static void MoveStreamRelative(nint window,float x,float y){if(!GetClientRect(window,out var rect)||rect.Right<2||rect.Bottom<2)throw new Exception(PhoneChatText.Get("Text0167"));if(!GetCursorPos(out var point)||!ScreenToClient(window,ref point))throw new Exception(PhoneChatText.Get("Text0171"));float nx=Math.Clamp((point.X+x*rect.Right)/(rect.Right-1f),0f,1f),ny=Math.Clamp((point.Y+y*rect.Bottom)/(rect.Bottom-1f),0f,1f);MoveStreamPointer(window,nx,ny);}
+    private static void WriteStreamPointerButton(bool down){var input=new StreamMouseInput{Flags=down?2u:4u};if(SendMouseInput(1,new[]{input},40)!=1)throw new Exception(PhoneChatText.Get("Text0172"));Interlocked.Increment(ref streamNativeMouseButtons);}
+    private static void WriteStreamPointer(nint window,float x,float y,bool down){if(down)MoveStreamPointer(window,x,y);WriteStreamPointerButton(down);}
+    private void ReleaseStreamPointer(){if(streamPointerDown){try{if(!streamHeldKeys.Contains(1))streamPointerWriter(streamWindow,streamPointerX,streamPointerY,false);}catch{}streamPointerDown=false;}streamPointerTouched=0;}
+    private object ApplyStreamPointer(JsonElement root,string auth){string session=root.GetProperty("session").GetString()??"";long sequence=root.GetProperty("sequence").GetInt64();float x=root.GetProperty("x").GetSingle(),y=root.GetProperty("y").GetSingle();bool down=root.GetProperty("down").GetBoolean();bool relative=root.TryGetProperty("relative",out var relativeValue)&&relativeValue.GetBoolean(),begin=root.TryGetProperty("begin",out var beginValue)&&beginValue.GetBoolean();if(sequence<1||!float.IsFinite(x)||!float.IsFinite(y)||(relative?(Math.Abs(x)>10000||Math.Abs(y)>10000):(x<0||x>1||y<0||y>1)))throw new Exception(PhoneChatText.Get("Text0173"));lock(streamGate){if(!Equal(auth,streamOwner)||streamProcess==null||streamWindow==0||session.Length==0||!Equal(session,streamInputSession))throw new Exception(PhoneChatText.Get("Text0154"));if(!root.TryGetProperty("control",out var epoch)||epoch.GetInt64()!=streamControlSequence)throw new Exception(PhoneChatText.Get("Text0155"));if(sequence<=streamPointerSequence)return new{ok=true,ignored=true};if(!streamControlEnabled)throw new Exception(PhoneChatText.Get("Text0156"));if(streamFocusProbe()!=streamWindow){ReleaseStreamPointer();throw new Exception(PhoneChatText.Get("Text0157"));}if(relative){if(begin)streamRelativeMover(streamWindow,0,0);else if(x!=streamPointerX||y!=streamPointerY)streamRelativeMover(streamWindow,x-streamPointerX,y-streamPointerY);if(down!=streamPointerDown&&!streamHeldKeys.Contains(1))streamPointerButtonWriter(down);}else{if(down!=streamPointerDown&&!streamHeldKeys.Contains(1))streamPointerWriter(streamWindow,x,y,down);else if(x!=streamPointerX||y!=streamPointerY)streamPointerMover?.Invoke(streamWindow,x,y);}streamPointerSequence=sequence;streamPointerX=x;streamPointerY=y;streamPointerDown=down;streamPointerTouched=Environment.TickCount64;return new{ok=true};}}
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern bool SetForegroundWindow(nint window);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern bool IsIconic(nint window);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern bool ShowWindowAsync(nint window,int command);
+    private Func<nint,bool> streamForegroundSetter=BringStreamToFront;private int streamClearUiFocus;private bool streamUiKeyboardCapture;
+    private bool RequestStreamForeground(nint window){bool focused=streamForegroundSetter(window);if(focused)Interlocked.Exchange(ref streamClearUiFocus,1);return focused;}
+    private static bool CanActivateStream(Func<int,bool> down,Func<bool> tap){for(int key=1;key<256;key++)if(down(key))return false;return tap();}
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern short GetAsyncKeyState(int key);
+    private static bool TapStreamActivation(){var up=new StreamKeyInput{Type=1,Vk=18,Flags=2};uint sent=SendInput(2,new[]{new StreamKeyInput{Type=1,Vk=18},up},40);if(sent==1)SendInput(1,new[]{up},40);return sent==2;}
+    private static bool BringStreamToFront(nint window){if(window==0)return false;if(GetForegroundWindow()==window)return true;if(IsIconic(window))ShowWindowAsync(window,9);if(SetForegroundWindow(window))return true;if(!CanActivateStream(key=>(GetAsyncKeyState(key)&0x8000)!=0,TapStreamActivation))return false;return SetForegroundWindow(window);}
+    private async Task<bool> ConfirmStreamForeground(nint window,CancellationToken ct){for(int attempt=0;attempt<20;attempt++){ct.ThrowIfCancellationRequested();if(streamFocusProbe()==window){Interlocked.Exchange(ref streamClearUiFocus,1);return true;}await Task.Delay(50,ct);}return streamFocusProbe()==window;}
+    private object ApplyStreamControl(JsonElement root,string auth){string session=root.GetProperty("session").GetString()??"";bool control=root.GetProperty("enabled").GetBoolean();long sequence=root.GetProperty("sequence").GetInt64();if(sequence<1)throw new Exception(PhoneChatText.Get("Text0174"));lock(streamGate){if(!Equal(auth,streamOwner)||streamProcess==null||session.Length==0||!Equal(session,streamInputSession))throw new Exception(PhoneChatText.Get("Text0154"));if(sequence<=streamControlSequence)return new{ok=true,enabled=streamControlEnabled};streamControlSequence=sequence;streamWheelUp=streamWheelDown=0;ReleaseStreamKeys();ReleaseStreamPointer();streamControlEnabled=false;if(control&&streamFocusProbe()!=streamWindow)throw new Exception(PhoneChatText.Get("Text0175"));streamControlEnabled=control;return new{ok=true,enabled=control};}}
+    private PhoneUdpVideoSession streamUdp;private bool streamUseUdp,streamGpu;private int streamActualBitrate,streamTargetFps;
+    private readonly SemaphoreSlim streamLock=new(1,1);private readonly object streamGate=new();private System.Diagnostics.Process streamProcess;private byte[] streamFrame;private long streamFrameId,streamTouched,streamDeliveredFrameId;private string streamOwner="",streamError="";private nint streamWindow;private StreamRect streamOldRect;private Timer streamWatchdog;private int streamGeneration;private uint? streamSavedMode,streamSavedWidth,streamSavedHeight;
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] private struct StreamRect{public int Left,Top,Right,Bottom;}
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool GetWindowRect(nint window,out StreamRect rect);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool GetClientRect(nint window,out StreamRect rect);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetWindowPos(nint window,nint after,int x,int y,int width,int height,uint flags);
+    [System.Runtime.InteropServices.DllImport("user32.dll",EntryPoint="GetWindowLongPtrW")] private static extern nint GetStreamWindowStyle(nint window,int index);
+    private Task streamRestore=Task.CompletedTask;
+    private void StopStream(){uint? mode,width,height;nint window;StreamRect rect;System.Diagnostics.Process process;int cleanupGeneration;lock(streamGate){var udp=streamUdp;streamUdp=null;udp?.Dispose();streamUseUdp=false;ReleaseStreamKeys();ReleaseStreamPointer();streamControlEnabled=false;streamControlSequence=0;streamTextSequence=0;streamWheelUp=streamWheelDown=0;streamPointerSequence=0;streamKeyWatchdog?.Dispose();streamKeyWatchdog=null;streamInputSession="";streamKeySequence=0;streamGeneration++;streamWatchdog?.Dispose();streamWatchdog=null;process=streamProcess;streamProcess=null;window=streamWindow;rect=streamOldRect;streamWindow=0;mode=streamSavedMode;width=streamSavedWidth;height=streamSavedHeight;streamSavedMode=streamSavedWidth=streamSavedHeight=null;streamOwner="";streamFrame=null;streamFrameId=streamDeliveredFrameId=0;streamVideoConnected=false;streamPackets.Clear();streamNeedKey=true;streamPacketSignal.TrySetResult();cleanupGeneration=streamGeneration;}streamRestore=RestoreStreamSafely(process,window,rect,mode,width,height,cleanupGeneration);}
+    private async Task RestoreStreamSafely(System.Diagnostics.Process process,nint window,StreamRect rect,uint? mode,uint? width,uint? height,int cleanupGeneration)
+    {
+        try{
+            if(process!=null)await PhoneChatText.Track(Task.Run(async()=>{try{if(!process.HasExited){process.Kill(true);using var timeout=new CancellationTokenSource(2500);await process.WaitForExitAsync(timeout.Token);}}finally{process.Dispose();}}));
+            if(cleanupGeneration!=streamGeneration)return;
+            if(window!=0)SetWindowPos(window,0,rect.Left,rect.Top,rect.Right-rect.Left,rect.Bottom-rect.Top,0x4014);
+            if(mode.HasValue)await OnGame(()=>{if(cleanupGeneration!=streamGeneration)return false;var config=GetService<IGameConfig>("Dalamud.Game.Config.GameConfig")?.System;if(config==null)throw new Exception(PhoneChatText.Get("Text0176"));if(width.HasValue)config.Set("ScreenWidth",width.Value);if(height.HasValue)config.Set("ScreenHeight",height.Value);config.Set("ScreenMode",mode.Value);return true;});
+        }catch(Exception e){streamError=PhoneChatText.Get("Text0177")+e.Message;StreamEvent(streamError);if(process!=null)_=PhoneChatText.Track(Task.Run(()=>{try{if(!process.HasExited)process.Kill(true);}catch{}try{process.Dispose();}catch{}}));}
+    }
+
+    private readonly Queue<string> streamEvents=new();private void StreamEvent(string message){lock(streamGate){streamEvents.Enqueue(DateTimeOffset.Now.ToString("O")+" "+message);while(streamEvents.Count>16)streamEvents.Dequeue();}}
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern bool GetCursorPos(out StreamPoint point);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]private static extern bool ScreenToClient(nint window,ref StreamPoint point);
+    private readonly Queue<byte[]> streamPackets=new();private bool streamNeedKey=true,streamVideoConnected,streamH264;private TaskCompletionSource streamPacketSignal=new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private static bool StreamKeyframe(byte[] packet){for(int i=0;i+4<packet.Length;i++)if(packet[i]==0&&packet[i+1]==0&&packet[i+2]==1&&(packet[i+3]&31)==5)return true;return false;}
+    private void PublishStreamPacket(byte[] packet){bool key=StreamKeyframe(packet);if(streamPackets.Count>=2){streamPackets.Clear();streamNeedKey=true;}if(streamNeedKey&&!key)return;streamNeedKey=false;streamPackets.Enqueue(packet);streamPacketSignal.TrySetResult();streamPacketSignal=new(TaskCreationOptions.RunContinuationsAsynchronously);}
+    private async Task StreamVideo(Stream output,string auth,string inputSession,CancellationToken ct){
+        lock(streamGate){if(streamVideoConnected)return;streamVideoConnected=true;streamPackets.Clear();streamNeedKey=true;}
+        try{await output.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/x-phonechat-h264\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"),ct);
+            while(!ct.IsCancellationRequested&&Authorized(auth)){byte[] packet=null;Task pending;lock(streamGate){if(!Equal(auth,streamOwner)||!Equal(inputSession,streamInputSession)||streamProcess==null)return;streamTouched=Environment.TickCount64;if(streamError.Length>0)return;if(streamPackets.Count>0)packet=streamPackets.Dequeue();pending=streamPacketSignal.Task;}
+                if(packet==null){try{await pending.WaitAsync(TimeSpan.FromSeconds(4),ct);}catch(TimeoutException){continue;}continue;}using var write=CancellationTokenSource.CreateLinkedTokenSource(ct);write.CancelAfter(2500);await output.WriteAsync(BitConverter.GetBytes(packet.Length),write.Token);await output.WriteAsync(packet,write.Token);await output.FlushAsync(write.Token);
+            }
+        }catch(OperationCanceledException){StreamEvent("视频发送取消或超过2.5秒");}catch(IOException){StreamEvent("视频连接I/O中断");}catch(TimeoutException){StreamEvent("视频等待超时");}finally{lock(streamGate){if(Equal(inputSession,streamInputSession)){streamVideoConnected=false;streamPackets.Clear();streamNeedKey=true;ReleaseStreamKeys();ReleaseStreamPointer();streamControlEnabled=false;}}}
+    }
+    private static bool ResolveStreamUdp(string mode,bool hardware,int port){if(mode=="tcp")return false;if(mode!="udp")throw new Exception(PhoneChatText.Get("Text0178"));if(!hardware)throw new Exception(PhoneChatText.Get("Text0179"));if(port<1024||port>65535)throw new Exception(PhoneChatText.Get("Text0180"));return true;}
+    private string HardwareStreamHelper(){string helper=settings.StreamHardwareHelper,encoder=settings.StreamEncoderPath;if(!File.Exists(helper)||!Path.IsPathFullyQualified(helper)||!File.Exists(encoder)||!Path.IsPathFullyQualified(encoder))throw new Exception(PhoneChatText.Get("Text0181"));const string expected="1944c36942e17102a0f5cee82c8e7dda9b3d3b75eea7d02f0bddd5d442798a12";if(!Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(helper))).Equals(expected,StringComparison.OrdinalIgnoreCase))throw new Exception(PhoneChatText.Get("Text0182"));return helper;}
+    private readonly object streamHelperGate=new();private Task<string> streamHelperTask;private long streamHelperDownloaded,streamHelperTotal;private string streamHelperStage="checking";
+    private Task<string> PrepareStreamHelper(CancellationToken ct,bool retry){lock(streamHelperGate){if(streamHelperTask==null||retry&&(streamHelperTask.IsFaulted||streamHelperTask.IsCanceled)){streamHelperDownloaded=streamHelperTotal=0;streamHelperTask=PhoneChatText.Track(Task.Run(()=>GetStreamHelper(ct),ct));}return streamHelperTask;}}
+    private async Task<string> GetStreamHelper(CancellationToken ct){using var downloadTimeout=CancellationTokenSource.CreateLinkedTokenSource(ct);downloadTimeout.CancelAfter(TimeSpan.FromSeconds(90));ct=downloadTimeout.Token;string directory=Path.Combine(Path.GetDirectoryName(ConfigFile),"PhoneChatStream"),path=Path.Combine(directory,"StreamHost-0.3.50.exe");const string hash="ab87a289e0aa21c75ce130451096cd6c569ff6fab9c21810479d1726ed15e464";if(File.Exists(path)&&Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).Equals(hash,StringComparison.OrdinalIgnoreCase))return path;Directory.CreateDirectory(directory);streamHelperStage="connecting";using var http=new HttpClient{Timeout=TimeSpan.FromSeconds(90)};using var response=await http.GetAsync("https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.50/StreamHost.exe",HttpCompletionOption.ResponseHeadersRead,ct);response.EnsureSuccessStatusCode();streamHelperStage="downloading";streamHelperTotal=response.Content.Headers.ContentLength??0;if(response.Content.Headers.ContentLength>80000000)throw new Exception(PhoneChatText.Get("Text0183"));string temp=path+".download";try{await using(var input=await response.Content.ReadAsStreamAsync(ct)){await using var output=File.Create(temp);var buffer=new byte[65536];int count;long total=0;while((count=await input.ReadAsync(buffer,ct))>0){total+=count;Interlocked.Exchange(ref streamHelperDownloaded,total);if(total>80000000)throw new Exception(PhoneChatText.Get("Text0184"));await output.WriteAsync(buffer.AsMemory(0,count),ct);}}if(!Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(temp))).Equals(hash,StringComparison.OrdinalIgnoreCase))throw new Exception(PhoneChatText.Get("Text0185"));File.Move(temp,path,true);return path;}finally{if(File.Exists(temp))File.Delete(temp);}}
+    private async Task<object> StreamAction(string action,JsonElement root,string auth,CancellationToken ct){if(action is "prepare" or "prepare-status"){if(settings.HardwareStream){HardwareStreamHelper();return new{ok=true,ready=true,stage="ready",downloaded=0,total=0};}var task=PrepareStreamHelper(ct,action=="prepare");if(task.IsFaulted)throw new Exception(PhoneChatText.Get("Text0186")+task.Exception.GetBaseException().Message);if(task.IsCanceled)throw new Exception(PhoneChatText.Get("Text0187"));return new{ok=true,ready=task.IsCompletedSuccessfully,stage=task.IsCompletedSuccessfully?"ready":streamHelperStage,downloaded=Interlocked.Read(ref streamHelperDownloaded),total=Interlocked.Read(ref streamHelperTotal)};}if(action=="stop"){lock(streamGate){if(streamOwner.Length>0&&!Equal(auth,streamOwner))throw new Exception(PhoneChatText.Get("Text0188"));StopStream();}await streamRestore.WaitAsync(TimeSpan.FromSeconds(12),ct);return new{ok=true};}int generation=streamGeneration;bool startupMutated=false;await streamLock.WaitAsync(ct);try{
+        if(action=="stop"){lock(streamGate){if(streamOwner.Length>0&&!Equal(auth,streamOwner))throw new Exception(PhoneChatText.Get("Text0188"));StopStream();}return new{ok=true};}
+        if(action=="udp-session"){lock(streamGate){string nonce=root.GetProperty("session").GetString()??"";if(!streamUseUdp||streamProcess==null||!Equal(auth,streamOwner)||nonce.Length==0||!Equal(nonce,streamInputSession))throw new Exception(PhoneChatText.Get("Text0189"));streamUdp?.Dispose();streamUdp=null;PhoneUdpVideoSession next=null;
+            void Touch(){bool allowed=Authorized(auth);lock(streamGate){if(!ReferenceEquals(streamUdp,next))return;if(!allowed){streamError=PhoneChatText.Get("Text0190");streamUdp=null;next.Dispose();ReleaseStreamKeys();ReleaseStreamPointer();streamControlEnabled=false;return;}streamTouched=Environment.TickCount64;}}
+            void Lost(){lock(streamGate){if(!ReferenceEquals(streamUdp,next))return;ReleaseStreamKeys();ReleaseStreamPointer();streamControlEnabled=false;StreamEvent("UDP客户端心跳停止，输入已释放");}}
+            void Slow(){lock(streamGate){if(!ReferenceEquals(streamUdp,next))return;if(!streamGpu||streamActualBitrate<=2000000){streamError=PhoneChatText.Get("Text0191");return;}int lower=streamActualBitrate>8000000?8000000:2000000;streamActualBitrate=lower;next.SetRate(lower);var encoder=streamProcess;StreamEvent("UDP网络丢帧，已请求降低到"+lower/1000000+"M");_=PhoneChatText.Track(Task.Run(async()=>{try{await encoder.StandardInput.WriteLineAsync("RATE "+lower);await encoder.StandardInput.FlushAsync();}catch{lock(streamGate){if(streamProcess==encoder)streamError=PhoneChatText.Get("Text0192");}}}));}}
+            next=new PhoneUdpVideoSession(settings.StreamUdpPort,streamActualBitrate,streamTargetFps,Touch,Lost,Slow);streamUdp=next;return new{ok=true,protocol="pcu1",key=next.Secret,port=settings.StreamUdpExternalPort>0?settings.StreamUdpExternalPort:settings.StreamUdpPort,localPort=settings.StreamUdpPort};}}
+        if(action=="status"){lock(streamGate){if(streamOwner.Length>0&&!Equal(auth,streamOwner))throw new Exception(PhoneChatText.Get("Text0188"));if(streamProcess!=null)streamTouched=Environment.TickCount64;bool running=streamProcess!=null;if(streamUdp!=null&&streamUdp.Error.Length>0)streamError=streamUdp.Error;float x=0,y=0;bool cursor=running&&GetCursorPos(out var point)&&ScreenToClient(streamWindow,ref point);if(cursor&&GetClientRect(streamWindow,out var cursorClient)){GetCursorPos(out point);ScreenToClient(streamWindow,ref point);x=point.X/(float)Math.Max(1,cursorClient.Right);y=point.Y/(float)Math.Max(1,cursorClient.Bottom);cursor=x>=0&&x<=1&&y>=0&&y<=1;}return new{ok=true,running,error=streamError,transport=streamUseUdp?"udp":"tcp",bitrate=streamActualBitrate,pipeline=streamGpu?"gpu":"cpu",controlEnabled=streamControlEnabled,controlSequence=streamControlSequence,foreground=running&&streamFocusProbe()==streamWindow,cursor,x,y,events=streamEvents.ToArray()};}}
+        if(action=="diagnostics"){lock(streamGate){if(!Equal(auth,streamOwner)||streamProcess==null)throw new Exception(PhoneChatText.Get("Text0193"));return new{ok=true,controlEnabled=streamControlEnabled,foreground=streamFocusProbe()==streamWindow,heldKeys=streamHeldKeys.Count,pointerDown=streamPointerDown,uiKeyboardCapture=streamUiKeyboardCapture,keyEvents=Interlocked.Read(ref streamNativeKeyEvents),mouseMoves=Interlocked.Read(ref streamNativeMouseMoves),mouseButtons=Interlocked.Read(ref streamNativeMouseButtons)};}}
+        if(action=="frame"){lock(streamGate){if(!Equal(auth,streamOwner)||streamProcess==null)throw new Exception(PhoneChatText.Get("Text0194"));streamTouched=Environment.TickCount64;if(streamError.Length>0)throw new Exception(streamError);string image=streamFrame==null||streamDeliveredFrameId==streamFrameId?"":"data:image/jpeg;base64,"+Convert.ToBase64String(streamFrame);streamDeliveredFrameId=streamFrameId;return (object)new{ok=true,id=streamFrameId,image};}}
+        if(action=="focus"){nint target=await OnGame(()=>{lock(streamGate){if(streamOwner.Length>0&&!Equal(auth,streamOwner))throw new Exception(PhoneChatText.Get("Text0188"));ReleaseStreamKeys();ReleaseStreamPointer();streamControlEnabled=false;panel=false;using var game=System.Diagnostics.Process.GetCurrentProcess();nint window=game.MainWindowHandle;if(game.ProcessName!="ffxiv_dx11"||window==0)throw new Exception(PhoneChatText.Get("Text0195"));RequestStreamForeground(window);return window;}});bool focused=await ConfirmStreamForeground(target,ct);return new{ok=true,foreground=focused};}
+        if(action=="resize"){int w=root.GetProperty("width").GetInt32(),h=root.GetProperty("height").GetInt32();if(w<320||h<320||w>3840||h>3840)throw new Exception(PhoneChatText.Get("Text0196"));nint resizeWindow;lock(streamGate){if(!Equal(auth,streamOwner)||streamProcess==null||streamWindow==0)throw new Exception(PhoneChatText.Get("Text0197"));resizeWindow=streamWindow;streamTouched=Environment.TickCount64;}if(!GetWindowRect(resizeWindow,out var outer)||!GetClientRect(resizeWindow,out var resizeClient)||!SetWindowPos(resizeWindow,0,0,0,w+outer.Right-outer.Left-resizeClient.Right,h+outer.Bottom-outer.Top-resizeClient.Bottom,0x4016))throw new Exception(PhoneChatText.Get("Text0198"));await Task.Delay(300,ct);if(!GetClientRect(resizeWindow,out var current)||current.Right!=w||current.Bottom!=h)throw new Exception(PhoneChatText.Get("Text0199"));return new{ok=true,width=w,height=h};}
+        if(action!="start")throw new Exception(PhoneChatText.Get("Text0200"));lock(streamGate){if(streamOwner.Length>0&&!Equal(auth,streamOwner))throw new Exception(PhoneChatText.Get("Text0201"));}
+        int fps=root.TryGetProperty("fps",out var fpsValue)?fpsValue.GetInt32():10,bitrate=root.TryGetProperty("bitrate",out var rateValue)?rateValue.GetInt32():8000000;if(fps is not (10 or 30 or 60)||bitrate is not (2000000 or 8000000 or 20000000))throw new Exception(PhoneChatText.Get("Text0202"));int width=root.GetProperty("width").GetInt32(),height=root.GetProperty("height").GetInt32();if(width<320||height<320||width>3840||height>3840)throw new Exception(PhoneChatText.Get("Text0196"));bool hardware=settings.HardwareStream;bool udpMode=ResolveStreamUdp(settings.StreamTransport,hardware,settings.StreamUdpPort);if(udpMode&&!hardware)throw new Exception(PhoneChatText.Get("Text0179"));string helper=hardware?HardwareStreamHelper():await PrepareStreamHelper(ct,true);string encoderPath=settings.StreamEncoderPath,adapterId=settings.StreamAdapter;if(generation!=streamGeneration)throw new Exception(PhoneChatText.Get("Text0203"));var game=System.Diagnostics.Process.GetCurrentProcess();var window=game.MainWindowHandle;if(game.ProcessName!="ffxiv_dx11"||window==0)throw new Exception(PhoneChatText.Get("Text0195"));startupMutated=true;StopStream();int savedGeneration=streamGeneration;await streamRestore.WaitAsync(TimeSpan.FromSeconds(12),ct);await OnGame(()=>{lock(streamGate){if(savedGeneration!=streamGeneration)throw new Exception(PhoneChatText.Get("Text0203"));var config=GetService<IGameConfig>("Dalamud.Game.Config.GameConfig")?.System;if(config!=null&&config.TryGet("ScreenMode",out uint mode)){streamSavedMode=mode;if(config.TryGet("ScreenWidth",out uint w))streamSavedWidth=w;if(config.TryGet("ScreenHeight",out uint h))streamSavedHeight=h;if(mode!=0)config.Set("ScreenMode",0u);}return true;}});await Task.Delay(500,ct);if(savedGeneration!=streamGeneration)throw new Exception(PhoneChatText.Get("Text0203"));if((GetStreamWindowStyle(window,-16).ToInt64()&0x00c00000)==0){StopStream();throw new Exception(PhoneChatText.Get("Text0204"));}int startingGeneration=streamGeneration;if(!GetWindowRect(window,out streamOldRect)||!GetClientRect(window,out var client))throw new Exception(PhoneChatText.Get("Text0205"));streamWindow=window;int borderWidth=streamOldRect.Right-streamOldRect.Left-client.Right,borderHeight=streamOldRect.Bottom-streamOldRect.Top-client.Bottom;if(!SetWindowPos(window,0,0,0,width+borderWidth,height+borderHeight,0x4016)){StopStream();throw new Exception(PhoneChatText.Get("Text0206"));}
+        await Task.Delay(300,ct);if(startingGeneration!=streamGeneration)throw new Exception(PhoneChatText.Get("Text0203"));if(!GetClientRect(window,out var actual)||actual.Right!=width||actual.Bottom!=height){StopStream();throw new Exception(PhoneChatText.Get("Text0207"));}
+        bool foreground=await OnGame(()=>{panel=false;return settings.StreamBringToFront?RequestStreamForeground(window):streamFocusProbe()==window;});if(settings.StreamBringToFront&&!foreground)foreground=await ConfirmStreamForeground(window,ct);
+        try{var process=new System.Diagnostics.Process{StartInfo=new System.Diagnostics.ProcessStartInfo(helper){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,RedirectStandardInput=true}};foreach(string argument in new[]{game.Id.ToString(),fps.ToString(),bitrate.ToString()})process.StartInfo.ArgumentList.Add(argument);if(hardware){process.StartInfo.ArgumentList.Add(adapterId.Length==0?"auto":adapterId);process.StartInfo.ArgumentList.Add(encoderPath);process.StartInfo.ArgumentList.Add(settings.StreamGpuDirect?"gpu":"cpu");}if(!process.Start())throw new Exception(PhoneChatText.Get("Text0208"));lock(streamGate){streamProcess=process;streamUseUdp=udpMode;streamGpu=settings.StreamGpuDirect;streamActualBitrate=bitrate;streamTargetFps=fps;streamH264=hardware;streamOwner=auth;streamInputSession=Guid.NewGuid().ToString("N");streamKeySequence=0;streamKeyWatchdog=new Timer(_=>CheckStreamKeys(),null,100,100);streamTouched=Environment.TickCount64;streamError="";streamWatchdog=new Timer(_=>{lock(streamGate){if(Environment.TickCount64-streamTouched>15000){StreamEvent("视频与状态心跳停止15秒，清理串流");StopStream();}}},null,1000,1000);} _=PhoneChatText.Track(Task.Run(async()=>{try{var output=process.StandardOutput.BaseStream;var header=new byte[4];while(true){await output.ReadExactlyAsync(header);int length=BitConverter.ToInt32(header);if(length<4||length>4194304)throw new Exception(PhoneChatText.Get("Text0209"));var frame=new byte[length];await output.ReadExactlyAsync(frame);if(!hardware&&length>700000)continue;lock(streamGate){if(streamProcess!=process)return;if(hardware){if(streamUseUdp)streamUdp?.Offer(frame);else PublishStreamPacket(frame);}else streamFrame=frame;streamFrameId++;}}}catch{lock(streamGate){if(streamProcess==process){streamError=PhoneChatText.Get("Text0210");StreamEvent(streamError);}}}}));_=PhoneChatText.Track(Task.Run(async()=>{try{while(await process.StandardError.ReadLineAsync() is string line){lock(streamGate){if(streamProcess==process&&!line.StartsWith("H264 ")){streamError=line.Length>400?line[..400]:line;StreamEvent(streamError);}}}}catch{}}));double videoScale=hardware?Math.Min(1d,Math.Min(3840d/width,2160d/height)):1d;return new{ok=true,width=hardware?((int)(width*videoScale)&~1):width,height=hardware?((int)(height*videoScale)&~1):height,fps,bitrate,codec=hardware?"h264":"jpeg",transport=udpMode?"udp":"tcp",pipeline=settings.StreamGpuDirect?"gpu":"cpu",foreground,inputSession=streamInputSession};}catch{StopStream();throw;}
+    }catch{if(startupMutated)StopStream();throw;}finally{streamLock.Release();}}
+    // Public Omni service contracts are resolved at runtime so source modules do
+    // not require the host's implementation assemblies as compiler references.
+    private static Type ItemPublicType(string name)=>AppDomain.CurrentDomain.GetAssemblies().Select(a=>a.GetType(name,false)).FirstOrDefault(t=>t!=null);
+    private readonly object phoneItemReadGate=new();
+    private readonly Dictionary<string,object> phoneItemReadServices=new();
+    private void DisposePhoneItemReadServices()
+    {
+        lock(phoneItemReadGate){foreach(var service in phoneItemReadServices.Values.Reverse())try{(service as IDisposable)?.Dispose();}catch{}phoneItemReadServices.Clear();phoneWorldPriceQueries?.Clear();phoneNPCReviews?.Clear();phoneMapImages.Clear();}
+    }
+    private static Type PhoneItemHostType(object manager,string name)
+    {
+        if(manager!=null){
+            var assembly=manager.GetType().Assembly;
+            var direct=assembly.GetType(name,false);if(direct!=null)return direct;
+            var context=System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(assembly);
+            if(context!=null){
+                foreach(var candidate in context.Assemblies){var type=candidate.GetType(name,false);if(type!=null)return type;}
+                // Shared dependencies may live in another context; resolve them through
+                // the host's own referenced assembly identities, not AppDomain ordering.
+                foreach(var reference in assembly.GetReferencedAssemblies().Where(r=>r.Name?.StartsWith("OmniToolbox",StringComparison.Ordinal)==true)){
+                    try{var type=context.LoadFromAssemblyName(reference).GetType(name,false);if(type!=null)return type;}catch{}
+                }
+            }
+        }
+        return ItemPublicType(name);
+    }
+    private static object PhoneItemHostService(object manager,Type type)
+    {
+        if(manager==null||type==null)return null;
+        var getter=manager.GetType().GetMethods(BindingFlags.Public|BindingFlags.Instance).FirstOrDefault(m=>m.Name=="GetService"&&m.IsGenericMethodDefinition&&m.GetParameters().Length==0);
+        try{return getter?.MakeGenericMethod(type).Invoke(manager,null);}catch{return null;}
+    }
+    private static bool PhoneItemServiceMatches(Type type,IReadOnlyCollection<string> names)=>names.Contains(type.FullName)||type.GetInterfaces().Any(i=>names.Contains(i.FullName));
+    private static object[] PhoneItemRegisteredServices(object manager)
+    {
+        if(manager==null)return Array.Empty<object>();var services=new List<object>();
+        // Compatibility discovery of an existing registry, not construction, settings
+        // access or private method invocation. Never enumerate unrelated object graphs.
+        foreach(var field in manager.GetType().GetFields(BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance)){
+            if(field.FieldType!=typeof(IReadOnlyList<object>)&&field.FieldType!=typeof(List<object>))continue;
+            try{if(field.GetValue(manager) is IEnumerable rows)foreach(var row in rows.Cast<object>().Take(256))if(row!=null)services.Add(row);}catch{}
+        }
+        return services.Distinct(ReferenceEqualityComparer.Instance).ToArray();
+    }
+    private static object PhoneItemExistingService(object manager,params string[] names)
+    {
+        foreach(var service in PhoneItemRegisteredServices(manager))if(PhoneItemServiceMatches(service.GetType(),names))return service;
+        // Public Modules is the host's live module collection. Only read fields whose
+        // declared service type matches the exact contract; no config or state mutation.
+        if(ItemValue(manager,"Modules") is IEnumerable modules)foreach(var module in modules.Cast<object>().Take(256)){
+            if(module==null)continue;
+            if(PhoneItemServiceMatches(module.GetType(),names))return module;
+            foreach(var field in module.GetType().GetFields(BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance)){
+                if(!PhoneItemServiceMatches(field.FieldType,names))continue;
+                try{var service=field.GetValue(module);if(service!=null&&PhoneItemServiceMatches(service.GetType(),names))return service;}catch{}
+            }
+        }
+        return null;
+    }
+    private static IEnumerable<MethodInfo> PhoneItemPublicMethods(object service)=>service.GetType().GetMethods(BindingFlags.Public|BindingFlags.Instance).Concat(service.GetType().GetInterfaces().Where(t=>t.IsPublic||t.IsNestedPublic).SelectMany(t=>t.GetMethods()));
+    private static (int min,int max) PhoneItemSearchLevels(JsonElement root,int defaultMin,int defaultMax)
+    {
+        int min=ItemNumber(root,"levelMin",defaultMin,0,9999),max=ItemNumber(root,"levelMax",defaultMax,0,9999);
+        if(min==0)min=defaultMin;if(max==0)max=defaultMax;
+        if(min>max)throw new Exception(PhoneChatText.Get("Text0211"));return(min,max);
+    }
+    private object OmniItemsService(string name,bool required=true)
+    {
+        var manager=FindOmniTreeHouseManager();var type=PhoneItemHostType(manager,name);object service=PhoneItemHostService(manager,type);
+        // Some host versions register the concrete public service rather than its interface.
+        string concrete=name switch{
+                "OmniToolbox.TreeHouse.InterfaceOperation.IMarketPurchaseService"=>"OmniToolbox.Modules.MarketPurchase",
+                "OmniToolbox.TreeHouse.InterfaceOperation.INPCShopPurchaseService"=>"OmniToolbox.Modules.NPCShopPurchase",
+                "OmniToolbox.TreeHouse.InterfaceOperation.IAutoStoreService"=>"OmniToolbox.Modules.AutoStore",
+                _=>null};
+        if(service==null&&concrete!=null)service=PhoneItemHostService(manager,PhoneItemHostType(manager,concrete));
+        if(service==null)service=PhoneItemExistingService(manager,concrete==null?new[]{name}:new[]{name,concrete});
+        // Only read-only public data services have a module-owned fallback.
+        // Purchase/automation interfaces must come from the existing enabled host.
+        if(service==null&&type!=null){
+            lock(phoneItemReadGate){
+                if(phoneItemReadServices.TryGetValue(name,out var cached))service=cached;
+                else{
+                    try{
+                        if(name is "OmniToolbox.Items.ItemCategoryMap" or "OmniToolbox.Items.ItemPatchMap" or "OmniToolbox.Collections.CollectionSourceService")service=Activator.CreateInstance(type);
+                        else if(name=="OmniToolbox.Market.MarketPriceService")service=CreatePhoneItemPriceService(type);
+                        else if(name=="OmniToolbox.Items.ItemDataService"){
+                            var sources=OmniItemsService("OmniToolbox.Collections.CollectionSourceService",false);
+                            service=CreatePhoneItemDataService(type,ItemValue(sources,"BlindBoxDropPools"));
+                        }
+                        if(service!=null)phoneItemReadServices[name]=service;
+                    }catch(Exception e){if(required)throw new Exception(PhoneChatText.Get("Text0212")+(e.InnerException??e).Message);}
+                }
+            }
+        }
+        if(service==null&&required)throw new Exception(PhoneChatText.Get("Text0213")+name.Split('.').Last()+PhoneChatText.Get("Text0214"));return service;
+    }
+    private static object CreatePhoneItemPriceService(Type type)
+    {
+        // Public constructor parameter: officeBaseURL. This is not a file path.
+        // The official read-only market provider is fixed, never supplied by HTTP callers.
+        var ctor=type.GetConstructor(new[]{typeof(string)})??throw new Exception(PhoneChatText.Get("Text0215"));
+        return ctor.Invoke(new object[]{"https://office.youshuomni.com"});
+    }
+    private static object CreatePhoneItemDataService(Type type,object pools)
+    {
+        var ctor=type.GetConstructors(BindingFlags.Public|BindingFlags.Instance).FirstOrDefault(c=>c.GetParameters().Length==2&&c.GetParameters()[0].ParameterType.Name=="ItemPatchMap")??throw new Exception(PhoneChatText.Get("Text0216"));
+        var map=Activator.CreateInstance(ctor.GetParameters()[0].ParameterType);
+        if(pools==null){var arguments=ctor.GetParameters()[1].ParameterType.GetGenericArguments();pools=Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(arguments));}
+        return ctor.Invoke(new[]{map,pools});
+    }
+    private unsafe object PhoneItemCounts(object inventory,object data,bool personal)
+    {
+        if(inventory!=null)return ItemCall(inventory,personal?"GetCounts":"GetDisplayCounts");
+        var manager=FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();if(manager==null)throw new Exception(PhoneChatText.Get("Text0217"));
+        var search=data.GetType().GetMethods(BindingFlags.Public|BindingFlags.Instance).First(m=>m.Name=="Search"&&m.GetParameters().Length==1);
+        var countType=search.GetParameters()[0].ParameterType.GetProperty("InventoryCounts").PropertyType.GetGenericArguments()[1];
+        var ctor=countType.GetConstructors(BindingFlags.Public|BindingFlags.Instance).FirstOrDefault(c=>c.GetParameters().Length==3)??throw new Exception(PhoneChatText.Get("Text0218"));
+        var locationType=ctor.GetParameters()[2].ParameterType;
+        var collected=new Dictionary<uint,(int nq,int hq,int locations)>();
+        var containers=new[]{(id:0u,location:"Inventory"),(1u,"Inventory"),(2u,"Inventory"),(3u,"Inventory"),(1000u,"Equipped"),(3500u,"Armory"),(3200u,"Armory"),(3201u,"Armory"),(3202u,"Armory"),(3203u,"Armory"),(3205u,"Armory"),(3206u,"Armory"),(3207u,"Armory"),(3208u,"Armory"),(3209u,"Armory"),(3300u,"Armory"),(3400u,"Armory"),(4000u,"Saddlebag"),(4001u,"Saddlebag"),(4100u,"Saddlebag"),(4101u,"Saddlebag")};
+        foreach(var entry in containers){
+            var container=manager->GetInventoryContainer((FFXIVClientStructs.FFXIV.Client.Game.InventoryType)entry.Item1);if(container==null||!container->IsLoaded||container->Items==null)continue;
+            int location=Convert.ToInt32(Enum.Parse(locationType,entry.Item2));
+            for(int slot=0;slot<Math.Min(200,container->Size);slot++){
+                var value=container->GetInventorySlot(slot);if(value==null)continue;uint id=value->GetBaseItemId();if(id==0||value->Quantity<=0)continue;
+                collected.TryGetValue(id,out var previous);int count=value->Quantity;
+                collected[id]=(previous.nq+(value->IsHighQuality()?0:count),previous.hq+(value->IsHighQuality()?count:0),previous.locations|location);
+            }
+        }
+        var dictionary=(IDictionary)Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(typeof(uint),countType));
+        foreach(var entry in collected)dictionary.Add(entry.Key,ctor.Invoke(new object[]{entry.Value.nq,entry.Value.hq,Enum.ToObject(locationType,entry.Value.locations)}));
+        return dictionary;
+    }
+    private static object ItemValue(object obj,string name)
+    {
+        if(obj==null)return null;
+        var property=obj.GetType().GetProperty(name,BindingFlags.Public|BindingFlags.Instance)??obj.GetType().GetInterfaces().Where(t=>t.IsPublic||t.IsNestedPublic).Select(t=>t.GetProperty(name)).FirstOrDefault(p=>p!=null);
+        return property?.GetValue(obj);
+    }
+    private static bool ItemBool(object obj,string name)=>ItemValue(obj,name) is true;
+    private static string ItemString(object obj,string name)=>ItemValue(obj,name)?.ToString()??"";
+    private static uint ItemUInt(object obj,string name)=>uint.TryParse(ItemString(obj,name),out var value)?value:0;
+    private static ulong ItemULong(object obj,string name)=>ulong.TryParse(ItemString(obj,name),out var value)?value:0;
+    private static object[] ItemRows(object obj)=>obj is IEnumerable rows?rows.Cast<object>().ToArray():Array.Empty<object>();
+    private static object ItemCall(object service,string name,params object[] args)
+    {
+        if(service==null)throw new Exception(PhoneChatText.Get("Text0219"));
+        var method=PhoneItemPublicMethods(service).FirstOrDefault(m=>m.Name==name&&m.GetParameters().Length==args.Length&&m.GetParameters().Select((p,i)=>args[i]==null||p.ParameterType.IsInstanceOfType(args[i])).All(v=>v));
+        if(method==null)throw new Exception(PhoneChatText.Get("Text0220")+name);return method.Invoke(service,args);
+    }
+    private static object ItemTryGet(object service,string name,uint id)
+    {
+        var method=PhoneItemPublicMethods(service).FirstOrDefault(m=>m.Name==name&&m.GetParameters().Length==2&&m.GetParameters()[0].ParameterType==typeof(uint)&&m.GetParameters()[1].ParameterType.IsByRef);
+        if(method==null)throw new Exception(PhoneChatText.Get("Text0221"));object[] args={id,null};return method.Invoke(service,args) is true?args[1]:null;
+    }
+    private static Dictionary<uint,object> ItemCounts(object counts)=>ItemRows(counts).ToDictionary(row=>ItemUInt(row,"Key"),row=>ItemValue(row,"Value"));
+    private sealed class PhoneItemQuote
+    {
+        public string owner="",character="";public uint item;public long expires;
+        public Dictionary<string,string> fingerprints=new();
+    }
+    private readonly Dictionary<string,PhoneItemQuote> phoneItemQuotes=new();
+    private sealed class PhoneWorldPriceQuery{public int next;public long lastRequest,touched;public bool force;}
+    private readonly Dictionary<uint,PhoneWorldPriceQuery> phoneWorldPriceQueries=new();
+
+    private string ItemCharacter()=>objects?.LocalPlayer?.EntityId.ToString()??"";
+    private static int ItemNumber(JsonElement root,string name,int fallback,int min,int max)
+    {
+        if(!root.TryGetProperty(name,out var value))return fallback;
+        if(!value.TryGetInt32(out int n)||n<min||n>max)throw new Exception(PhoneChatText.Get("Text0222")+name);return n;
+    }
+    private static bool ItemFlag(JsonElement root,string name)=>root.TryGetProperty(name,out var value)&&value.ValueKind==JsonValueKind.True;
+    private static string ItemText(JsonElement root,string name,string fallback="")=>root.TryGetProperty(name,out var value)&&value.ValueKind==JsonValueKind.String?value.GetString()??fallback:fallback;
+    private static string ItemListingFingerprint(object row)=>string.Join("|",new[]{"ListingID","RetainerID","ItemID","UnitPrice","TotalTax","Quantity","IsHQ","ContainerIndex","TownID","MateriaCount"}.Select(name=>ItemString(row,name)));
+    private static bool ValidItemListing(object row)=>row!=null&&new[]{"ListingID","RetainerID","ItemID","UnitPrice","TotalTax","Quantity","IsHQ","ContainerIndex","TownID","MateriaCount"}.All(name=>row.GetType().GetProperty(name,BindingFlags.Public|BindingFlags.Instance)?.GetMethod?.IsPublic==true)&&ItemULong(row,"ListingID")>0&&ItemUInt(row,"ItemID")>0&&ItemUInt(row,"Quantity")>0;
+    public static bool SameItemListing(object a,object b)=>ValidItemListing(a)&&ValidItemListing(b)&&ItemListingFingerprint(a)==ItemListingFingerprint(b);
+    private object OmniItemCapabilities()
+    {
+        var market=OmniItemsService("OmniToolbox.TreeHouse.InterfaceOperation.IMarketPurchaseService",false);
+        var store=OmniItemsService("OmniToolbox.TreeHouse.InterfaceOperation.IAutoStoreService",false);
+        var npc=OmniItemsService("OmniToolbox.TreeHouse.InterfaceOperation.INPCShopPurchaseService",false);
+        return new{marketConnected=market!=null,marketAvailable=ItemBool(market,"IsAvailable"),canPurchase=ItemBool(market,"IsAvailable")&&ItemBool(market,"CanPurchaseInCurrentArea"),busy=ItemBool(market,"IsBusy"),status=ItemString(market,"StatusKey"),canRetrieve=ItemBool(store,"IsAvailable")&&!ItemBool(store,"IsBusy"),npcAvailable=ItemBool(npc,"IsAvailable")};
+    }
+
+    // Collection state always belongs to the existing game host. Never construct an
+    // independent CollectionService: its unlock state would differ from Omni's UI.
+    private static object PhoneCollectionRow(object entry)=>new{
+        id=ItemUInt(entry,"ID"),key=ItemULong(entry,"Key").ToString(),type=ItemString(entry,"Type"),
+        itemId=ItemUInt(entry,"ItemID"),name=ItemString(entry,"Name"),iconId=ItemUInt(entry,"IconID"),
+        patch=ItemValue(entry,"Patch"),level=ItemUInt(entry,"ItemLevel"),tradable=ItemBool(entry,"CanTrade"),
+        availability=ItemString(entry,"Availability"),unlocked=ItemBool(entry,"IsUnlocked"),known=ItemBool(entry,"IsUnlockStateKnown")
+    };
+
+    private static bool PhoneDisplayWorld(string name,string current,string group)
+    {
+        if(string.IsNullOrWhiteSpace(name))return false;
+        if(name==current)return true;
+        // CN data also contains staging worlds named after a data center with Latin
+        // suffixes. They are not selectable market worlds and must not be queried.
+        return !current.Any(c=>c>='\u4e00'&&c<='\u9fff')||name!=group&&!name.Any(c=>c>='A'&&c<='Z'||c>='a'&&c<='z');
+    }
+    private static (double x,double y) PhoneMapPin(float x,float y,uint sizeFactor)
+    {
+        if(sizeFactor==0||!float.IsFinite(x)||!float.IsFinite(y))throw new Exception(PhoneChatText.Get("Text0223"));
+        return ((x-1d)*sizeFactor/4100d,(y-1d)*sizeFactor/4100d);
+    }
+    private static readonly Dictionary<uint,string> phoneMapImages=new();
+    private object PhoneMap(uint territory,uint mapId,float x,float y)
+    {
+        var row=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Map>().GetRowOrDefault(mapId)??throw new Exception(PhoneChatText.Get("Text0224"));
+        string id=row.Id.ToString();
+        if(id.Length==0||id.Length>80||id.Contains("..")||id.Any(c=>!(char.IsAsciiLetterOrDigit(c)||c=='/'||c=='_')))throw new Exception(PhoneChatText.Get("Text0225"));
+        var pin=PhoneMapPin(x,y,row.SizeFactor);
+        if(!phoneMapImages.TryGetValue(mapId,out string image)){
+            string path="ui/map/"+id+"/"+id.Replace("/","")+"_m.tex";
+            var tex=DalamudServices.DataManager.GetFile<Lumina.Data.Files.TexFile>(path)??throw new Exception(PhoneChatText.Get("Text0226"));
+            int width=tex.Header.Width,height=tex.Header.Height;
+            if(width<=0||height<=0||width>4096||height>4096)throw new Exception(PhoneChatText.Get("Text0227"));
+            var bytes=tex.ImageData;if(bytes.Length<width*height*4)throw new Exception(PhoneChatText.Get("Text0228"));
+            using var bitmap=new System.Drawing.Bitmap(width,height,System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            var locked=bitmap.LockBits(new System.Drawing.Rectangle(0,0,width,height),System.Drawing.Imaging.ImageLockMode.WriteOnly,System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            try{for(int line=0;line<height;line++)System.Runtime.InteropServices.Marshal.Copy(bytes,line*width*4,locked.Scan0+line*locked.Stride,width*4);}finally{bitmap.UnlockBits(locked);}
+            using var scaled=new System.Drawing.Bitmap(1024,1024);using(var graphics=System.Drawing.Graphics.FromImage(scaled)){graphics.Clear(System.Drawing.Color.FromArgb(212,196,154));graphics.DrawImage(bitmap,0,0,1024,1024);}
+            using var output=new MemoryStream();scaled.Save(output,System.Drawing.Imaging.ImageFormat.Jpeg);
+            if(output.Length>650000)throw new Exception(PhoneChatText.Get("Text0229"));
+            image="data:image/jpeg;base64,"+Convert.ToBase64String(output.ToArray());
+            if(phoneMapImages.Count>=8)phoneMapImages.Clear();phoneMapImages[mapId]=image;
+        }
+        var territoryRow=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().GetRowOrDefault(territory);
+        return new{ok=true,mapId,name=territoryRow?.PlaceName.Value.Name.ToString()??row.PlaceName.Value.Name.ToString(),x,y,pinX=pin.x,pinY=pin.y,image};
+    }
+    private object PhoneShopData(uint itemId)
+    {
+        var type=PhoneItemHostType(FindOmniTreeHouseManager(),"OmenTools.Info.Game.ItemSource.ItemSourceInfo")??throw new Exception(PhoneChatText.Get("Text0230"));
+        var method=type.GetMethod("Query",BindingFlags.Public|BindingFlags.Static,null,new[]{typeof(uint)},null)??throw new Exception(PhoneChatText.Get("Text0231"));
+        var result=method.Invoke(null,new object[]{itemId});string state=ItemString(result,"State");
+        if(state=="Building")return null;
+        if(state!="Ready")throw new Exception(state=="NotFound"?PhoneChatText.Get("Text0232"):PhoneChatText.Get("Text0233"));
+        return ItemValue(result,"Data")??throw new Exception(PhoneChatText.Get("Text0234"));
+    }
+    private static string PhoneShopKey(object offer)
+    {
+        var location=ItemValue(offer,"Location");
+        string data=string.Join("|",new[]{ItemString(offer,"ID"),ItemString(offer,"Name"),ItemString(offer,"ShopName"),ItemString(location,"TerritoryID"),ItemString(location,"X"),ItemString(location,"Y"),string.Join(";",ItemRows(ItemValue(offer,"CostInfos")).Select(c=>ItemString(c,"ItemID")+":"+ItemString(c,"Cost")+":"+ItemString(c,"Collectablity")))});
+        return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(data)));
+    }
+    private static bool PhoneNPCOfferBuyable(object[] offers,object offer)
+    {
+        if(offer==null||ItemUInt(offer,"ID")==0)return false;
+        var costs=ItemRows(ItemValue(offer,"CostInfos"));
+        return costs.Length>0&&costs.All(c=>ItemUInt(c,"ItemID")==1&&ItemValue(c,"Collectablity")==null)&&offers.Where(o=>ItemUInt(o,"ID")==ItemUInt(offer,"ID")).Select(PhoneShopKey).Distinct().Count()==1;
+    }
+    private object PhoneNPCOffers(uint itemId)
+    {
+        var data=PhoneShopData(itemId);
+        if(data==null)return new{ok=true,pending=true,offers=Array.Empty<object>(),capabilities=OmniItemCapabilities()};
+        var offers=ItemRows(ItemValue(data,"NPCInfos"));
+        return new{ok=true,pending=false,shopType=ItemString(data,"ShopType"),offers=offers.Select(offer=>{
+            var location=ItemValue(offer,"Location");uint territory=ItemUInt(location,"TerritoryID");
+            var row=territory==0?null:DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().GetRowOrDefault(territory);
+            var costs=ItemRows(ItemValue(offer,"CostInfos"));
+            return new{key=PhoneShopKey(offer),vendorId=ItemUInt(offer,"ID"),name=ItemString(offer,"Name"),shop=ItemString(offer,"ShopName"),
+                location=row?.PlaceName.Value.Name.ToString()??"",x=ItemValue(location,"X"),y=ItemValue(location,"Y"),
+                canBuy=PhoneNPCOfferBuyable(offers,offer),
+                costs=costs.Select(c=>new{itemId=ItemUInt(c,"ItemID"),quantity=ItemUInt(c,"Cost"),name=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>().GetRowOrDefault(ItemUInt(c,"ItemID"))?.Name.ToString()??"货币",collectability=ItemValue(c,"Collectablity")}).ToArray()};
+        }).ToArray(),capabilities=OmniItemCapabilities()};
+    }
+    private sealed class PhoneNPCReview{public string owner,character,key;public uint item,quantity,vendor;public long expires;}
+    private readonly Dictionary<string,PhoneNPCReview> phoneNPCReviews=new();
+    private object PhoneNPCAction(JsonElement root,string action,string auth,uint itemId)
+    {
+        if(action=="npc-offers")return PhoneNPCOffers(itemId);
+        var service=OmniItemsService("OmniToolbox.TreeHouse.InterfaceOperation.INPCShopPurchaseService");
+        if(!ItemBool(service,"IsAvailable")||ItemBool(service,"IsBusy"))throw new Exception(PhoneChatText.Get("Text0235"));
+        foreach(var key in phoneNPCReviews.Where(p=>p.Value.expires<Environment.TickCount64).Select(p=>p.Key).ToArray())phoneNPCReviews.Remove(key);
+        if(action=="npc-prepare"){
+            string offerKey=ItemText(root,"offerKey");uint quantity=(uint)ItemNumber(root,"quantity",1,1,999);
+            var data=PhoneShopData(itemId)??throw new Exception(PhoneChatText.Get("Text0236"));
+            var offers=ItemRows(ItemValue(data,"NPCInfos"));var offer=offers.FirstOrDefault(o=>PhoneShopKey(o)==offerKey)??throw new Exception(PhoneChatText.Get("Text0237"));
+            var costs=ItemRows(ItemValue(offer,"CostInfos"));uint vendor=ItemUInt(offer,"ID");
+            if(!PhoneNPCOfferBuyable(offers,offer))throw new Exception(PhoneChatText.Get("Text0238"));
+            string ticket=Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
+            if(phoneNPCReviews.Count>100)throw new Exception(PhoneChatText.Get("Text0239"));
+            phoneNPCReviews[ticket]=new PhoneNPCReview{owner=auth,character=ItemCharacter(),key=offerKey,item=itemId,quantity=quantity,vendor=vendor,expires=Environment.TickCount64+30000};
+            return new{ok=true,ticket,name=ItemString(ItemTryGet(OmniItemsService("OmniToolbox.Items.ItemDataService"),"TryGet",itemId),"Name"),vendor=ItemString(offer,"Name"),shop=ItemString(offer,"ShopName"),quantity,total=costs.Aggregate(0UL,(sum,c)=>sum+ItemUInt(c,"Cost")*(ulong)quantity).ToString()};
+        }
+        if(action=="npc-confirm"){
+            string ticket=ItemText(root,"ticket");
+            if(!phoneNPCReviews.TryGetValue(ticket,out var review)||review.expires<Environment.TickCount64||review.owner!=auth||review.character!=ItemCharacter()||review.item!=itemId)throw new Exception(PhoneChatText.Get("Text0240"));
+            phoneNPCReviews.Remove(ticket);
+            var data=PhoneShopData(itemId)??throw new Exception(PhoneChatText.Get("Text0241"));
+            var offers=ItemRows(ItemValue(data,"NPCInfos"));
+            if(!PhoneNPCOfferBuyable(offers,offers.FirstOrDefault(o=>ItemUInt(o,"ID")==review.vendor&&PhoneShopKey(o)==review.key)))throw new Exception(PhoneChatText.Get("Text0242"));
+            if(ItemCall(service,"RequestPurchase",itemId,review.quantity,review.vendor) is not true)throw new Exception(PhoneChatText.Get("Text0243"));
+            return new{ok=true,accepted=true,status="商店购买请求已交给Omni，请查看游戏中的实际结果",capabilities=OmniItemCapabilities()};
+        }
+        throw new Exception(PhoneChatText.Get("Text0244"));
+    }
+
+    private static bool PhoneCollectionMatchesUnlock(object entry,int filter)=>filter switch{
+        0=>true,1=>ItemBool(entry,"IsUnlockStateKnown")&&ItemBool(entry,"IsUnlocked"),
+        2=>ItemBool(entry,"IsUnlockStateKnown")&&!ItemBool(entry,"IsUnlocked"),3=>!ItemBool(entry,"IsUnlockStateKnown"),_=>false};
+    private object PhoneCollectionSource(object source,int index){
+        var location=ItemValue(source,"Location");uint territory=ItemUInt(location,"TerritoryID");
+        var row=territory==0?null:DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().GetRowOrDefault(territory);
+        return new{index,category=ItemString(source,"Category"),description=ItemString(source,"Description"),detail=ItemString(source,"Detail"),
+            location,locationName=row?.PlaceName.Value.Name.ToString()??"",canMap=location!=null&&row?.Map.RowId>0,targetItemId=ItemUInt(source,"TargetItemID")};
+    }
+    private static object PhoneCollectionFilter(Type type,Dictionary<string,object> values)
+    {
+        var ctor=type.GetConstructors(BindingFlags.Public|BindingFlags.Instance).OrderByDescending(c=>c.GetParameters().Length).FirstOrDefault()??throw new Exception(PhoneChatText.Get("Text0245"));
+        var args=ctor.GetParameters().Select(p=>values.TryGetValue(p.Name??"",out var value)?value:throw new Exception(PhoneChatText.Get("Text0246")+p.Name)).ToArray();
+        return ctor.Invoke(args);
+    }
+    private object OmniCollectionsAction(JsonElement root,string action)
+    {
+        var service=OmniItemsService("OmniToolbox.Collections.CollectionService");
+        var get=PhoneItemPublicMethods(service).FirstOrDefault(m=>m.Name=="Get"&&m.GetParameters().Length==1)??throw new Exception(PhoneChatText.Get("Text0247"));
+        var type=get.GetParameters()[0].ParameterType;string name=ItemText(root,"type","Equipment");
+        if(!Enum.GetNames(type).Contains(name,StringComparer.Ordinal))throw new Exception(PhoneChatText.Get("Text0248"));
+        var selectedType=Enum.Parse(type,name);
+        ItemCall(service,"MarkVisible");
+        if(action=="collection-search"){
+            string text=ItemText(root,"text").Trim();if(text.Length>100)throw new Exception(PhoneChatText.Get("Text0249"));
+            int page=ItemNumber(root,"page",0,0,10000),category=ItemNumber(root,"category",0,0,9),sub=ItemNumber(root,"subcategory",0,0,1000);
+            var method=PhoneItemPublicMethods(service).FirstOrDefault(m=>m.Name=="Search"&&m.GetParameters().Length==1)??throw new Exception(PhoneChatText.Get("Text0250"));
+            var filterType=method.GetParameters()[0].ParameterType;
+            var categoryType=filterType.GetProperty("EquipmentCategory").PropertyType;var main=Enum.ToObject(categoryType,category);
+            var options=ItemRows(ItemCall(OmniItemsService("OmniToolbox.Items.ItemCategoryMap"),"Get",main));
+            var subtype=sub==0?Activator.CreateInstance(filterType.GetProperty("EquipmentSubcategory").PropertyType,"全部",main,0u,0u):sub<=options.Length?options[sub-1]:throw new Exception(PhoneChatText.Get("Text0251"));
+            var favorites=new HashSet<ulong>();
+            if(root.TryGetProperty("favorites",out var fav)){
+                if(fav.ValueKind!=JsonValueKind.Array||fav.GetArrayLength()>5000)throw new Exception(PhoneChatText.Get("Text0252"));
+                foreach(var key in fav.EnumerateArray()){if(key.ValueKind!=JsonValueKind.String||!ulong.TryParse(key.GetString(),out ulong id))throw new Exception(PhoneChatText.Get("Text0253"));favorites.Add(id);}
+            }
+            var patches=new HashSet<int>();
+            if(root.TryGetProperty("patches",out var patchesJson)){
+                if(patchesJson.ValueKind!=JsonValueKind.Array||patchesJson.GetArrayLength()>20)throw new Exception(PhoneChatText.Get("Text0254"));
+                foreach(var patch in patchesJson.EnumerateArray()){if(!patch.TryGetInt32(out int n)||n<1||n>20)throw new Exception(PhoneChatText.Get("Text0254"));patches.Add(n);}
+            }
+            var sourceEnum=filterType.GetProperty("SourceCategories").PropertyType.GetGenericArguments()[0];
+            var sources=Activator.CreateInstance(typeof(HashSet<>).MakeGenericType(sourceEnum));
+            string source=ItemText(root,"source");
+            if(source.Length>0){if(!Enum.GetNames(sourceEnum).Contains(source,StringComparer.Ordinal))throw new Exception(PhoneChatText.Get("Text0255"));sources.GetType().GetMethod("Add").Invoke(sources,new[]{Enum.Parse(sourceEnum,source)});}
+            var defaultsType=PhoneItemHostType(FindOmniTreeHouseManager(),"OmniToolbox.Config.CollectionConfig");
+            var defaults=defaultsType==null?null:Activator.CreateInstance(defaultsType);
+            var levels=PhoneItemSearchLevels(root,defaults==null?1:(int)ItemUInt(defaults,"ItemLevelMin"),defaults==null?999:(int)ItemUInt(defaults,"ItemLevelMax"));
+            var values=new Dictionary<string,object>(StringComparer.OrdinalIgnoreCase){
+                {"Text",text},{"SelectedType",selectedType},{"SearchAllTypes",ItemFlag(root,"allTypes")},{"Favorites",favorites},{"FavoritesOnly",ItemFlag(root,"favoritesOnly")},
+                {"UnlockFilter",0},{"MarketFilter",0},{"PatchMajors",patches},{"SourceCategories",sources},
+                {"EquipmentCategory",main},{"EquipmentSubcategory",subtype},{"BlindBoxItemID",(uint)ItemNumber(root,"blindBoxItemId",0,0,2000000)},
+                {"GlamourDresserOnly",ItemFlag(root,"dresserOnly")},{"ArmoireOnly",ItemFlag(root,"armoireOnly")},{"ItemLevelMin",levels.min},{"ItemLevelMax",levels.max},{"SameMainModelOnly",ItemFlag(root,"sameModel")}
+            };
+            var results=ItemRows(ItemCall(service,"Search",PhoneCollectionFilter(filterType,values)));
+            int unlock=ItemNumber(root,"unlock",0,0,3),market=ItemNumber(root,"market",0,0,3);
+            results=results.Where(e=>PhoneCollectionMatchesUnlock(e,unlock)&&(market==0||market==1&&ItemBool(e,"CanTrade")||market==2&&!ItemBool(e,"CanTrade")||market==3&&ItemString(e,"Availability")=="Purchasable")).ToArray();
+            var progress=ItemCall(service,"GetProgress",selectedType);
+            int progressValue(string field)=>Convert.ToInt32(progress.GetType().GetField(field)?.GetValue(progress)??0);
+            const int size=60;page=Math.Min(page,Math.Max(0,(results.Length-1)/size));
+            return new{ok=true,dataSource="host-shared",type=name,types=Enum.GetNames(type),page,pageSize=size,total=results.Length,
+                progress=new{unlocked=progressValue("Item1"),total=progressValue("Item2")},
+                sources=Enum.GetNames(sourceEnum),subcategories=options.Select((o,i)=>new{index=i+1,label=ItemString(o,"Label")}).ToArray(),
+                rows=results.Skip(page*size).Take(size).Select(PhoneCollectionRow).ToArray()};
+        }
+        string entryKey=ItemText(root,"key");if(!ulong.TryParse(entryKey,out _))throw new Exception(PhoneChatText.Get("Text0256"));
+        var entry=ItemRows(ItemCall(service,"Get",selectedType)).FirstOrDefault(e=>ItemULong(e,"Key").ToString()==entryKey)??throw new Exception(PhoneChatText.Get("Text0257"));
+        uint itemId=ItemUInt(entry,"ItemID");
+        if(action=="collection-detail"){
+            var data=OmniItemsService("OmniToolbox.Items.ItemDataService");var inventory=OmniItemsService("OmniToolbox.Items.PlayerInventoryService",false);
+            var detail=itemId==0?null:ItemTryGet(data,"TryGetDetail",itemId);
+            var counts=itemId==0?new Dictionary<uint,object>():ItemCounts(PhoneItemCounts(inventory,data,false));counts.TryGetValue(itemId,out var owned);
+            object setPiece(object item){uint id=ItemUInt(item,"ID");return new{id,name=ItemString(item,"Name"),unlocked=ItemCall(service,"IsItemUnlocked",id) is true};}
+            var sets=ItemRows(ItemValue(detail,"ContainingSets")).Select(set=>new{name=ItemString(ItemValue(set,"SetItem"),"Name"),itemId=ItemUInt(ItemValue(set,"SetItem"),"ID"),items=ItemRows(ItemValue(set,"Items")).Select(setPiece).ToArray()}).ToList();
+            if(sets.Count==0&&ItemRows(ItemValue(detail,"SetItemIds")).Length>0){
+                var pieces=ItemRows(ItemValue(detail,"SetItemIds")).Select(id=>ItemTryGet(data,"TryGet",Convert.ToUInt32(id))).Where(i=>i!=null).Select(setPiece).ToArray();
+                sets.Add(new{name=ItemString(entry,"Name"),itemId,items=pieces});
+            }
+            var preview=OmniItemsService("OmniToolbox.TreePublic.ItemPreview",false);
+            return new{ok=true,entry=PhoneCollectionRow(entry),description=ItemString(entry,"Description"),detail=ItemString(entry,"Detail"),
+                item=itemId==0?null:ReadItem(itemId),owned=new{total=ItemUInt(owned,"Total"),locations=ItemString(owned,"Locations"),partial=inventory==null},
+                sets,sources=ItemRows(ItemValue(entry,"Sources")).Select(PhoneCollectionSource).ToArray(),
+                canPreview=preview!=null&&ItemCall(preview,"CanPreview",entry) is true};
+        }
+        if(action=="collection-map"){
+            var sources=ItemRows(ItemValue(entry,"Sources"));int index=ItemNumber(root,"sourceIndex",-1,0,10000);
+            if(index<0||index>=sources.Length)throw new Exception(PhoneChatText.Get("Text0258"));
+            var location=ItemValue(sources[index],"Location")??throw new Exception(PhoneChatText.Get("Text0259"));
+            uint territory=ItemUInt(location,"TerritoryID");var row=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().GetRowOrDefault(territory);
+            if(row==null||row.Value.Map.RowId==0)throw new Exception(PhoneChatText.Get("Text0260"));
+            return PhoneMap(territory,row.Value.Map.RowId,Convert.ToSingle(ItemValue(location,"X")),Convert.ToSingle(ItemValue(location,"Y")));
+        }
+        if(action=="collection-preview"){
+            var preview=OmniItemsService("OmniToolbox.TreePublic.ItemPreview");
+            if(ItemCall(preview,"CanPreview",entry) is not true)throw new Exception(PhoneChatText.Get("Text0261"));
+            if(ItemCall(preview,"Preview",entry) is not true)throw new Exception(PhoneChatText.Get("Text0262"));
+            return new{ok=true,status="已在游戏内打开预览"};
+        }
+        throw new Exception(PhoneChatText.Get("Text0263"));
+    }
+
+    private object OmniItemsAction(JsonElement root,string auth)
+    {
+        if(!Authorized(auth))throw new Exception(PhoneChatText.Get("Text0042"));
+        if(objects?.LocalPlayer==null)throw new Exception(PhoneChatText.Get("Text0264"));
+        foreach(var key in phoneItemQuotes.Where(p=>p.Value.expires<Environment.TickCount64).Select(p=>p.Key).ToArray())phoneItemQuotes.Remove(key);
+        string action=ItemText(root,"action");
+        if(action=="diagnostics"){var manager=FindOmniTreeHouseManager();return new{ok=true,hostFound=manager!=null,publicHost=manager?.GetType().FullName,hostContext=manager==null?"":System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(manager.GetType().Assembly)?.Name,marketInterfaceContext=System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(PhoneItemHostType(manager,"OmniToolbox.TreeHouse.InterfaceOperation.IMarketPurchaseService")?.Assembly??typeof(PhoneChat).Assembly)?.Name,hasPublicGetter=manager?.GetType().GetMethods(BindingFlags.Public|BindingFlags.Instance).Any(m=>m.Name=="GetService"&&m.IsGenericMethodDefinition)==true,capabilities=OmniItemCapabilities(),ownedReadServices=phoneItemReadServices.Keys.ToArray(),registeredServiceTypes=PhoneItemRegisteredServices(manager).Select(service=>service.GetType().FullName).ToArray()};}
+        if(action.StartsWith("collection-",StringComparison.Ordinal))return OmniCollectionsAction(root,action);
+        var data=OmniItemsService("OmniToolbox.Items.ItemDataService");
+        var inventory=OmniItemsService("OmniToolbox.Items.PlayerInventoryService",false);
+        if(action=="search"){
+            string text=ItemText(root,"text").Trim();if(text.Length>100)throw new Exception(PhoneChatText.Get("Text0249"));
+            int page=ItemNumber(root,"page",0,0,10000),category=ItemNumber(root,"category",0,0,9),sub=ItemNumber(root,"subcategory",0,0,1000);
+            var categories=OmniItemsService("OmniToolbox.Items.ItemCategoryMap");
+            var filterType=data.GetType().GetMethods(BindingFlags.Public|BindingFlags.Instance).FirstOrDefault(m=>m.Name=="Search"&&m.GetParameters().Length==1)?.GetParameters()[0].ParameterType??throw new Exception(PhoneChatText.Get("Text0265"));
+            var categoryType=filterType.GetProperty("Category")?.PropertyType??throw new Exception(PhoneChatText.Get("Text0266"));
+            var main=Enum.ToObject(categoryType,category);var options=ItemRows(ItemCall(categories,"Get",main));
+            var subtype=sub==0?Activator.CreateInstance(filterType.GetProperty("Subcategory").PropertyType,"全部",main,0u,0u):sub<=options.Length?options[sub-1]:throw new Exception(PhoneChatText.Get("Text0267"));
+            var favorites=new HashSet<uint>();
+            if(root.TryGetProperty("favorites",out var fav)){if(fav.ValueKind!=JsonValueKind.Array||fav.GetArrayLength()>5000)throw new Exception(PhoneChatText.Get("Text0252"));foreach(var id in fav.EnumerateArray()){if(!id.TryGetUInt32(out uint value)||value==0)throw new Exception(PhoneChatText.Get("Text0268"));favorites.Add(value);}}
+            var rawCounts=PhoneItemCounts(inventory,data,ItemFlag(root,"personal"));var counts=ItemCounts(rawCounts);
+            var defaultsType=PhoneItemHostType(FindOmniTreeHouseManager(),"OmniToolbox.Config.ItemConfig");
+            var defaults=defaultsType==null?null:Activator.CreateInstance(defaultsType);
+            var levels=PhoneItemSearchLevels(root,defaults==null?1:(int)ItemUInt(defaults,"ItemLevelMin"),defaults==null?999:(int)ItemUInt(defaults,"ItemLevelMax"));
+            var filter=Activator.CreateInstance(filterType);
+            var values=new Dictionary<string,object>{{"Text",text},{"Category",main},{"Subcategory",subtype},{"Favorites",favorites},{"InventoryCounts",rawCounts},{"OnlyOwned",ItemFlag(root,"owned")},{"FavoritesOnly",ItemFlag(root,"favoritesOnly")},{"MarketFilter",0},{"SameMainModelOnly",false},{"DyeFilter",0},{"Locations",Enum.ToObject(filterType.GetProperty("Locations").PropertyType,ItemNumber(root,"locations",0,0,4095))},{"PatchMajors",new HashSet<int>()},{"ItemLevelMin",levels.min},{"ItemLevelMax",levels.max}};
+            foreach(var value in values){var property=filterType.GetProperty(value.Key,BindingFlags.Public|BindingFlags.Instance);if(property?.SetMethod?.IsPublic!=true)throw new Exception(PhoneChatText.Get("Text0269")+value.Key);property.SetValue(filter,value.Value);}
+            int marketFilter=ItemNumber(root,"marketFilter",0,0,2);var results=ItemRows(ItemCall(data,"Search",filter)).Where(row=>marketFilter==0||ItemBool(row,"IsTradable")==(marketFilter==1)).ToArray();const int size=50;page=Math.Min(page,Math.Max(0,(results.Length-1)/size));
+            var sources=OmniItemsService("OmniToolbox.Collections.CollectionSourceService",false);
+            var rows=results.Skip(page*size).Take(size).Select(item=>{uint id=ItemUInt(item,"ID");counts.TryGetValue(id,out var count);return new{id,name=ItemString(item,"Name"),iconId=ItemUInt(item,"IconID"),level=ItemUInt(item,"Level"),category=ItemString(item,"Category"),tradable=ItemBool(item,"IsTradable"),patch=ItemValue(item,"Patch"),quantity=ItemUInt(count,"Total"),nq=ItemUInt(count,"NQ"),hq=ItemUInt(count,"HQ"),locations=ItemString(count,"Locations"),availability=sources==null?"":ItemCall(sources,"GetItemAvailability",id)?.ToString(),sources=sources==null?Array.Empty<string>():ItemRows(ItemCall(sources,"GetItemSources",id)).Take(2).Select(source=>ItemString(source,"Description")).ToArray()};}).ToArray();
+            return new{ok=true,page,pageSize=size,total=results.Length,warning=inventory==null?"持有数量来自当前角色已加载的游戏库存":"",dataSource=phoneItemReadServices.Values.Any(service=>ReferenceEquals(service,data))?"module-readonly":"host-shared",normalizedLevels=new{min=levels.min,max=levels.max},subcategories=options.Select((value,index)=>new{index=index+1,label=ItemString(value,"Label")}).ToArray(),rows,capabilities=OmniItemCapabilities()};
+        }
+        uint itemId=(uint)ItemNumber(root,"itemId",0,1,2000000);var itemData=ItemTryGet(data,"TryGet",itemId)??throw new Exception(PhoneChatText.Get("Text0270"));
+        if(action is "npc-offers" or "npc-prepare" or "npc-confirm")return PhoneNPCAction(root,action,auth,itemId);
+        if(action=="detail"){
+            var counts=ItemCounts(PhoneItemCounts(inventory,data,false));counts.TryGetValue(itemId,out var owned);
+            var sources=OmniItemsService("OmniToolbox.Collections.CollectionSourceService",false);
+            var detail=ItemTryGet(data,"TryGetDetail",itemId);
+            return new{ok=true,item=ReadItem(itemId),effects=ItemValue(detail,"Effects"),tradable=ItemBool(itemData,"IsTradable"),patch=ItemValue(itemData,"Patch"),owned=new{total=ItemUInt(owned,"Total"),nq=ItemUInt(owned,"NQ"),hq=ItemUInt(owned,"HQ"),locations=ItemString(owned,"Locations")+(inventory==null?"（当前已加载库存）":"")},sources=sources==null?Array.Empty<object>():ItemRows(ItemCall(sources,"GetItemSources",itemId)).Select(source=>(object)new{category=ItemString(source,"Category"),sourceId=ItemUInt(source,"SourceID"),description=ItemString(source,"Description"),detail=ItemString(source,"Detail"),location=ItemValue(source,"Location")}).ToArray(),capabilities=OmniItemCapabilities()};
+        }
+        if(action=="prices"){
+            var prices=OmniItemsService("OmniToolbox.Market.MarketPriceService");
+            var sheet=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.World>();
+            var current=sheet.GetRow(objects.LocalPlayer.CurrentWorld.RowId);if(current.DataCenter.RowId==0)current=sheet.GetRow(objects.LocalPlayer.HomeWorld.RowId);
+            if(current.DataCenter.RowId==0)throw new Exception(PhoneChatText.Get("Text0271"));
+            // Chinese worlds can have IsPublic=false. Derive the actual region from
+            // the logged-in world instead of discarding them with the global flag.
+            var worlds=sheet.Where(w=>w.DataCenter.RowId>0&&w.DataCenter.Value.Region.RowId==current.DataCenter.Value.Region.RowId&&PhoneDisplayWorld(w.Name.ToString(),current.Name.ToString(),w.DataCenter.Value.Name.ToString()))
+                .OrderBy(w=>w.DataCenter.RowId).ThenBy(w=>w.RowId).ToArray();
+            string world=ItemText(root,"world",current.Name.ToString());if(world.Length>60||world.Any(char.IsControl)||!worlds.Any(w=>w.Name.ToString()==world))throw new Exception(PhoneChatText.Get("Text0272"));
+            bool refresh=ItemFlag(root,"refresh");long now=Environment.TickCount64;
+            if(!phoneWorldPriceQueries.TryGetValue(itemId,out var query)||now-query.touched>120000){
+                foreach(var key in phoneWorldPriceQueries.Where(p=>now-p.Value.touched>120000).Select(p=>p.Key).ToArray())phoneWorldPriceQueries.Remove(key);
+                if(phoneWorldPriceQueries.Count>=100)phoneWorldPriceQueries.Remove(phoneWorldPriceQueries.OrderBy(p=>p.Value.touched).First().Key);
+                phoneWorldPriceQueries[itemId]=query=new PhoneWorldPriceQuery();
+            }
+            if(refresh){query.next=0;query.force=true;}query.touched=now;
+            ItemCall(prices,refresh?"Refresh":"Request",itemId);
+            ItemCall(prices,"RequestDetails",itemId,world,refresh);
+            int batch=Math.Min(4,worlds.Length-query.next);
+            if(batch>0&&(query.lastRequest==0||now-query.lastRequest>=1000)){
+                foreach(var server in worlds.Skip(query.next).Take(batch))ItemCall(prices,"RequestWorldPrice",itemId,server.Name.ToString(),query.force);
+                query.next+=batch;query.lastRequest=now;if(query.next>=worlds.Length)query.force=false;
+            }
+            var grid=worlds.Select(server=>{var price=ItemCall(prices,"GetWorldPrice",itemId,server.Name.ToString());return new{id=server.RowId,name=server.Name.ToString(),group=server.DataCenter.Value.Name.ToString(),nq=price==null?(uint?)null:ItemUInt(price,"NQPrice"),hq=price==null?(uint?)null:ItemUInt(price,"HQPrice")};}).ToArray();
+            bool gridPending=query.next<worlds.Length||grid.Any(p=>p.nq==null&&p.hq==null)&&now-query.lastRequest<10000;
+            return new{ok=true,world,currentWorld=current.Name.ToString(),summary=ItemCall(prices,"Get",itemId),details=ItemCall(prices,"GetDetails",itemId,world),pending=ItemCall(prices,"IsPricePending",itemId) is true||ItemCall(prices,"IsDetailsPending",itemId,world) is true||gridPending,worlds=worlds.Select(w=>w.Name.ToString()).ToArray(),worldGrid=grid,gridPending,capabilities=OmniItemCapabilities()};
+        }
+        var market=OmniItemsService("OmniToolbox.TreeHouse.InterfaceOperation.IMarketPurchaseService",false);
+        if(action=="market-search"){
+            if(market==null)throw new Exception(PhoneChatText.Get("Text0273"));
+            if(!ItemBool(market,"IsAvailable"))throw new Exception(PhoneChatText.Get("Text0274"));
+            if(ItemBool(market,"IsBusy"))throw new Exception(PhoneChatText.Get("Text0275"));
+            if(ItemCall(market,"RequestSearch",itemId) is not true)throw new Exception(PhoneChatText.Get("Text0276"));
+            return new{ok=true,accepted=true,status=ItemString(market,"StatusKey"),capabilities=OmniItemCapabilities()};
+        }
+        if(action=="market-read"){
+            if(market==null)throw new Exception(PhoneChatText.Get("Text0273"));
+            bool matches=market!=null&&ItemUInt(market,"SearchItemID")==itemId;
+            return new{ok=true,itemId,listings=matches?ItemRows(ItemValue(market,"Listings")).Select(row=>(object)new{id=ItemString(row,"ListingID"),itemId=ItemUInt(row,"ItemID"),unitPrice=ItemUInt(row,"UnitPrice"),tax=ItemUInt(row,"TotalTax"),quantity=ItemUInt(row,"Quantity"),hq=ItemBool(row,"IsHQ"),retainer=ItemString(row,"RetainerName"),total=((ulong)ItemUInt(row,"UnitPrice")*ItemUInt(row,"Quantity")+ItemUInt(row,"TotalTax")).ToString()}).ToArray():Array.Empty<object>(),history=matches?ItemRows(ItemValue(market,"History")):Array.Empty<object>(),matches,capabilities=OmniItemCapabilities()};
+        }
+        if(action=="prepare-buy"){
+            if(!ItemBool(market,"IsAvailable")||!ItemBool(market,"CanPurchaseInCurrentArea")||ItemBool(market,"IsBusy")||ItemUInt(market,"SearchItemID")!=itemId)throw new Exception(PhoneChatText.Get("Text0277"));
+            if(!root.TryGetProperty("listingIds",out var ids)||ids.ValueKind!=JsonValueKind.Array||ids.GetArrayLength()<1||ids.GetArrayLength()>100)throw new Exception(PhoneChatText.Get("Text0278"));
+            var selected=ids.EnumerateArray().Select(v=>ulong.TryParse(v.GetString(),out var id)?id:0).ToArray();if(selected.Any(id=>id==0)||selected.Distinct().Count()!=selected.Length)throw new Exception(PhoneChatText.Get("Text0279"));
+            var available=ItemRows(ItemValue(market,"Listings"));var rows=selected.Select(id=>available.FirstOrDefault(row=>ItemULong(row,"ListingID")==id&&ItemUInt(row,"ItemID")==itemId)??throw new Exception(PhoneChatText.Get("Text0280"))).ToArray();
+            if(rows.Any(row=>!ValidItemListing(row)))throw new Exception(PhoneChatText.Get("Text0281"));
+            ulong total=0,quantity=0;checked{foreach(var row in rows){total+=(ulong)ItemUInt(row,"UnitPrice")*ItemUInt(row,"Quantity")+ItemUInt(row,"TotalTax");quantity+=ItemUInt(row,"Quantity");}}
+            string ticket=Guid.NewGuid().ToString("N");if(phoneItemQuotes.Count>=20)throw new Exception(PhoneChatText.Get("Text0282"));
+            phoneItemQuotes[ticket]=new PhoneItemQuote{owner=auth,character=ItemCharacter(),item=itemId,fingerprints=rows.ToDictionary(row=>ItemString(row,"ListingID"),ItemListingFingerprint),expires=Environment.TickCount64+30000};
+            return new{ok=true,ticket,itemId,name=ItemString(itemData,"Name"),total=total.ToString(),quantity=quantity.ToString(),count=rows.Length,expiresIn=30};
+        }
+        if(action=="confirm-buy"){
+            string ticket=ItemText(root,"ticket");if(!phoneItemQuotes.TryGetValue(ticket,out var quote)||!Equal(quote.owner,auth)||quote.item!=itemId||quote.character!=ItemCharacter()||quote.expires<Environment.TickCount64)throw new Exception(PhoneChatText.Get("Text0283"));
+            phoneItemQuotes.Remove(ticket);
+            var available=ItemRows(ItemValue(market,"Listings"));var rows=available.Where(row=>ValidItemListing(row)&&quote.fingerprints.TryGetValue(ItemString(row,"ListingID"),out var fingerprint)&&fingerprint==ItemListingFingerprint(row)).ToArray();
+            if(!ItemBool(market,"IsAvailable")||!ItemBool(market,"CanPurchaseInCurrentArea")||ItemBool(market,"IsBusy")||ItemUInt(market,"SearchItemID")!=itemId||rows.Length!=quote.fingerprints.Count)throw new Exception(PhoneChatText.Get("Text0284"));
+            var method=PhoneItemPublicMethods(market).FirstOrDefault(m=>m.Name=="RequestPurchaseListings"&&m.GetParameters().Length==2)??throw new Exception(PhoneChatText.Get("Text0285"));
+            var listType=method.GetParameters()[1].ParameterType.GetGenericArguments().Single();var typed=Array.CreateInstance(listType,rows.Length);for(int i=0;i<rows.Length;i++)typed.SetValue(rows[i],i);
+            if(method.Invoke(market,new object[]{itemId,typed}) is not true)throw new Exception(PhoneChatText.Get("Text0286"));
+            return new{ok=true,accepted=true,status="购买请求已交给Omni，请查看游戏确认和操作结果",capabilities=OmniItemCapabilities()};
+        }
+        if(action=="retrieve"){
+            var store=OmniItemsService("OmniToolbox.TreeHouse.InterfaceOperation.IAutoStoreService");
+            if(!ItemBool(store,"IsAvailable")||ItemBool(store,"IsBusy")||ItemCall(store,"RequestRetrieve",itemId) is not true)throw new Exception(PhoneChatText.Get("Text0287"));
+            return new{ok=true,accepted=true,status="取货请求已交给Omni，请查看游戏结果"};
+        }
+        if(action=="npc-browser"){
+            var shop=OmniItemsService("OmniToolbox.TreeHouse.InterfaceOperation.INPCShopPurchaseService");
+            if(!ItemBool(shop,"IsAvailable")||ItemBool(shop,"IsBusy")||ItemCall(shop,"OpenBrowser") is not true)throw new Exception(PhoneChatText.Get("Text0288"));
+            return new{ok=true,status="已在电脑Omni打开商店购买窗口"};
+        }
+        throw new Exception(PhoneChatText.Get("Text0289"));
+    }
+    private object ReadItem(uint id){if(id==0)throw new Exception(PhoneChatText.Get("Text0290"));var item=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>().GetRowOrDefault(id)??throw new Exception(PhoneChatText.Get("Text0291"));return new{ok=true,itemId=id,name=item.Name.ToString(),description=item.Description.ToString(),category=item.ItemUICategory.Value.Name.ToString(),jobs=item.ClassJobCategory.Value.Name.ToString(),requiredLevel=item.LevelEquip,level=item.LevelItem.RowId,price=item.PriceLow,stackSize=item.StackSize,icon=GameIconImage(item.Icon)};}
+    private unsafe object ReadCurrencies(){
+        var inventory=FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();var state=FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerState.Instance();var currency=FFXIVClientStructs.FFXIV.Client.Game.CurrencyManager.Instance();if(inventory==null||state==null||currency==null)throw new Exception(PhoneChatText.Get("Text0292"));
+        var items=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();var rows=new List<object>();var used=new HashSet<uint>();
+        void Add(uint id,int tab,string group,uint? amount=null,uint? limit=null,bool retired=false){var item=items.GetRowOrDefault(id);if(item==null||!used.Add(id))return;uint? value=amount??(currency->HasItem(id)?currency->GetItemCount(id):(uint?)null);uint? maximum=limit??(currency->HasItem(id)&&currency->IsItemLimited(id)?currency->GetItemMaxCount(id):(uint?)null);rows.Add(new{itemId=id,name=item.Value.Name.ToString(),iconId=item.Value.Icon,quantity=value,max=maximum,tab,group,retired});}
+        foreach(var item in items){string name=item.Name.ToString();if(name=="金币")Add(item.RowId,0,"金币",inventory->GetGil());else if(name=="金碟币")Add(item.RowId,0,"金碟币",(uint)Math.Max(0,inventory->GetGoldSaucerCoin()));else if(name=="狼印战绩")Add(item.RowId,1,"狼印战绩",inventory->GetWolfMarks(),item.StackSize);else if(name=="同盟徽章")Add(item.RowId,1,"徽章及战利品",inventory->GetAlliedSeals(),item.StackSize);else if(name=="探险币")Add(item.RowId,0,"探险币");else if(name.Contains("军票")&&item.RowId==19u+state->GrandCompany)Add(item.RowId,0,"军票",(uint)Math.Max(0,inventory->GetCompanySeals(state->GrandCompany)),(uint)inventory->GetMaxCompanySeals(state->GrandCompany));}
+        foreach(var row in DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TomestonesItem>()){if(row.Item.RowId==0||row.CurrencyInventorySlot<0)continue;var container=inventory->GetInventoryContainer(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Currency);if(container==null||!container->IsLoaded||row.CurrencyInventorySlot>=container->Size)continue;var slot=container->GetInventorySlot(row.CurrencyInventorySlot);if(slot==null||slot->GetBaseItemId()!=row.Item.RowId)continue;Add(row.Item.RowId,1,"亚拉戈神典石",(uint)Math.Max(0,slot->Quantity),row.Item.Value.StackSize);}
+        foreach(var pair in currency->SpecialItemBucket){uint id=pair.Item1;var item=items.GetRowOrDefault(id);if(item==null)continue;string name=item.Value.Name.ToString();Add(id,id==10307?1:2,id==10307?"徽章及战利品":name.Contains("大地")?"大地使者":"能工巧匠",retired:name.Contains("白票")||name.Contains("黄票")||name.Contains("红票"));}
+        Add(26533,1,"徽章及战利品");Add(26807,1,"危命任务");Add(36656,1,"狼印战绩");Add(28063,2,"天穹街振兴票");
+        foreach(var beast in DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.BeastTribe>().OrderBy(b=>b.DisplayOrder))if(beast.CurrencyItem.RowId>0)Add(beast.CurrencyItem.RowId,beast.Expansion.RowId>=5?4:3,beast.Expansion.Value.Name.ToString());
+        return new{ok=true,section="currency",currencies=rows,warning=rows.Any(r=>Value(r,"quantity")==null)?"部分货币尚未加载，请在游戏数据更新后刷新":""};
+    }
+    private unsafe object ReadCharacterSection(string section)
+    {
+        var player=objects?.LocalPlayer;if(player==null)throw new Exception(PhoneChatText.Get("Text0110"));
+        var state=FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerState.Instance();var ui=FFXIVClientStructs.FFXIV.Client.Game.UI.UIState.Instance();var inventory=FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        if(state==null||!state->IsLoaded||ui==null||inventory==null)throw new Exception(PhoneChatText.Get("Text0293"));
+        if(section=="currency")return ReadCurrencies();
+        if(section is "items" or "armoury" or "saddlebag" or "currency"){
+            var types=section switch{"items"=>new uint[]{0,1,2,3,2004,2001},"armoury"=>new uint[]{3500,3200,3201,3202,3203,3205,3206,3207,3208,3209,3300,3400},"saddlebag"=>state->HasPremiumSaddlebag?new uint[]{4000,4001,4100,4101}:new uint[]{4000,4001},_=>new uint[]{2000,2001}};
+            var order=FFXIVClientStructs.FFXIV.Client.UI.Misc.ItemOrderModule.Instance();
+            var containers=new List<object>();foreach(var id in types){var c=inventory->GetInventoryContainer((FFXIVClientStructs.FFXIV.Client.Game.InventoryType)id);var slots=new List<object>();bool loaded=c!=null&&c->IsLoaded&&c->Items!=null;if(loaded){for(int i=0;i<Math.Clamp(c->Size,0,200);i++){FFXIVClientStructs.FFXIV.Client.UI.Misc.ItemOrderModuleSorter* sorter=order==null?null:id switch{0 or 1 or 2 or 3=>order->InventorySorter,3500=>order->ArmouryMainHandSorter,3200=>order->ArmouryOffHandSorter,3201=>order->ArmouryHeadSorter,3202=>order->ArmouryBodySorter,3203=>order->ArmouryHandsSorter,3205=>order->ArmouryLegsSorter,3206=>order->ArmouryFeetSorter,3207=>order->ArmouryEarsSorter,3208=>order->ArmouryNeckSorter,3209=>order->ArmouryWristsSorter,3300=>order->ArmouryRingsSorter,3400=>order->ArmourySoulCrystalSorter,4000 or 4001=>order->SaddleBagSorter,4100 or 4101=>order->PremiumSaddleBagSorter,_=>null};
+                var source=c;int sourceSlot=i;int displayIndex=id<4?(int)id*35+i:id is 4000 or 4001?((int)id-4000)*35+i:id is 4100 or 4101?((int)id-4100)*35+i:i;
+                if(sorter!=null){if(sorter->SortFunctionIndex!=-1||sorter->PercentComplete!=100)throw new Exception(PhoneChatText.Get("Text0294"));if(displayIndex<sorter->Items.Count){var entry=sorter->Items[displayIndex].Value;if(entry!=null){uint sourceId=id<4?entry->Page:id is 4000 or 4001?4000u+entry->Page:id is 4100 or 4101?4100u+entry->Page:id;source=inventory->GetInventoryContainer((FFXIVClientStructs.FFXIV.Client.Game.InventoryType)sourceId);sourceSlot=entry->Slot;}}}
+                if(source==null||!source->IsLoaded||source->Items==null||sourceSlot<0||sourceSlot>=source->Size)throw new Exception(PhoneChatText.Get("Text0295"));var item=source->GetInventorySlot(sourceSlot);if(item==null)continue;uint itemId=item->GetBaseItemId();var row=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>().GetRowOrDefault(itemId);slots.Add(new{slot=i,itemId,name=row?.Name.ToString()??"",iconId=row?.Icon??0,quantity=item->Quantity,hq=item->IsHighQuality(),condition=item->Condition});}}containers.Add(new{id,loaded,size=loaded?c->Size:0,slots});}
+            return new{ok=true,section,character=player.Name.TextValue,containers,gil=inventory->GetGil()};
+        }
+        if(section=="character"){
+            var stats=new Dictionary<string,int>();foreach(var attribute in Enum.GetValues<FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerAttribute>())stats[attribute.ToString()]=state->GetAttributeByIndex(attribute);
+            var race=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Race>().GetRowOrDefault(state->Race);var tribe=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Tribe>().GetRowOrDefault(state->Tribe);var deity=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.GuardianDeity>().GetRowOrDefault(state->GuardianDeity);
+            var jobs=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ClassJob>().Where(j=>j.RowId>0&&j.ExpArrayIndex>=0&&j.ExpArrayIndex<state->ClassJobLevels.Length).Select(j=>new{id=j.RowId,name=j.Name.ToString(),level=state->ClassJobLevels[j.ExpArrayIndex],role=j.Role,craft=j.DohDolJobIndex>=0}).ToArray();
+            var gear=new List<object>();var equipped=inventory->GetInventoryContainer(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.EquippedItems);if(equipped!=null&&equipped->IsLoaded&&equipped->Items!=null)for(int i=0;i<Math.Min(equipped->Size,14);i++){var slot=equipped->GetInventorySlot(i);if(slot==null)continue;uint id=slot->GetBaseItemId();var item=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>().GetRowOrDefault(id);gear.Add(new{slot=i,itemId=id,name=item?.Name.ToString()??"",iconId=item?.Icon??0,hq=slot->IsHighQuality()});}
+            var reputations=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.BeastTribe>().Where(b=>b.RowId>0&&b.RowId<256).Select(b=>new{name=b.Name.ToString(),iconId=b.IconReputation,expansion=b.Expansion.Value.Name.ToString(),rank=state->GetBeastTribeRank((byte)b.RowId),current=state->GetBeastTribeCurrentReputation((byte)b.RowId),needed=state->GetBeastTribeNeededReputation((byte)b.RowId)}).Where(b=>b.rank>0).ToArray();
+            return new{ok=true,section,name=player.Name.TextValue,world=player.HomeWorld.Value.Name.ToString(),level=state->CurrentLevel,job=state->CurrentClassJobId,itemLevel=ui->CurrentItemLevel,hp=player.CurrentHp,maxHp=player.MaxHp,mp=player.CurrentMp,maxMp=player.MaxMp,attributes=new{strength=stats["Strength"],dexterity=stats["Dexterity"],vitality=stats["Vitality"],intelligence=stats["Intelligence"],mind=stats["Mind"]},stats,jobs,gear,reputations,currentGp=Value(player,"CurrentGp"),maxGp=Value(player,"MaxGp"),currentCp=Value(player,"CurrentCp"),maxCp=Value(player,"MaxCp"),commendations=state->PlayerCommendations,race=state->Sex==0?race?.Masculine.ToString():race?.Feminine.ToString(),tribe=state->Sex==0?tribe?.Masculine.ToString():tribe?.Feminine.ToString(),sex=state->Sex==0?"男":"女",birthday=new{month=state->BirthMonth,day=state->BirthDay},deity=deity?.Name.ToString(),deityIcon=deity?.Icon,company=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.GrandCompany>().GetRowOrDefault(state->GrandCompany)?.Name.ToString(),warning=""};
+        }
+
+        if(section=="mounts"){var rows=new List<object>();foreach(var row in DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Mount>())if(row.RowId>0&&state->IsMountUnlocked(row.RowId))rows.Add(new{id=row.RowId,name=row.Singular.ToString(),iconId=row.Icon});return new{ok=true,section,rows};}
+        if(section=="minions"){var rows=new List<object>();foreach(var row in DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Companion>())if(row.RowId>0&&ui->IsCompanionUnlocked(row.RowId))rows.Add(new{id=row.RowId,name=row.Singular.ToString(),iconId=row.Icon});return new{ok=true,section,rows};}
+
+
+
+
+
+        throw new Exception(PhoneChatText.Get("Text0296"));
+    }
+    private object ReadDirectBoard()
+    {
+        if(objects?.LocalPlayer==null)throw new Exception(PhoneChatText.Get("Text0297"));var selected=DirectAreaSnapshot(directArea,Environment.TickCount64);var filtered=selected.Where(r=>directCategory==0||(directCategory==16?r.category==0:r.category==(1u<<directCategory))).ToArray();int pageSize=20;directPage=Math.Clamp(directPage,0,Math.Max(0,(filtered.Length-1)/pageSize));var page=filtered.Skip(directPage*pageSize).Take(pageSize).ToArray();boardListings=new HashSet<ulong>(page.Select(r=>r.id));
+        return new{ok=true,open=true,source="game-network",warning=directBoardError,viewId=boardView,rows=page.Select(PresentDirectListing).ToArray(),categories=Enumerable.Range(0,17).Select(i=>new{index=i,label=(i==0?selected.Length:selected.Count(r=>r.category==(i==16?0u:1u<<i))).ToString(),selected=directCategory==i,nodes=Array.Empty<object>()}).ToArray(),areaCounts=DirectAreaCounts(Environment.TickCount64),area=directArea,page=filtered.Length==0?"0":$"{directPage*pageSize+1}–{directPage*pageSize+page.Length}",count=filtered.Length.ToString(),canNext=(directPage+1)*pageSize<filtered.Length,canPrevious=directPage>0};
+    }
+    private async Task<object> RecruitmentBoardAction(string action,string view,int index,string auth,CancellationToken ct)
+    {
+        await recruitmentLock.WaitAsync(ct);try{
+            if(action=="open"){boardView=Guid.NewGuid().ToString("N");boardOwner=auth;directArea=directCategory=directPage=0;await RefreshDirectBoard(ct);return await OnGame(ReadDirectBoard);}
+            if(view.Length==0||!Equal(view,boardView)||!Equal(auth,boardOwner))throw new Exception(PhoneChatText.Get("Text0298"));
+            if(action=="close"){await OnGame(()=>{if(recruitmentNativeOpened&&recruitmentView.Length>0&&Equal(recruitmentOwner,boardOwner)&&RecruitmentReady(recruitmentListing))ClickRecruitment("close");return true;});boardView="";boardListings.Clear();return new{ok=true};}
+            if(action=="refresh"){await RefreshDirectBoard(ct);directPage=0;}else if(action=="area"){if(index<0||index>2)throw new Exception(PhoneChatText.Get("Text0299"));directArea=index;directPage=0;await RefreshDirectBoard(ct);}else if(action=="category"){if(index<0||index>16)throw new Exception(PhoneChatText.Get("Text0300"));directCategory=index;directPage=0;}else if(action=="next")directPage++;else if(action=="previous")directPage--;else if(action=="read"){if(Environment.TickCount64-directLastRequest>=15000)await RefreshDirectBoard(ct);}else throw new Exception(PhoneChatText.Get("Text0301"));return await OnGame(ReadDirectBoard);
+        }finally{recruitmentLock.Release();}
+    }
+    private bool recruitmentNativeOpened;private string recruitmentView="",recruitmentOwner="";private ulong recruitmentListing;private readonly SemaphoreSlim recruitmentLock=new(1,1);
+    private readonly SemaphoreSlim glamourFrameSlots=new(2,2);
+    private async Task GlamourFrames(Stream output,string auth,string id,CancellationToken ct)
+    {
+        await output.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/x-phonechat-glamour\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"),ct);
+        string request="frame:"+id;long last=-1,lastStatus=0;
+        while(!ct.IsCancellationRequested&&Authorized(auth)&&PageEnabled("glamour"))
+        {
+            long start=Environment.TickCount64;
+            string json;
+            try{json=DalamudServices.PluginInterface.GetIpcSubscriber<string,string>("Omni.Glamour.FrameCache.V1").InvokeFunc(request);}
+            catch{json="{\"ok\":false,\"error\":\"请更新现有预览模块\"}";}
+            using var document=JsonDocument.Parse(json);var frame=document.RootElement;
+            long serial=frame.TryGetProperty("serial",out var value)?value.GetInt64():-1;
+            if(serial!=last||start-lastStatus>=1000){last=serial;lastStatus=start;byte[] packet=Encoding.UTF8.GetBytes(json);if(packet.Length>1024*1024)throw new IOException(PhoneChatText.Get("Text0302"));using var write=CancellationTokenSource.CreateLinkedTokenSource(ct);write.CancelAfter(2500);await output.WriteAsync(BitConverter.GetBytes(packet.Length),write.Token);await output.WriteAsync(packet,write.Token);await output.FlushAsync(write.Token);}
+            int delay=33-(int)(Environment.TickCount64-start);if(delay>0)await Task.Delay(delay,ct);
+        }
+    }
+
+    private async Task<T> OnGame<T>(Func<T> action)
+    {if(framework==null)throw new Exception(PhoneChatText.Get("Text0072"));var result=new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);var queuedAt=Environment.TickCount64;_ = framework.RunOnFrameworkThread(()=>{try{if(!enabled||listener==null||Environment.TickCount64-queuedAt>4500)throw new Exception(PhoneChatText.Get("Text0303"));result.TrySetResult(action());}catch(Exception e){result.TrySetException(e);}});return await result.Task.WaitAsync(TimeSpan.FromSeconds(5));}
+    private TaskCompletionSource<string> recruitmentFailure;private long recruitmentRequestedAt;
+    public static bool IsRecruitmentFailure(string text)=>text.Contains("无法获取招募者的情报")||text.Contains("招募信息已过时")||text.Contains("招募信息已经过时")||text.Contains("Unable to retrieve",StringComparison.OrdinalIgnoreCase)&&text.Contains("recruit",StringComparison.OrdinalIgnoreCase);
+    private void ObserveRecruitmentFailure(IChatMessage message){var signal=recruitmentFailure;if(signal==null||Environment.TickCount64-recruitmentRequestedAt>10000||!message.LogKind.ToString().Contains("Error",StringComparison.OrdinalIgnoreCase))return;string text=message.Message.TextValue;if(IsRecruitmentFailure(text))signal.TrySetResult(text);}
+    private unsafe bool OpenRecruitment(ulong id)
+    {if(objects?.LocalPlayer==null)throw new Exception(PhoneChatText.Get("Text0141"));var previous=(AddonLookingForGroupDetail*)GetService<IGameGui>("Dalamud.Game.Gui.GameGui")?.GetAddonByName("LookingForGroupDetail",1).Address;if(previous!=null&&previous->IsVisible)previous->Close(true);var agent=AgentLookingForGroup.Instance();return agent!=null&&agent->OpenListing(id);}
+    private static unsafe bool RecruitmentReady(ulong id)
+    {var agent=AgentLookingForGroup.Instance();var addon=(AddonLookingForGroupDetail*)GetService<IGameGui>("Dalamud.Game.Gui.GameGui")?.GetAddonByName("LookingForGroupDetail",1).Address;return agent!=null&&agent->LastViewedListing.ListingId==id&&addon!=null&&addon->IsVisible&&addon->IsReady;}
+    private unsafe object RecruitmentConfirmation()
+    {
+        var agent=AgentLookingForGroup.Instance();var gui=GetService<IGameGui>("Dalamud.Game.Gui.GameGui");
+        var confirm=(AddonSelectYesno*)gui?.GetAddonByName("SelectYesno",1).Address;
+        if(agent==null||agent->LastViewedListing.ListingId!=recruitmentListing||confirm==null||!confirm->IsVisible||agent->JoinConfirmAddonId!=confirm->Id)return null;
+        return new{prompt=RecruitText(confirm->PromptText),addonId=confirm->Id};
+    }
+    private unsafe bool AnswerRecruitment(bool yes)
+    {
+        if(RecruitmentConfirmation()==null)throw new Exception(PhoneChatText.Get("Text0304"));
+        var confirm=(AddonSelectYesno*)GetService<IGameGui>("Dalamud.Game.Gui.GameGui").GetAddonByName("SelectYesno",1).Address;
+        var button=yes?confirm->YesButton:confirm->NoButton;if(button==null||!button->IsEnabled)throw new Exception(PhoneChatText.Get("Text0305"));button->Click();return true;
+    }
+    private static unsafe string RecruitText(AtkTextNode* node)=>node==null?"":Dalamud.Game.Text.SeStringHandling.SeString.Parse(node->NodeText.AsSpan()).TextValue;
+    private static unsafe object[] RecruitParts(AtkTextNode* node)=>node==null?Array.Empty<object>():FormatParts(Dalamud.Game.Text.SeStringHandling.SeString.Parse(node->NodeText.AsSpan()),$"#{node->TextColor.R:x2}{node->TextColor.G:x2}{node->TextColor.B:x2}");
+    private static unsafe string RecruitImage(AtkImageNode* node){if(node==null)return "";try{uint id=node->GetIconID();return id>0?GameIconImage(id):GamePartImage(node->PartsList,node->PartId);}catch{return "";}}
+    private object ReadDirectRecruitment()
+    {
+        var row=FindDirectListing(recruitmentListing,Environment.TickCount64);if(row==null)throw new Exception(PhoneChatText.Get("Text0306"));
+        var listing=JsonSerializer.SerializeToElement(PresentDirectListing(row));string leader=listing.GetProperty("leader").GetString();string world="";try{world=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.World>().GetRow(row.homeWorld).Name.ToString();}catch{}
+        return new{ok=true,open=true,source="game-network",viewId=recruitmentView,listingId=row.id.ToString(),leader,leaderParts=listing.GetProperty("leaderParts"),duty=listing.GetProperty("duty").GetString(),dutyIcon=listing.GetProperty("dutyIcon").GetString(),comment=listing.GetProperty("comment").GetString(),commentParts=listing.GetProperty("commentParts"),location=world,timeLeft=$"剩余{Math.Max(0,(row.expires-Environment.TickCount64)/60000)}分",itemLevel=listing.GetProperty("itemLevel").GetString(),status=$"剩余{Math.Max(0,row.totalSlots-row.filledSlots)}人",slots=listing.GetProperty("slots"),tellTarget=world.Length>0?leader+"@"+world:"",canJoin=row.totalSlots>row.filledSlots,canTell=world.Length>0&&leader.Length>0};
+    }
+    private unsafe object ReadRecruitment()
+    {
+        if(!recruitmentNativeOpened)return ReadDirectRecruitment();if(!RecruitmentReady(recruitmentListing))return new{ok=true,open=false,viewId=recruitmentView,confirmation=RecruitmentConfirmation()};
+        var addon=(AddonLookingForGroupDetail*)GetService<IGameGui>("Dalamud.Game.Gui.GameGui").GetAddonByName("LookingForGroupDetail",1).Address;var detail=AgentLookingForGroup.Instance()->LastViewedListing;
+        var alliances=new List<object>();for(int i=0;i<addon->JoinAllianceButtons.Length;i++){var button=addon->JoinAllianceButtons[i].Value;if(button!=null&&button->OwnerNode!=null&&button->OwnerNode->IsVisible())alliances.Add(new{index=i,name=RecruitText(button->ButtonTextNode),canJoin=button->IsEnabled});}
+        var slots=new List<object>();for(int i=0;i<Math.Min(48,(int)detail.TotalSlots);i++)slots.Add(new{job=(int)detail.Jobs[i],filled=detail.MemberContentIds[i]!=0,flags=detail.SlotFlags[i].ToString()});
+        var world=DalamudServices.DataManager?.GetExcelSheet<Lumina.Excel.Sheets.World>()?.GetRow(detail.HomeWorld).Name.ToString()??"";
+        string tellTarget=world.Length>0?detail.LeaderString+"@"+world:"";
+        return new{ok=true,open=true,tellTarget,alliances,dutyIcon=RecruitImage(addon->LookingForGroupImageNode),leaderParts=RecruitParts(addon->PartyLeaderTextNode),commentParts=RecruitParts(addon->DescriptionTextNode),confirmation=RecruitmentConfirmation(),viewId=recruitmentView,listingId=recruitmentListing.ToString(),leader=RecruitText(addon->PartyLeaderTextNode),duty=RecruitText(addon->DutyNameTextNode),location=RecruitText(addon->LocationTextNode),timeLeft=RecruitText(addon->TimeRemainingTextNode),itemLevel=RecruitText(addon->ItemLevelTextNode),status=RecruitText(addon->StatusTextNode),comment=RecruitText(addon->DescriptionTextNode),categories=addon->CategoriesString.ToString(),slots,canJoin=addon->JoinPartyButton!=null&&addon->JoinPartyButton->OwnerNode!=null&&addon->JoinPartyButton->OwnerNode->IsVisible()&&addon->JoinPartyButton->IsEnabled,canTell=addon->SendTellButton!=null&&addon->SendTellButton->IsEnabled};
+    }
+    private unsafe object ClickRecruitment(string action)
+    {
+        if(!RecruitmentReady(recruitmentListing)){if(action=="close"){recruitmentView="";recruitmentListing=0;return new{ok=true};}throw new Exception(PhoneChatText.Get("Text0307"));}
+        var addon=(AddonLookingForGroupDetail*)GetService<IGameGui>("Dalamud.Game.Gui.GameGui").GetAddonByName("LookingForGroupDetail",1).Address;
+        if(action=="close"){if(RecruitmentConfirmation()!=null)AnswerRecruitment(false);addon->Close(true);recruitmentView="";recruitmentListing=0;return new{ok=true};}
+        var button=action=="join"?addon->JoinPartyButton:action=="tell"?addon->SendTellButton:null;
+        if(action.StartsWith("join:")&&int.TryParse(action[5..],out int party)&&party>=0&&party<addon->JoinAllianceButtons.Length)button=addon->JoinAllianceButtons[party].Value;
+        if(button==null||button->OwnerNode==null||!button->OwnerNode->IsVisible()||!button->IsEnabled)throw new Exception(PhoneChatText.Get("Text0308"));
+        if(button->OwnerNode==null||button->OwnerNode->AtkEventManager.Event==null)throw new Exception(PhoneChatText.Get("Text0309"));
+        button->Click();return new{ok=true,status=action.StartsWith("join")?"已点击游戏参加按钮，请确认游戏提示":"已点击游戏发送悄悄话按钮",detail=ReadRecruitment()};
+    }
+    private async Task<object> RecruitmentAction(string action,long messageId,string view,string auth,CancellationToken ct,string board="",string listing="")
+    {
+        await recruitmentLock.WaitAsync(ct);
         try
         {
-            foreach(var payload in message.Payloads)
+            if(action=="open")
             {
-                if(payload is Dalamud.Game.Text.SeStringHandling.Payloads.UIForegroundPayload foreground)
-                    color=foreground.IsEnabled?"#"+(foreground.RGBA>>8).ToString("x6"):fallback;
-                else if(payload is Dalamud.Game.Text.SeStringHandling.Payloads.TextPayload text)
-                {parts.Add(new{text=text.Text,color});plain.Append(text.Text);}
+                ChatEntry entry;lock(gate)entry=entries.ById(messageId);
+                if(entry?.recruitment?.source=="omni-world"&&!WorldAllowed(auth))throw new Exception(PhoneChatText.Get("Text0310"));
+                string link=entry?.recruitment?.listingId??"";
+                if(board.Length>0&&Equal(board,boardView)&&Equal(auth,boardOwner)&&ulong.TryParse(listing,out var requested)&&boardListings.Contains(requested))link=listing;
+                if(!ulong.TryParse(link,out var id)||id==0)throw new Exception(PhoneChatText.Get("Text0311"));
+                if(FindDirectListing(id,Environment.TickCount64)==null)await RefreshDirectBoard(ct);
+                if(FindDirectListing(id,Environment.TickCount64)==null)throw new Exception(PhoneChatText.Get("Text0312"));
+                recruitmentView=Guid.NewGuid().ToString("N");recruitmentOwner=auth;recruitmentListing=id;recruitmentNativeOpened=false;
+                return await OnGame(ReadDirectRecruitment);
             }
-            return plain.ToString()==message.TextValue?parts.ToArray():Array.Empty<object>();
-        }catch{return Array.Empty<object>();}
+            if(view.Length==0||!Equal(view,recruitmentView)||!Equal(auth,recruitmentOwner))throw new Exception(PhoneChatText.Get("Text0313"));
+            if(action=="refresh")return await OnGame(ReadRecruitment);
+            if(action is not ("join" or "tell" or "close" or "confirm-yes" or "confirm-no")&&!action.StartsWith("join:"))throw new Exception(PhoneChatText.Get("Text0301"));
+            if(action.StartsWith("confirm-")){await OnGame(()=>AnswerRecruitment(action=="confirm-yes"));await Task.Delay(200,ct);return await OnGame(ReadRecruitment);}
+            if(!recruitmentNativeOpened){
+                if(action=="close"){recruitmentView="";recruitmentListing=0;return new{ok=true};}
+                if(action=="tell")return new{ok=true,detail=await OnGame(ReadDirectRecruitment)};
+                if(action.StartsWith("join")){recruitmentFailure=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);recruitmentRequestedAt=Environment.TickCount64;if(!await OnGame(()=>OpenRecruitment(recruitmentListing)))throw new Exception(PhoneChatText.Get("Text0314"));recruitmentNativeOpened=true;var until=DateTime.UtcNow.AddSeconds(8);while(!await OnGame(()=>RecruitmentReady(recruitmentListing))){if(recruitmentFailure.Task.IsCompletedSuccessfully)throw new Exception(recruitmentFailure.Task.Result);if(DateTime.UtcNow>=until)throw new Exception(PhoneChatText.Get("Text0315"));await Task.Delay(80,ct);}}
+            }
+            var clicked=await OnGame(()=>ClickRecruitment(action));
+            if(action.StartsWith("join")){await Task.Delay(200,ct);return new{ok=true,status="游戏参加操作已执行",detail=await OnGame(ReadRecruitment)};}
+            return clicked;
+        }
+        finally{recruitmentFailure=null;recruitmentLock.Release();}
     }
-    private static string ChatColor(string channel)=>channel switch
-    {"悄悄话" or "国服悄悄话"=>"#f0a7d4","小队"=>"#a9d4ff","团队"=>"#ffbe98","部队"=>"#b4e9ee","国服"=>"#8ec1fa","新人"=>"#d7e79b","默语"=>"#c5c5c5","表情"=>"#dec19d",_=>"#e5dfd5"};
+
+    private static object[] FormatParts(Dalamud.Game.Text.SeStringHandling.SeString message,string fallback)
+    {
+        var parts=new List<object>();string color=fallback;uint itemId=0;bool itemHq=false;
+        foreach(var payload in message.Payloads)
+        {
+            if(payload is Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload item){itemId=item.ItemId;itemHq=item.IsHQ;}
+            else if(payload is Dalamud.Game.Text.SeStringHandling.Payloads.RawPayload raw&&raw.Data.AsSpan().SequenceEqual(Dalamud.Game.Text.SeStringHandling.Payloads.RawPayload.LinkTerminator.Data)){itemId=0;itemHq=false;}
+            else if(payload is Dalamud.Game.Text.SeStringHandling.Payloads.UIForegroundPayload foreground)
+                color=foreground.IsEnabled?"#"+(foreground.RGBA>>8).ToString("x6"):fallback;
+            else if(payload is Dalamud.Game.Text.SeStringHandling.Payloads.TextPayload text)
+                parts.Add(new{text=text.Text,color,itemId,itemHq});
+            else if(payload is Dalamud.Game.Text.SeStringHandling.ITextProvider provider)
+                parts.Add(new{text=provider.Text,color});
+            else if(payload is Dalamud.Game.Text.SeStringHandling.Payloads.IconPayload icon)
+            {
+                string name=icon.Icon.ToString();
+                string glyph=Enum.TryParse<SeIconChar>(name,out var symbol)?symbol.ToIconString():"";
+                parts.Add(new{text=glyph.Length>0?glyph:"["+name+"]",color,icon=name,fontIconId=(uint)icon.Icon});
+            }
+        }
+        return parts.Count>0?parts.ToArray():new object[]{new{text=message.TextValue,color=fallback}};
+    }
+    private static string ChatColor(string channel)
+    {
+        string option=channel switch{"说话"=>"ColorSay","喊话"=>"ColorShout","呼喊"=>"ColorYell","悄悄话"=>"ColorTell","小队"=>"ColorParty","团队"=>"ColorAlliance","部队"=>"ColorFCompany","新人"=>"ColorBeginner","表情"=>"ColorEmote","默语"=>"ColorEcho",_=>""};
+        if(channel.StartsWith("系统 /"))option=channel.Contains("Error")?"ColorSysErr":channel.Contains("Battle")?"ColorSysBattle":channel.Contains("Gather")?"ColorSysGathering":"ColorSysMsg";
+        if(channel.StartsWith("通讯贝"))option="ColorLS"+channel[3..];
+        if(channel.StartsWith("跨服贝"))option="ColorCWLS"+(channel[3..]=="1"?"":channel[3..]);
+        try{var config=GetService<IGameConfig>("Dalamud.Game.Config.GameConfig");if(option.Length>0&&config!=null&&config.UiConfig.TryGet(option,out uint color))return "#"+(color&0xffffff).ToString("x6");}catch{}
+        return channel switch{"悄悄话" or "国服悄悄话"=>"#f0a7d4","小队"=>"#a9d4ff","团队"=>"#ffbe98","部队"=>"#b4e9ee","国服"=>"#8ec1fa","新人"=>"#d7e79b","默语"=>"#c5c5c5","表情"=>"#dec19d",_=>"#e5dfd5"};
+    }
     private static Func<ushort,byte,byte,bool> BuildTabFilter(object config)
     {
         var type=config.GetType().Assembly.GetType("OmniToolbox.TreePublic.BetterChatFilters");
         var method=type?.GetMethod("Matches",BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic);
-        if(method==null)throw new InvalidOperationException("Omni 窗口过滤接口不匹配");
+        if(method==null)throw new InvalidOperationException(PhoneChatText.Get("Text0316"));
         return (Func<ushort,byte,byte,bool>)method.CreateDelegate(typeof(Func<ushort,byte,byte,bool>),config);
     }
     private unsafe void RefreshGameMetadata()
@@ -877,7 +2252,7 @@ public sealed class PhoneChat : ModuleBase
             if(log!=null)for(int i=0;i<4;i++)
             {
                 string name=log->ChatTabs[i].Name.ToString();if(string.IsNullOrWhiteSpace(name))name=new[]{"通常","战斗","剧情","聊天4"}[i];
-                
+
                 tabs.Add(new PhoneTab{id="native:"+i,name=name,source="原生",filterSignature=nativeFilterSignature,recordSource="native",nativeWindow=true,filter=nativeFilters[i]});
             }
             var manager=FindOmniTreeHouseManager();
@@ -901,9 +2276,10 @@ public sealed class PhoneChat : ModuleBase
             }
             var macroModule=RaptureMacroModule.Instance();
             if(macroModule!=null&&settings.AllowCommands)for(uint set=0;set<2;set++)for(uint index=0;index<100;index++)
-            {var macro=macroModule->GetMacro(set,index);if(macro==null||!macro->IsNotEmpty())continue;macros.Add(new{set,index,name=macro->Name.ToString(),lines=string.Join("\n",macro->Lines.ToArray().Select(l=>l.ToString()))});}
+            {var macro=macroModule->GetMacro(set,index);if(macro==null||!macro->IsNotEmpty())continue;macros.Add(new{set,index,iconId=macro->IconId,icon=GameIconImage(macro->IconId),name=macro->Name.ToString(),lines=string.Join("\n",macro->Lines.ToArray().Select(l=>l.ToString()))});}
             var novice=InfoProxyNoviceNetwork.Instance();noviceJoined=novice!=null&&novice->IsInNoviceNetwork;
             var client=worldClient??FindOmniWorldChatClient();worldJoined=client!=null&&ReadValue(client.GetType(),client,"Connected") is true;
+            RefreshWorldStates(client);RefreshNoviceStates();var player=objects?.LocalPlayer;if(player!=null){phoneGameAccount=new GameAccount{name=player.Name.TextValue,world=DalamudServices.DataManager.GetExcelSheet<Lumina.Excel.Sheets.World>()?.GetRow(player.HomeWorld.RowId).Name.ToString()??"",job=player.ClassJob.RowId,level=player.Level,loggedIn=true};}
             if(settings.AllowCommands&&phoneCommands.Length==0)
             {
                 var commands=new List<object>();var data=GetService<IDataManager>("Dalamud.Data.DataManager");
@@ -919,7 +2295,7 @@ public sealed class PhoneChat : ModuleBase
         {
             try{phoneChannelInfo=ReadGameChannelNames();}catch(Exception e){warning="通讯贝名称读取："+e.Message;}
             phoneTabs=tabs.ToArray();phoneMacros=macros.ToArray();metadataError=string.Join("；",new[]{warning,sourceError}.Where(v=>v.Length>0));
-            string signature=JsonSerializer.Serialize(new{tabs=phoneTabs,macros=phoneMacros,commands=phoneCommands,channelInfo=phoneChannelInfo,worldJoined,noviceJoined,warning,nativeFilterSignature,routes=entries.Recent(400).Select(e=>new{e.id,tabs=MatchEntryTabs(e)})});
+            string signature=JsonSerializer.Serialize(new{tabs=phoneTabs,macros=phoneMacros,commands=phoneCommands,channelInfo=phoneChannelInfo,worldStates=phoneWorldStates,worldStatusIcons=phoneWorldStatusIcons,noviceStates=phoneNoviceStates,worldAccount=phoneWorldAccount,worldJoined,noviceJoined,warning,nativeFilterSignature,routes=entries.Recent(400).Select(e=>new{e.id,tabs=MatchEntryTabs(e)})});
             if(signature!=metadataSignature){metadataSignature=signature;metadataRevision++;}
             string filters=JsonSerializer.Serialize(phoneTabs.Select(t=>new{t.id,t.recordSource,t.world,t.filterSignature}));if(filters!=windowFilterSignature){windowFilterSignature=filters;nativeHistoryCursor=-1;historyScan.Clear();historyRequested=true;}
         }
@@ -962,11 +2338,12 @@ public sealed class PhoneChat : ModuleBase
         if(whisper)
         {
             if(ReadValue(type,message,"RecipientAliasID") is int recipient&&recipient==me&&ReadValue(type,message,"SenderAliasID") is int sender)
-                Add("国服悄悄话",ReadMember(type,message,"SenderDisplayName"),sender.ToString(),ReadMember(type,message,"Text"),false,settings.ReceiveWorldWhisper);
+                {Add("国服悄悄话",ReadMember(type,message,"SenderDisplayName"),sender.ToString(),ReadMember(type,message,"Text"),false,settings.ReceiveWorldWhisper);var whisperEpoch=ReadValue(type,message,"SentAt");if(whisperEpoch is long tick&&tick>0&&WorldEventFresh(message))QueueQQEvent("国服悄悄话",ReadMember(type,message,"SenderDisplayName"),ReadMember(type,message,"Text"),tick>100000000000?DateTimeOffset.FromUnixTimeMilliseconds(tick):DateTimeOffset.FromUnixTimeSeconds(tick));}
             else if(ReadValue(type,message,"SenderAliasID") is int senderId&&senderId==me&&ReadValue(type,message,"RecipientAliasID") is int dest)
-                Add("国服悄悄话","我",dest.ToString(),ReadMember(type,message,"Text"),true);
+                {Add("国服悄悄话","我",dest.ToString(),ReadMember(type,message,"Text"),true);if(long.TryParse(Text(message,"SentAt"),out var tick)&&tick>0&&WorldEventFresh(message))QueueQQEvent("国服悄悄话","我",ReadMember(type,message,"Text"),tick>100000000000?DateTimeOffset.FromUnixTimeMilliseconds(tick):DateTimeOffset.FromUnixTimeSeconds(tick));}
             return;
         }
+        string qqText=ReadMember(type,message,"Text");WorldRecruitment(message,ref qqText);var rawTime=ReadValue(type,message,"SentAt");if(rawTime is long epoch&&epoch>0&&WorldEventFresh(message))QueueQQEvent("国服",WorldSender(message),qqText,epoch>100000000000?DateTimeOffset.FromUnixTimeMilliseconds(epoch):DateTimeOffset.FromUnixTimeSeconds(epoch));
         var mention=ReadValue(type,message,"Mention");bool notify=mention!=null&&ReadValue(mention.GetType(),mention,"AliasID") is int id&&id==me&&settings.NotifyMention;
         bool outgoing=ReadValue(type,message,"AliasID") is int senderAlias&&senderAlias==me;
         // Sender AliasID is exposed separately so phone can @ or whisper without guessing a name.
@@ -975,70 +2352,117 @@ public sealed class PhoneChat : ModuleBase
     }
     public override bool HasSettings => true;
 
+    private int streamDownloadRunning;private volatile string streamDownloadStatus="";private CancellationTokenSource streamDownloadCancellation;
+    private void CancelStreamDownload(){try{streamDownloadCancellation?.Cancel();}catch(ObjectDisposedException){}}
+    private void StartStreamDownload(){
+        if(Interlocked.CompareExchange(ref streamDownloadRunning,1,0)!=0)return;
+        var cancellation=new CancellationTokenSource(TimeSpan.FromMinutes(10));streamDownloadCancellation=cancellation;streamDownloadStatus=PhoneChatText.Get("Text0317");
+        _=PhoneChatText.Track(Task.Run(async()=>{string temp="";try{var paths=new string[2];foreach(bool encoder in new[]{false,true}){
+            string folder=Path.Combine(Path.GetDirectoryName(ConfigFile),"PhoneChatStream","Install-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(folder);temp=Path.Combine(folder,encoder?"ffmpeg.zip.download":"StreamHost.exe.download");
+            string url=encoder?"https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-14-13-03/ffmpeg-n8.1.3-18-g46d899d7a0-win64-lgpl-shared-8.1.zip":"https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/download/phone-v0.3.58/StreamHost.exe";
+            string expected=encoder?"38dd3fb973c2e10723489e2173135d60f569953e70a04b885446175f9e9380d6":"1944c36942e17102a0f5cee82c8e7dda9b3d3b75eea7d02f0bddd5d442798a12";
+            await DownloadStreamComponent(url,temp,expected,encoder?100000000:170000000,cancellation.Token);
+            cancellation.Token.ThrowIfCancellationRequested();string path;
+            if(encoder){streamDownloadStatus=PhoneChatText.Get("Text0318");string zip=Path.Combine(folder,"ffmpeg.zip");File.Move(temp,zip);System.IO.Compression.ZipFile.ExtractToDirectory(zip,Path.Combine(folder,"ffmpeg"));cancellation.Token.ThrowIfCancellationRequested();var matches=Directory.GetFiles(Path.Combine(folder,"ffmpeg"),"ffmpeg.exe",SearchOption.AllDirectories);if(matches.Length!=1)throw new Exception(PhoneChatText.Get("Text0319"));path=matches[0];}
+            else{path=Path.Combine(folder,"StreamHost.exe");File.Move(temp,path);}
+            paths[encoder?1:0]=path;temp="";}
+            await OnGame(()=>{if(cancellation.IsCancellationRequested||!enabled)return false;settings.StreamHardwareHelper=paths[0];settings.StreamEncoderPath=paths[1];Save();return true;});
+            cancellation.Token.ThrowIfCancellationRequested();streamDownloadStatus=PhoneChatText.Get("Text0320");
+        }catch(OperationCanceledException){streamDownloadStatus=PhoneChatText.Get("Text0321");}catch(Exception e){streamDownloadStatus=PhoneChatText.Get("Text0322")+(e.InnerException??e).Message+PhoneChatText.Get("Text0323");}finally{try{if(temp.Length>0&&File.Exists(temp))File.Delete(temp);}catch{}Interlocked.CompareExchange(ref streamDownloadCancellation,null,cancellation);cancellation.Dispose();Interlocked.Exchange(ref streamDownloadRunning,0);}}));
+    }
+    private async Task DownloadStreamComponent(string url,string path,string expected,long limit,CancellationToken ct){
+        using var http=new HttpClient{Timeout=TimeSpan.FromMinutes(10)};using var response=await http.GetAsync(url,HttpCompletionOption.ResponseHeadersRead,ct);response.EnsureSuccessStatusCode();long total=response.Content.Headers.ContentLength??0;if(total>limit)throw new Exception(PhoneChatText.Get("Text0324"));await using(var input=await response.Content.ReadAsStreamAsync(ct)){await using var output=File.Create(path);var buffer=new byte[65536];long count=0;int read;while((read=await input.ReadAsync(buffer,ct))>0){count+=read;if(count>limit)throw new Exception(PhoneChatText.Get("Text0324"));await output.WriteAsync(buffer.AsMemory(0,read),ct);streamDownloadStatus=PhoneChatText.Get("Text0325")+(count/1048576d).ToString("F1")+(total>0?" / "+(total/1048576d).ToString("F1"):"")+" MB";}}
+        ct.ThrowIfCancellationRequested();streamDownloadStatus=PhoneChatText.Get("Text0326");await using var file=File.OpenRead(path);string actual=Convert.ToHexString(await SHA256.HashDataAsync(file,ct));if(!actual.Equals(expected,StringComparison.OrdinalIgnoreCase))throw new Exception(PhoneChatText.Get("Text0327"));
+    }
+    private StreamAdapters.Adapter[] streamAdapters;private string streamAdapterError="";
+    private void DrawStreamAdapterSettings(){
+        if(streamAdapters==null){try{streamAdapters=StreamAdapters.List();streamAdapterError="";}catch(Exception e){streamAdapters=Array.Empty<StreamAdapters.Adapter>();streamAdapterError=e.Message;}}
+        bool gpu=settings.StreamGpuDirect;if(ImGui.Checkbox(PhoneChatText.Get("Text0328"),ref gpu)){settings.StreamGpuDirect=gpu;Save();}int transportMode=settings.StreamTransport=="udp"?1:0;if(ImGui.Combo(PhoneChatText.Get("Text0329"),ref transportMode,"TCP\0UDP\0")){settings.StreamTransport=transportMode==1?"udp":"tcp";Save();}if(settings.StreamTransport=="udp"){int udpPort=settings.StreamUdpPort;if(ImGui.InputInt(PhoneChatText.Get("Text0330"),ref udpPort)&&(udpPort==0||udpPort>=1024&&udpPort<=65535)){settings.StreamUdpPort=udpPort;Save();}int externalUdp=settings.StreamUdpExternalPort;if(ImGui.InputInt(PhoneChatText.Get("Text0331"),ref externalUdp)&&externalUdp>=0&&externalUdp<=65535){settings.StreamUdpExternalPort=externalUdp;Save();}}
+        bool bring=settings.StreamBringToFront;if(ImGui.Checkbox(PhoneChatText.Get("Text0332"),ref bring)){settings.StreamBringToFront=bring;Save();}
+        bool enabled=settings.HardwareStream;if(ImGui.Checkbox(PhoneChatText.Get("Text0333"),ref enabled)){settings.HardwareStream=enabled;Save();}
+        ImGui.TextUnformatted(PhoneChatText.Get("Text0334"));string helper=settings.StreamHardwareHelper;ImGui.SetNextItemWidth(-1);if(ImGui.InputTextWithHint(PhoneChatText.Get("Text0335"),PhoneChatText.Get("Text0336"),ref helper,1024)){settings.StreamHardwareHelper=helper;Save();}
+
+        ImGui.TextUnformatted(PhoneChatText.Get("Text0337"));string encoder=settings.StreamEncoderPath;ImGui.SetNextItemWidth(-1);if(ImGui.InputTextWithHint(PhoneChatText.Get("Text0338"),PhoneChatText.Get("Text0339"),ref encoder,1024)){settings.StreamEncoderPath=encoder;Save();}
+        ImGui.BeginDisabled(Volatile.Read(ref streamDownloadRunning)!=0);if(ImGui.Button(PhoneChatText.Get("Text0340")))StartStreamDownload();ImGui.EndDisabled();if(Volatile.Read(ref streamDownloadRunning)!=0){ImGui.SameLine();if(ImGui.Button(PhoneChatText.Get("Text0341")))CancelStreamDownload();}if(streamDownloadStatus.Length>0)ImGui.TextWrapped(streamDownloadStatus);
+
+        string selected=settings.StreamAdapter.Length==0?PhoneChatText.Get("Ui2001"):streamAdapters.FirstOrDefault(a=>a.Id==settings.StreamAdapter)?.Name??PhoneChatText.Get("Ui2002");
+        ImGui.SetNextItemWidth(Math.Max(80,ImGui.GetContentRegionAvail().X-ImGui.CalcTextSize(PhoneChatText.Get("Text0342")).X-ImGui.CalcTextSize(PhoneChatText.Get("Text0343")).X-55));if(ImGui.BeginCombo(PhoneChatText.Get("Text0342"),selected)){if(ImGui.Selectable(PhoneChatText.Get("Text0344"),settings.StreamAdapter.Length==0)){settings.StreamAdapter="";Save();}foreach(var a in streamAdapters){if(ImGui.Selectable(a.Name+" · "+a.Encoder+"###"+a.Id,settings.StreamAdapter==a.Id)){settings.StreamAdapter=a.Id;Save();}}ImGui.EndCombo();}
+        ImGui.SameLine();if(ImGui.Button(PhoneChatText.Get("Text0343")))streamAdapters=null;
+        if(streamAdapterError.Length>0)ImGui.TextWrapped(streamAdapterError);
+    }
     public override bool DrawSettings()
-    {if(ImGui.Button("打开手机聊天面板"))panel=true;return false;}
+    {if(ImGui.Button(PhoneChatText.Get("Text0345")))panel=true;return false;}
     private void DrawPanel()
     {
-        if(!panel)return;using var font=OmniFonts.GetUIFont().Push();using var theme=new ComicStyleScope();
+        if(Interlocked.Exchange(ref streamClearUiFocus,0)!=0)ImGui.SetWindowFocus((string)null);streamUiKeyboardCapture=ImGui.GetIO().WantCaptureKeyboard;
+        if(!panel)return;using var font=TreeToolKit.Fonts.GetUIFont().Push();using var theme=new ComicStyleScope();
         ImGui.SetNextWindowSize(new Vector2(620,700),ImGuiCond.FirstUseEver);
-        bool visible=ImGui.Begin("手机app支持###PhoneChat",ref panel);
+        bool visible=ImGui.Begin(PhoneChatText.Get("Text0346"),ref panel);
         try
         {
             if(!visible)return;ImGui.TextWrapped(status);
-            if(ImGui.BeginTable("端口",2,ImGuiTableFlags.SizingStretchSame)){
-                ImGui.TableNextColumn();ImGui.TextUnformatted("内部端口");ImGui.SameLine();ImGui.SetNextItemWidth(-1);if(portInput.Length==0)portInput=settings.Port.ToString();
-                if(ImGui.InputTextWithHint("##内部端口","内部端口 · 18765",ref portInput,6,ImGuiInputTextFlags.CharsDecimal|ImGuiInputTextFlags.EnterReturnsTrue)&&int.TryParse(portInput,out var inner)&&inner>=1024&&inner<=65535){settings.Port=inner;Save();StartServer();}
-                if(ImGui.IsItemHovered())ImGui.SetTooltip("内部端口：按回车应用并重启监听；路由器转发到此端口");
-                ImGui.TableNextColumn();ImGui.TextUnformatted("外部端口");ImGui.SameLine();ImGui.SetNextItemWidth(-1);if(externalPortInput.Length==0)externalPortInput=settings.ExternalPort.ToString();
-                if(ImGui.InputTextWithHint("##外部端口","外部端口 · 18765",ref externalPortInput,6,ImGuiInputTextFlags.CharsDecimal|ImGuiInputTextFlags.EnterReturnsTrue)&&int.TryParse(externalPortInput,out var outer)&&outer>0&&outer<=65535){settings.ExternalPort=outer;Save();}
-                if(ImGui.IsItemHovered())ImGui.SetTooltip("外部端口：须与路由器及手机填写的端口一致；不能替你修改路由器");ImGui.EndTable();
+            if(ImGui.CollapsingHeader(PhoneChatText.Get("Text0347"))){if(ImGui.BeginTable(PhoneChatText.Get("Text0348"),2,ImGuiTableFlags.SizingStretchSame)){
+                ImGui.TableNextColumn();ImGui.TextUnformatted(PhoneChatText.Get("Text0349"));ImGui.SameLine();ImGui.SetNextItemWidth(-1);if(portInput.Length==0)portInput=settings.Port.ToString();
+                if(ImGui.InputTextWithHint(PhoneChatText.Get("Text0350"),PhoneChatText.Get("Text0351"),ref portInput,6,ImGuiInputTextFlags.CharsDecimal|ImGuiInputTextFlags.EnterReturnsTrue)&&int.TryParse(portInput,out var inner)&&inner>=1024&&inner<=65535){settings.Port=inner;Save();StartServer();}
+                if(ImGui.IsItemHovered())ImGui.SetTooltip(PhoneChatText.Get("Text0352"));
+                ImGui.TableNextColumn();ImGui.TextUnformatted(PhoneChatText.Get("Text0353"));ImGui.SameLine();ImGui.SetNextItemWidth(-1);if(externalPortInput.Length==0)externalPortInput=settings.ExternalPort.ToString();
+                if(ImGui.InputTextWithHint(PhoneChatText.Get("Text0354"),PhoneChatText.Get("Text0355"),ref externalPortInput,6,ImGuiInputTextFlags.CharsDecimal|ImGuiInputTextFlags.EnterReturnsTrue)&&int.TryParse(externalPortInput,out var outer)&&outer>0&&outer<=65535){settings.ExternalPort=outer;Save();}
+                if(ImGui.IsItemHovered())ImGui.SetTooltip(PhoneChatText.Get("Text0356"));ImGui.EndTable();
             }
-            if(ImGui.Button("重启服务"))StartServer();ImGui.SameLine();if(ImGui.Button("停止服务"))StopServer();
+            if(ImGui.Button(PhoneChatText.Get("Text0357")))StartServer();ImGui.SameLine();if(ImGui.Button(PhoneChatText.Get("Text0358")))StopServer();}
             DeviceRequest[] requests;AuthorizedDevice[] devices;lock(gate){requests=deviceRequests.Values.Where(r=>r.expires>DateTime.UtcNow&&r.token.Length==0).ToArray();devices=authorizedDevices.ToArray();}
-            if(ImGui.CollapsingHeader("设备授权",ImGuiTreeNodeFlags.DefaultOpen)){
-                ImGui.SetNextItemWidth(130);ImGui.InputTextWithHint("##手机验证码","手机六位验证码",ref approvalCode,7,ImGuiInputTextFlags.CharsDecimal);ImGui.SameLine();ImGui.SetNextItemWidth(180);ImGui.InputTextWithHint("##授权备注","设备备注（选填）",ref approvalRemark,64);
-                foreach(var device in requests){ImGui.PushID(device.id);ImGui.TextUnformatted(device.name);ImGui.SameLine();ImGui.BeginDisabled(!Equal(approvalCode,device.code));if(ImGui.Button("授权")){ApproveDevice(device.id,approvalCode);approvalCode=approvalRemark="";}ImGui.EndDisabled();ImGui.SameLine();if(ImGui.Button("拒绝")){lock(gate)deviceRequests.Remove(device.id);}ImGui.PopID();}
-                foreach(var device in devices){ImGui.PushID(device.id);string remark=device.remark;ImGui.SetNextItemWidth(180);if(ImGui.InputTextWithHint("##设备备注",device.name,ref remark,64)){lock(gate){device.remark=remark;PersistPairingFile();PersistGameState();}}ImGui.SameLine();ImGui.TextUnformatted(device.lastSeen==default?"未连接":device.lastSeen.ToLocalTime().ToString("MM-dd HH:mm"));ImGui.SameLine();if(ImGui.Button("删除"))RevokeDevice(device.id);ImGui.PopID();}
+            if(ImGui.CollapsingHeader(PhoneChatText.Get("Text0359"),ImGuiTreeNodeFlags.DefaultOpen)){
+                ImGui.SetNextItemWidth(130);ImGui.InputTextWithHint(PhoneChatText.Get("Text0360"),PhoneChatText.Get("Text0361"),ref approvalCode,7,ImGuiInputTextFlags.CharsDecimal);ImGui.SameLine();ImGui.SetNextItemWidth(180);ImGui.InputTextWithHint(PhoneChatText.Get("Text0362"),PhoneChatText.Get("Text0363"),ref approvalRemark,64);
+                foreach(var device in requests){ImGui.PushID(device.id);ImGui.TextUnformatted(device.name);ImGui.SameLine();ImGui.BeginDisabled(!Equal(approvalCode,device.code));if(ImGui.Button(PhoneChatText.Get("Text0364"))){ApproveDevice(device.id,approvalCode);approvalCode=approvalRemark="";}ImGui.EndDisabled();ImGui.SameLine();if(ImGui.Button(PhoneChatText.Get("Text0365"))){lock(gate)deviceRequests.Remove(device.id);}ImGui.PopID();}
+                foreach(var device in devices){ImGui.PushID(device.id);string remark=device.remark;ImGui.SetNextItemWidth(180);if(ImGui.InputTextWithHint(PhoneChatText.Get("Text0366"),device.name,ref remark,64)){lock(gate){device.remark=remark;PersistPairingFile();PersistGameState();}}ImGui.SameLine();ImGui.TextUnformatted(device.lastSeen==default?PhoneChatText.Get("Text0367"):device.lastSeen.ToLocalTime().ToString("MM-dd HH:mm"));ImGui.SameLine();if(ImGui.Button(PhoneChatText.Get("Text0368")))RevokeDevice(device.id);ImGui.PopID();}
             }
             ImGui.Separator();
-            if(ImGui.BeginTable("提醒选项",3,ImGuiTableFlags.SizingStretchSame)){
-            ImGui.TableNextColumn();var tell=settings.ReceiveTell;if(ImGui.Checkbox("悄悄话",ref tell)){settings.ReceiveTell=tell;Save();}
-            ImGui.TableNextColumn();var whisper=settings.ReceiveWorldWhisper;if(ImGui.Checkbox("国服悄悄话",ref whisper)){settings.ReceiveWorldWhisper=whisper;Save();}
-            ImGui.TableNextColumn();var mention=settings.NotifyMention;if(ImGui.Checkbox("国服被 @",ref mention)){settings.NotifyMention=mention;Save();}
-            ImGui.TableNextColumn();var party=settings.NotifyParty;if(ImGui.Checkbox("组队邀请",ref party)){settings.NotifyParty=party;Save();}
-            ImGui.TableNextColumn();var trade=settings.NotifyTrade;if(ImGui.Checkbox("交易申请",ref trade)){settings.NotifyTrade=trade;Save();}
-            ImGui.TableNextColumn();var friend=settings.NotifyFriend;if(ImGui.Checkbox("好友请求",ref friend)){settings.NotifyFriend=friend;Save();}
-            ImGui.TableNextColumn();var target=settings.NotifyTarget;if(ImGui.Checkbox("被玩家选中",ref target)){settings.NotifyTarget=target;Save();}
-            ImGui.TableNextColumn();var macro=settings.AllowCommands;if(ImGui.Checkbox("允许手机宏指令",ref macro)){settings.AllowCommands=macro;Save();}
-            ImGui.EndTable();}
+            if(ImGui.CollapsingHeader(PhoneChatText.Get("Text0369"))){if(ImGui.BeginTable(PhoneChatText.Get("Text0370"),3,ImGuiTableFlags.SizingStretchSame)){
+            ImGui.TableNextColumn();var tell=settings.ReceiveTell;if(ImGui.Checkbox(PhoneChatText.Get("Text0371"),ref tell)){settings.ReceiveTell=tell;Save();}
+            ImGui.TableNextColumn();var whisper=settings.ReceiveWorldWhisper;if(ImGui.Checkbox(PhoneChatText.Get("Text0372"),ref whisper)){settings.ReceiveWorldWhisper=whisper;Save();}
+            ImGui.TableNextColumn();var mention=settings.NotifyMention;if(ImGui.Checkbox(PhoneChatText.Get("Text0373"),ref mention)){settings.NotifyMention=mention;Save();}
+            ImGui.TableNextColumn();var party=settings.NotifyParty;if(ImGui.Checkbox(PhoneChatText.Get("Text0374"),ref party)){settings.NotifyParty=party;Save();}
+            ImGui.TableNextColumn();var trade=settings.NotifyTrade;if(ImGui.Checkbox(PhoneChatText.Get("Text0375"),ref trade)){settings.NotifyTrade=trade;Save();}
+            ImGui.TableNextColumn();var friend=settings.NotifyFriend;if(ImGui.Checkbox(PhoneChatText.Get("Text0376"),ref friend)){settings.NotifyFriend=friend;Save();}
+            ImGui.TableNextColumn();var target=settings.NotifyTarget;if(ImGui.Checkbox(PhoneChatText.Get("Text0377"),ref target)){settings.NotifyTarget=target;Save();}
+            ImGui.TableNextColumn();var macro=settings.AllowCommands;if(ImGui.Checkbox(PhoneChatText.Get("Text0378"),ref macro)){settings.AllowCommands=macro;Save();}
+            ImGui.EndTable();}}
             ImGui.Separator();
-            ImGui.TextUnformatted("离线推送");
-            for(int i=0;i<3;i++){ImGui.PushID(i);int selected=settings.PushPriority[i];ImGui.SetNextItemWidth(220);if(ImGui.Combo(i==0?"首选":i==1?"次选":"备选",ref selected,"不使用\0WxPusher\0Server酱\0个人QQ\0")){settings.PushPriority[i]=selected;Save();}ImGui.SameLine();ImGui.BeginDisabled(selected==0);if(ImGui.Button("设置"))pushPanel=selected;ImGui.EndDisabled();ImGui.PopID();}
-            ImGui.TextWrapped(pushStatus);
-            DrawPushSettings();ImGui.Separator();
-            string download=settings.ApkDownloadUrl;
-            if(ImGui.InputText("APK 下载链接",ref download,500)){settings.ApkDownloadUrl=download;Save();}
+            if(ImGui.CollapsingHeader(PhoneChatText.Get("Text0379"))){
+            int provider=settings.PushProvider;ImGui.SetNextItemWidth(220);if(ImGui.Combo(PhoneChatText.Get("Text0380"),ref provider,PhoneChatText.Get("Text0381"))){settings.PushProvider=provider;Save();}
+            ImGui.SameLine();ImGui.BeginDisabled(provider==0);if(ImGui.Button(PhoneChatText.Get("Text0382")))pushPanel=provider;ImGui.EndDisabled();
+            if(pushStatus.Length>0)ImGui.TextWrapped(pushStatus);}
+            if(ImGui.CollapsingHeader(PhoneChatText.Get("Text0383"))){
+            bool qqNotify=settings.QQNotifications;if(ImGui.Checkbox(PhoneChatText.Get("Text0384"),ref qqNotify)){settings.QQNotifications=qqNotify;Save();}
+            ImGui.TextWrapped(qqStatus);if(ImGui.Button(PhoneChatText.Get("Text0385")))pushPanel=3;
+            }
+            if(ImGui.CollapsingHeader(PhoneChatText.Get("Text0386"))){int count;lock(fishGate)count=fishSchedule.plans.Values.Where(p=>p.enabled).Sum(p=>p.rows.Count);ImGui.TextUnformatted(PhoneChatText.Get("Text0387")+count+PhoneChatText.Get("Text0388"));ImGui.TextWrapped(fishStatus);ImGui.TextWrapped(PhoneChatText.Get("Text0389"));}
+            DrawPageNavigation();
+            DrawPushSettings();
+            if(ImGui.CollapsingHeader(PhoneChatText.Get("Text0390")))DrawStreamAdapterSettings();
+            if(ImGui.CollapsingHeader(PhoneChatText.Get("Text0391"))){string download=settings.ApkDownloadUrl;
+            if(ImGui.InputText(PhoneChatText.Get("Text0392"),ref download,500)){settings.ApkDownloadUrl=download;Save();}
             bool validDownload=Uri.TryCreate(download,UriKind.Absolute,out var downloadUri)&&downloadUri.Scheme=="https";
             ImGui.BeginDisabled(!validDownload);
-            if(ImGui.Button("下载 APK")) {
+            if(ImGui.Button(PhoneChatText.Get("Text0393"))) {
                 try {System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(downloadUri.AbsoluteUri){UseShellExecute=true});}
-                catch(Exception e){status="打开下载页失败："+e.Message;}
+                catch(Exception e){status=PhoneChatText.Get("Text0394")+e.Message;}
             }
-            ImGui.EndDisabled();
+            ImGui.EndDisabled();}
         }
         finally{ImGui.End();}
     }
     private int pushPanel;
     private string portInput="",externalPortInput="";
-    private string qqStatus="QQ 未连接";
+    private string qqStatus=PhoneChatText.Get("Text0009");
     private PhoneQr qqLoginQr;
     private static string QrFile=>Path.Combine(Path.GetDirectoryName(ConfigFile),"OmniPhoneChat-QQ-login.png");
     private static string NapCatDirectory=>Path.Combine(Path.GetDirectoryName(ConfigFile),"OmniPhoneChat-NapCat");
     private PhoneNapCat qqBridge;
     private readonly object qqGate=new();
-    private long qqMirrorCursor;
+    private long qqMirrorCursor;private bool qqMirrorReady;
     private DateTimeOffset qqMirrorSince;
-    private readonly ConcurrentQueue<(uint group,string text)> qqMirrorQueue=new();
+    private readonly ConcurrentQueue<(uint group,string text,int generation)> qqMirrorQueue=new();
     private int qqMirrorWorker,qqLoginRunning,qqLoginGeneration;
     private Task qqCleanup=Task.CompletedTask;
     private readonly HashSet<string> qqMirrored=new();private readonly Queue<string> qqMirroredOrder=new();
@@ -1054,20 +2478,20 @@ public sealed class PhoneChat : ModuleBase
     }
     private void PrepareNapCat()
     {
-        if(!enabled){qqStatus="请先启用手机app支持模块";return;}
+        if(!enabled){qqStatus=PhoneChatText.Get("Text0395");return;}
         if(Interlocked.CompareExchange(ref qqLoginRunning,1,0)!=0)return;
         int generation=Volatile.Read(ref qqLoginGeneration);
-        qqStatus="正在准备 QQ 服务…";
-        _=Task.Run(async()=>{try{await PhoneNapCat.Prepare(NapCatDirectory,text=>{if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation)qqStatus=text;},CancellationToken.None);}catch(Exception e){if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation)qqStatus=QQLoginError(e,"");}finally{Interlocked.Exchange(ref qqLoginRunning,0);}});
+        qqStatus=PhoneChatText.Get("Text0396");
+        _=PhoneChatText.Track(Task.Run(async()=>{try{await PhoneNapCat.Prepare(NapCatDirectory,text=>{if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation)qqStatus=text;},CancellationToken.None);}catch(Exception e){if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation)qqStatus=QQLoginError(e,"");}finally{Interlocked.Exchange(ref qqLoginRunning,0);}}));
     }
     private void ConnectQQ(bool scan)
     {
-        if(!enabled){qqStatus="请先启用手机app支持模块，再登录 QQ";return;}
-        if(!PhoneNapCat.ValidAccount(settings.QQBotAccount)){qqStatus="机器人 QQ 号格式不正确";return;}
-        if(Interlocked.CompareExchange(ref qqLoginRunning,1,0)!=0){qqStatus="QQ 正在准备登录，请稍候";return;}
+        if(!enabled){qqStatus=PhoneChatText.Get("Text0397");return;}
+        if(!PhoneNapCat.ValidAccount(settings.QQBotAccount)){qqStatus=PhoneChatText.Get("Text0398");return;}
+        if(Interlocked.CompareExchange(ref qqLoginRunning,1,0)!=0){qqStatus=PhoneChatText.Get("Text0399");return;}
         int generation=Volatile.Read(ref qqLoginGeneration);string token="",bot=settings.QQBotAccount;
-        qqStatus="正在启动 QQ 服务…";
-        _=Task.Run(async()=>{PhoneNapCat current=null;try{
+        qqStatus=PhoneChatText.Get("Text0400");
+        _=PhoneChatText.Track(Task.Run(async()=>{PhoneNapCat current=null;try{
             await qqCleanup;
             if(!enabled||Volatile.Read(ref qqLoginGeneration)!=generation)return;
             DisconnectQQ("正在启动 QQ 服务…",false);await qqCleanup;
@@ -1083,77 +2507,70 @@ public sealed class PhoneChat : ModuleBase
             await current.Start(bot,scan,scan);
         }catch(OperationCanceledException){if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation)DisconnectQQ("QQ 登录已取消",false);}
         catch(Exception e){if(enabled&&Volatile.Read(ref qqLoginGeneration)==generation){var message=QQLoginError(e,token);DisconnectQQ(message,false);}}
-        finally{Interlocked.Exchange(ref qqLoginRunning,0);}});
+        finally{Interlocked.Exchange(ref qqLoginRunning,0);}}));
     }
     private void DisconnectQQ(string finalStatus="QQ 已断开",bool cancelLogin=true)
     {
         if(cancelLogin)Interlocked.Increment(ref qqLoginGeneration);
-        PhoneNapCat old;lock(qqGate){old=qqBridge;qqBridge=null;qqLoginQr=null;qqStatus=finalStatus;while(qqMirrorQueue.TryDequeue(out _)){}}
-        if(old!=null)qqCleanup=Task.Run(old.Dispose);
+        qqMirrorReady=false;PhoneNapCat old;lock(qqGate){old=qqBridge;qqBridge=null;qqLoginQr=null;qqStatus=finalStatus;while(qqMirrorQueue.TryDequeue(out _)){}}
+        if(old!=null)qqCleanup=PhoneChatText.Track(Task.Run(old.Dispose));
         try{if(File.Exists(QrFile))File.Delete(QrFile);}catch{}
     }
     private async Task<PushResult> SendQQPush(string target,string text,CancellationToken token)
-    {if(!uint.TryParse(target,out var id)||id==0)return new PushResult{status="填写接收 QQ 号或群号"};return await SendQQMessage(id,settings.QQNotifyGroup,text,settings.QQMention,token);}
+    {if(!uint.TryParse(target,out var id)||id==0)return new PushResult{status=PhoneChatText.Get("Text0401")};return await SendQQMessage(id,settings.QQNotifyGroup,text,settings.QQMention,token);}
     private async Task<PushResult> SendQQMessage(uint id,bool group,string text,string mention,CancellationToken token)
     {
-        PhoneNapCat instance;lock(qqGate)instance=qqBridge;if(instance==null)return new PushResult{status="QQ 未登录"};
+        PhoneNapCat instance;lock(qqGate)instance=qqBridge;if(instance==null)return new PushResult{status=PhoneChatText.Get("Text0402")};
         uint.TryParse(mention,out var at);
         try{var error=await instance.Send(id,group,text,at,token);return new PushResult{ok=error.Length==0,status=error};}
-        catch(OperationCanceledException){throw;}catch{return new PushResult{status="QQ 发送失败"};}
+        catch(OperationCanceledException){throw;}catch{return new PushResult{status=PhoneChatText.Get("Text0403")};}
     }
     private void ReceiveQQ(uint group,uint user,string name,string text)
     {
         if(!settings.QQReply||!QQIds(settings.QQReplyUsers).Contains(user)||group>0&&!QQIds(settings.QQGroups).Contains(group)||!text.StartsWith('#')||text.Length>450)return;
         string content=text[1..].Trim();if(content.Length==0||content.StartsWith('/')||content.Contains('\n')||content.Contains('\r'))return;
         lock(qqGate){if(DateTime.UtcNow-qqLastReply<TimeSpan.FromSeconds(2))return;qqLastReply=DateTime.UtcNow;}
-        string channel=settings.QQReplyChannel;
+        int replyGeneration=Volatile.Read(ref qqLoginGeneration);long replyQueuedAt=Environment.TickCount64;string channel=settings.QQReplyChannel;
         if(!Commands.ContainsKey(channel)||framework==null)return;
-        _=framework.RunOnFrameworkThread(async()=>{if(!enabled||!settings.QQReply)return;try{await Send(channel,"",content);}catch{qqStatus="QQ 回复未发送，请检查游戏频道";}});
+        _=framework.RunOnFrameworkThread(async()=>{if(!enabled||!settings.QQReply||replyGeneration!=Volatile.Read(ref qqLoginGeneration)||!QQOnline()||Environment.TickCount64-replyQueuedAt>5000)return;try{await Send(channel,"",content);}catch{qqStatus=PhoneChatText.Get("Text0404");}});
     }
-    private void MirrorQQ()
-    {
-        ChatEntry[] page;lock(gate){page=entries.After(qqMirrorCursor,100);if(page.Length>0)qqMirrorCursor=page[^1].id;}
-        if(!settings.QQMirror||!QQOnline())return;
-        foreach(var entry in page.GroupBy(e=>e.recordKey).Select(g=>g.OrderByDescending(e=>e.recordSource.StartsWith("omni")).First())){
-            if(qqMirrored.Contains(entry.recordKey))continue;qqMirrored.Add(entry.recordKey);qqMirroredOrder.Enqueue(entry.recordKey);while(qqMirroredOrder.Count>4096)qqMirrored.Remove(qqMirroredOrder.Dequeue());
-            if(!settings.QQChannels.Contains(entry.channel)||entry.tabs.Length==0||!DateTimeOffset.TryParse(entry.time,out var stamp)||stamp<qqMirrorSince)continue;
-            foreach(var group in QQIds(settings.QQGroups)){if(qqMirrorQueue.Count>=64){qqStatus="QQ 同步队列已满";break;}qqMirrorQueue.Enqueue((group,"["+entry.channel+"]"+(entry.sender.Length>0?entry.sender+"：":"")+entry.text));}
-        }
-        if(qqMirrorQueue.IsEmpty||Interlocked.CompareExchange(ref qqMirrorWorker,1,0)!=0)return;
-        _=Task.Run(async()=>{try{while(enabled&&qqMirrorQueue.TryDequeue(out var job)){using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(8));var result=await SendQQMessage(job.group,true,job.text,"",deadline.Token);if(!result.ok)qqStatus=result.status;await Task.Delay(1300);}}catch{qqStatus="QQ 同步失败";}finally{Interlocked.Exchange(ref qqMirrorWorker,0);}});
-    }
+    private bool WorldEventFresh(object message){string key="world:"+Text(message,"MessageID");if(key=="world:")return false;if(!long.TryParse(Text(message,"SentAt"),out var epoch)||epoch<=0)return false;var time=epoch>100000000000?DateTimeOffset.FromUnixTimeMilliseconds(epoch):DateTimeOffset.FromUnixTimeSeconds(epoch);if(!qqMirrorReady||time<qqMirrorSince||time<DateTimeOffset.UtcNow.AddSeconds(-5))return false;lock(qqGate){if(!qqMirrored.Add(key))return false;qqMirroredOrder.Enqueue(key);while(qqMirroredOrder.Count>4096)qqMirrored.Remove(qqMirroredOrder.Dequeue());return true;}}
+    private void QueueQQEvent(string channel,string sender,string text,DateTimeOffset sentAt){if(!enabled||!qqMirrorReady||!settings.QQMirror||!QQOnline()||!settings.QQChannels.Contains(channel)||sentAt<qqMirrorSince||string.IsNullOrWhiteSpace(text))return;int generation=Volatile.Read(ref qqLoginGeneration);foreach(var group in QQIds(settings.QQGroups)){if(qqMirrorQueue.Count>=64){qqStatus=PhoneChatText.Get("Text0405");return;}qqMirrorQueue.Enqueue((group,"["+channel+"]"+(sender.Length>0?sender+"：":"")+text,generation));}}
+    private void MirrorNativeEvent(IChatMessage message){try{QueueQQEvent(Label(message.LogKind),message.Sender?.TextValue??"",message.Message.TextValue,DateTimeOffset.UtcNow);}catch{}}
+    private void MirrorQQ(){bool available=enabled&&settings.QQMirror&&settings.QQChannels.Count>0&&QQOnline();if(!available){qqMirrorReady=false;while(qqMirrorQueue.TryDequeue(out _)){}return;}if(!qqMirrorReady){qqMirrorSince=DateTimeOffset.UtcNow;qqMirrorReady=true;while(qqMirrorQueue.TryDequeue(out _)){}return;}if(qqMirrorQueue.IsEmpty||Interlocked.CompareExchange(ref qqMirrorWorker,1,0)!=0)return;_=PhoneChatText.Track(Task.Run(async()=>{try{while(enabled&&qqMirrorQueue.TryDequeue(out var job)){if(job.generation!=Volatile.Read(ref qqLoginGeneration)||!settings.QQMirror||!QQOnline())continue;using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(8));var result=await SendQQMessage(job.group,true,job.text,"",deadline.Token);if(!result.ok)qqStatus=result.status;await Task.Delay(1300);}}catch{qqStatus=PhoneChatText.Get("Text0406");}finally{Interlocked.Exchange(ref qqMirrorWorker,0);}}));}
     private void DrawQQSettings()
     {
         ImGui.TextWrapped(qqStatus);
-        string bot=settings.QQBotAccount;ImGui.SetNextItemWidth(180);if(ImGui.InputTextWithHint("##机器人QQ","机器人 QQ 号（选填）",ref bot,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQBotAccount=bot;Save();}
-        ImGui.TextDisabled("请用作为机器人的 QQ 账号扫描登录码");
+        string bot=settings.QQBotAccount;ImGui.SetNextItemWidth(180);if(ImGui.InputTextWithHint(PhoneChatText.Get("Text0407"),PhoneChatText.Get("Text0408"),ref bot,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQBotAccount=bot;Save();}
+        ImGui.TextDisabled(PhoneChatText.Get("Text0409"));
         ImGui.BeginDisabled(Volatile.Read(ref qqLoginRunning)!=0);
-        if(ImGui.Button("准备 QQ 服务"))PrepareNapCat();if(ImGui.IsItemHovered())ImGui.SetTooltip("首次下载官方 NapCat Windows Node 包（约 118 MB），校验 SHA-256；无需申请运行授权，QQ 数据单独保存");
-        ImGui.SameLine();if(ImGui.Button("机器人 QQ 扫码登录"))ConnectQQ(true);
-        ImGui.SameLine();if(ImGui.Button("恢复登录"))ConnectQQ(false);ImGui.EndDisabled();
-        if(ImGui.Button("断开 QQ"))DisconnectQQ();ImGui.SameLine();if(ImGui.Button("查看登录码")){if(File.Exists(QrFile))OpenUrl(QrFile);else qqStatus="暂无登录码，请先点击机器人 QQ 扫码登录";}
+        if(ImGui.Button(PhoneChatText.Get("Text0410")))PrepareNapCat();if(ImGui.IsItemHovered())ImGui.SetTooltip(PhoneChatText.Get("Text0411"));
+        ImGui.SameLine();if(ImGui.Button(PhoneChatText.Get("Text0412")))ConnectQQ(true);
+        ImGui.SameLine();if(ImGui.Button(PhoneChatText.Get("Text0413")))ConnectQQ(false);ImGui.EndDisabled();
+        if(ImGui.Button(PhoneChatText.Get("Text0414")))DisconnectQQ();ImGui.SameLine();if(ImGui.Button(PhoneChatText.Get("Text0415"))){if(File.Exists(QrFile))OpenUrl(QrFile);else qqStatus=PhoneChatText.Get("Text0416");}
         var loginCode=qqLoginQr;if(loginCode!=null&&!QQOnline())DrawQr(loginCode,Math.Min(260,ImGui.GetContentRegionAvail().X));
-        bool auto=settings.QQAutoConnect;if(ImGui.Checkbox("随模块恢复 QQ",ref auto)){settings.QQAutoConnect=auto;Save();}
-        string target=settings.QQNotifyTarget;ImGui.SetNextItemWidth(210);if(ImGui.InputTextWithHint("##QQ接收","提醒接收 QQ 号 / 群号",ref target,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQNotifyTarget=target;Save();}ImGui.SameLine();bool group=settings.QQNotifyGroup;if(ImGui.Checkbox("发到群",ref group)){settings.QQNotifyGroup=group;Save();}
-        string at=settings.QQMention;ImGui.SetNextItemWidth(210);if(ImGui.InputTextWithHint("##QQ提醒对象","群提醒 @QQ（选填）",ref at,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQMention=at;Save();}
-        if(ImGui.Button("测试个人 QQ"))pushRouter?.Enqueue(new ChatEntry{channel="推送测试",sender="小烟酒",text="QQ 测试通知"},3);
-        bool mirror=settings.QQMirror;if(ImGui.Checkbox("游戏聊天同步到 QQ 群",ref mirror)){settings.QQMirror=mirror;qqMirrorCursor=entries.LastId;qqMirrorSince=DateTimeOffset.UtcNow;Save();}
-        string groups=settings.QQGroups;ImGui.SetNextItemWidth(-1);if(ImGui.InputTextWithHint("##QQ同步群","同步群号，多个用逗号分隔",ref groups,500)){settings.QQGroups=groups;Save();}
-        if(ImGui.TreeNode("同步频道")){foreach(string channel in AllChannels.Concat(new[]{"提醒"})){bool selected=settings.QQChannels.Contains(channel);if(ImGui.Checkbox(channel+"##QQ频道",ref selected)){if(selected)settings.QQChannels.Add(channel);else settings.QQChannels.Remove(channel);Save();}}ImGui.TreePop();}
-        bool reply=settings.QQReply;if(ImGui.Checkbox("QQ 回复游戏（以 # 开头）",ref reply)){settings.QQReply=reply;Save();}
-        string users=settings.QQReplyUsers;ImGui.SetNextItemWidth(-1);if(ImGui.InputTextWithHint("##QQ回复白名单","允许回复的 QQ 号，多个用逗号分隔",ref users,500)){settings.QQReplyUsers=users;Save();}
-        string[] channels=Commands.Keys.ToArray();int selectedChannel=Math.Max(0,Array.IndexOf(channels,settings.QQReplyChannel));ImGui.SetNextItemWidth(160);if(ImGui.Combo("回复频道",ref selectedChannel,string.Join('\0',channels)+"\0")){settings.QQReplyChannel=channels[selectedChannel];Save();}
-        if(ImGui.TreeNode("协议与许可证")){ImGui.TextWrapped("NapCat 4.18.38 · 本机后台服务，包含 QQ 运行组件。模块独立实现本地 API 适配，不内嵌或修改 NapCat 源码，不重新分发其运行包。上游采用特殊分发许可及各组件自身许可。");if(ImGui.Button("查看 NapCat 来源与许可"))OpenUrl("https://github.com/NapNeko/NapCatQQ");ImGui.TreePop();}
+        bool auto=settings.QQAutoConnect;if(ImGui.Checkbox(PhoneChatText.Get("Text0417"),ref auto)){settings.QQAutoConnect=auto;Save();}
+        string target=settings.QQNotifyTarget;ImGui.SetNextItemWidth(210);if(ImGui.InputTextWithHint(PhoneChatText.Get("Text0418"),PhoneChatText.Get("Text0419"),ref target,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQNotifyTarget=target;Save();}ImGui.SameLine();bool group=settings.QQNotifyGroup;if(ImGui.Checkbox(PhoneChatText.Get("Text0420"),ref group)){settings.QQNotifyGroup=group;Save();}
+        string at=settings.QQMention;ImGui.SetNextItemWidth(210);if(ImGui.InputTextWithHint(PhoneChatText.Get("Text0421"),PhoneChatText.Get("Text0422"),ref at,12,ImGuiInputTextFlags.CharsDecimal)){settings.QQMention=at;Save();}
+        if(ImGui.Button(PhoneChatText.Get("Text0423")))pushRouter?.Enqueue(new ChatEntry{channel=PhoneChatText.Get("Ui2003"),sender=PhoneChatText.Get("Ui2004"),text=PhoneChatText.Get("Ui2005")},3);
+        bool mirror=settings.QQMirror;if(ImGui.Checkbox(PhoneChatText.Get("Text0424"),ref mirror)){settings.QQMirror=mirror;qqMirrorReady=false;while(qqMirrorQueue.TryDequeue(out _)){}qqMirrorCursor=entries.LastId;qqMirrorSince=DateTimeOffset.UtcNow;Save();}
+        string groups=settings.QQGroups;ImGui.SetNextItemWidth(-1);if(ImGui.InputTextWithHint(PhoneChatText.Get("Text0425"),PhoneChatText.Get("Text0426"),ref groups,500)){settings.QQGroups=groups;Save();}
+        ImGui.TextDisabled(PhoneChatText.Get("Text0427"));
+        if(ImGui.TreeNode(PhoneChatText.Get("Text0428"))){foreach(string channel in AllChannels.Concat(new[]{PhoneChatText.Get("Ui2006")})){bool selected=settings.QQChannels.Contains(channel);if(ImGui.Checkbox(channel+PhoneChatText.Get("Text0429"),ref selected)){if(selected)settings.QQChannels.Add(channel);else settings.QQChannels.Remove(channel);Save();}}ImGui.TreePop();}
+        bool reply=settings.QQReply;if(ImGui.Checkbox(PhoneChatText.Get("Text0430"),ref reply)){settings.QQReply=reply;Save();}
+        string users=settings.QQReplyUsers;ImGui.SetNextItemWidth(-1);if(ImGui.InputTextWithHint(PhoneChatText.Get("Text0431"),PhoneChatText.Get("Text0432"),ref users,500)){settings.QQReplyUsers=users;Save();}
+        string[] channels=Commands.Keys.ToArray();int selectedChannel=Math.Max(0,Array.IndexOf(channels,settings.QQReplyChannel));ImGui.SetNextItemWidth(160);if(ImGui.Combo(PhoneChatText.Get("Text0433"),ref selectedChannel,string.Join('\0',channels)+"\0")){settings.QQReplyChannel=channels[selectedChannel];Save();}
+        if(ImGui.TreeNode(PhoneChatText.Get("Text0434"))){ImGui.TextWrapped(PhoneChatText.Get("Text0435"));if(ImGui.Button(PhoneChatText.Get("Text0436")))OpenUrl("https://github.com/NapNeko/NapCatQQ");ImGui.TreePop();}
     }
     private static void OpenUrl(string url){try{System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url){UseShellExecute=true});}catch{}}
     private void DrawPushSettings()
     {
         if(pushPanel==0)return;bool open=true;ImGui.SetNextWindowSize(new Vector2(480,430),ImGuiCond.FirstUseEver);
-        if(ImGui.Begin(PushRouter.Name(pushPanel)+" 设置###PhonePushConfig",ref open)){
+        if(ImGui.Begin(PushRouter.Name(pushPanel)+PhoneChatText.Get("Text0437"),ref open)){
             if(pushPanel==3)DrawQQSettings();else{
-                ImGui.Checkbox("显示凭证",ref showPushKeys);var flags=showPushKeys?ImGuiInputTextFlags.None:ImGuiInputTextFlags.Password;
-                ImGui.SetNextItemWidth(-1);if(pushPanel==1){if(ImGui.InputTextWithHint("##推送凭证","WxPusher SPT",ref wxPushKey,300,flags))SavePushKeys();}else if(ImGui.InputTextWithHint("##推送凭证","Server酱 SendKey",ref serverPushKey,300,flags))SavePushKeys();
-                if(ImGui.Button("测试"))pushRouter?.Enqueue(new ChatEntry{channel="推送测试",sender="小烟酒",text="测试通知"},pushPanel);ImGui.SameLine();if(ImGui.Button("获取凭证"))OpenUrl(pushPanel==1?"https://wxpusher.zjiecode.com/docs/spt.html":"https://sc3.ft07.com/");ImGui.TextWrapped(pushStatus);
+                ImGui.Checkbox(PhoneChatText.Get("Text0438"),ref showPushKeys);var flags=showPushKeys?ImGuiInputTextFlags.None:ImGuiInputTextFlags.Password;
+                ImGui.SetNextItemWidth(-1);if(pushPanel==1){if(ImGui.InputTextWithHint(PhoneChatText.Get("Text0439"),"WxPusher SPT",ref wxPushKey,300,flags))SavePushKeys();}else if(ImGui.InputTextWithHint(PhoneChatText.Get("Text0439"),PhoneChatText.Get("Text0440"),ref serverPushKey,300,flags))SavePushKeys();
+                if(ImGui.Button(PhoneChatText.Get("Text0441")))pushRouter?.Enqueue(new ChatEntry{channel=PhoneChatText.Get("Ui2007"),sender=PhoneChatText.Get("Ui2008"),text=PhoneChatText.Get("Ui2009")},pushPanel);ImGui.SameLine();if(ImGui.Button(PhoneChatText.Get("Text0442")))OpenUrl(pushPanel==1?"https://wxpusher.zjiecode.com/docs/spt.html":"https://sc3.ft07.com/");ImGui.TextWrapped(pushStatus);
             }
         }ImGui.End();if(!open)pushPanel=0;
     }
@@ -1324,13 +2741,13 @@ internal sealed class PhoneNapCat : IDisposable
     private readonly SemaphoreSlim credentialGate=new(1);
     private string work=>Path.Combine(root,"work");
     private int webPort,apiPort,disposed;
-    private readonly object processGate=new();
+    private readonly object processGate=new();private readonly PhoneChat.QQReplayGate replayGate;
 
     private DateTime qrRefresh=DateTime.MinValue;
     public bool Online {get;private set;}
     public string WebAddress=>webPort>0?"http://127.0.0.1:"+webPort:"";
     public PhoneNapCat(string directory,Action<string> status,Action<string,byte[]> qr,Action<uint,uint,string,string> received,Action<string> account)
-    {root=Path.GetFullPath(directory);this.status=status;this.qr=qr;this.received=received;this.account=account;}
+    {root=Path.GetFullPath(directory);replayGate=new PhoneChat.QQReplayGate(Path.Combine(root,"qq-data","reply-events.json"));this.status=status;this.qr=qr;this.received=received;this.account=account;}
     public static bool ValidAccount(string value)=>string.IsNullOrEmpty(value)||Regex.IsMatch(value,"^[1-9][0-9]{4,11}$");
     private static string Hash(byte[] bytes)=>Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     private static async Task<string> FileHash(string path,CancellationToken ct){await using var stream=File.OpenRead(path);return Convert.ToHexString(await SHA256.HashDataAsync(stream,ct)).ToLowerInvariant();}
@@ -1345,7 +2762,7 @@ internal sealed class PhoneNapCat : IDisposable
             string dest=Path.Combine(root,"runtime-"+Version),index=Path.Combine(dest,"yanjiu-integrity.json");
             if(File.Exists(index)){await Verify(dest,ct);progress("NapCat "+Version+" 已准备好");return;}
             // Never silently overwrite an existing installation that failed verification.
-            if(Directory.Exists(dest))throw new IOException("NapCat 目录不完整，请关闭模块后移走 runtime-"+Version+" 目录再准备");
+            if(Directory.Exists(dest))throw new IOException(PhoneChatText.Get("Text0443")+Version+PhoneChatText.Get("Text0444"));
             string zip=Path.Combine(root,"download-"+Version+".zip"),stage=Path.Combine(root,"stage-"+Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(stage);
             try{
@@ -1355,22 +2772,22 @@ internal sealed class PhoneNapCat : IDisposable
                     using var response=await client.GetAsync(PackageUrl,HttpCompletionOption.ResponseHeadersRead,ct);response.EnsureSuccessStatusCode();
                     await using var source=await response.Content.ReadAsStreamAsync(ct);await using var output=new FileStream(zip,FileMode.Create,FileAccess.Write,FileShare.None,65536,true);
                     byte[] bytes=new byte[65536];long count=0;int last=-1,n;
-                    while((n=await source.ReadAsync(bytes,ct))>0){count+=n;if(count>150*1024*1024)throw new IOException("NapCat 包超出大小限制");await output.WriteAsync(bytes.AsMemory(0,n),ct);int mb=(int)(count/1048576);if(mb!=last){last=mb;progress("下载 NapCat："+mb+" / 118 MB");}}
+                    while((n=await source.ReadAsync(bytes,ct))>0){count+=n;if(count>150*1024*1024)throw new IOException(PhoneChatText.Get("Text0445"));await output.WriteAsync(bytes.AsMemory(0,n),ct);int mb=(int)(count/1048576);if(mb!=last){last=mb;progress("下载 NapCat："+mb+" / 118 MB");}}
                 }
-                if(await FileHash(zip,ct)!=PackageHash)throw new IOException("NapCat 官方包 SHA-256 不符，未执行任何程序");
+                if(await FileHash(zip,ct)!=PackageHash)throw new IOException(PhoneChatText.Get("Text0446"));
                 progress("正在校验并解压 NapCat…");
                 var hashes=new Dictionary<string,string>();long total=0;
                 using(var archive=ZipFile.OpenRead(zip))foreach(var entry in archive.Entries){
                     ct.ThrowIfCancellationRequested();string name=entry.FullName.Replace('\\','/');
-                    if(!SafeArchivePath(name))throw new IOException("NapCat 压缩包路径无效");
+                    if(!SafeArchivePath(name))throw new IOException(PhoneChatText.Get("Text0447"));
                     string file=Path.GetFullPath(Path.Combine(stage,name));
-                    if(!file.StartsWith(stage+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new IOException("NapCat 压缩包路径越界");
+                    if(!file.StartsWith(stage+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new IOException(PhoneChatText.Get("Text0448"));
                     if(name.EndsWith('/')){Directory.CreateDirectory(file);continue;}
-                    total+=entry.Length;if(total>600*1024*1024)throw new IOException("NapCat 解压大小超限");
+                    total+=entry.Length;if(total>600*1024*1024)throw new IOException(PhoneChatText.Get("Text0449"));
                     Directory.CreateDirectory(Path.GetDirectoryName(file));entry.ExtractToFile(file);
                     hashes[name]=await FileHash(file,ct);
                 }
-                if(!hashes.ContainsKey("node.exe")||!hashes.ContainsKey("index.js")||!hashes.ContainsKey("wrapper.node"))throw new IOException("NapCat 包缺少运行文件");
+                if(!hashes.ContainsKey("node.exe")||!hashes.ContainsKey("index.js")||!hashes.ContainsKey("wrapper.node"))throw new IOException(PhoneChatText.Get("Text0450"));
                 await File.WriteAllTextAsync(Path.Combine(stage,"yanjiu-integrity.json"),JsonSerializer.Serialize(hashes),ct);
                 Directory.Move(stage,dest);progress("NapCat "+Version+" 已准备好");
             }finally{if(Directory.Exists(stage))Directory.Delete(stage,true);}
@@ -1380,8 +2797,8 @@ internal sealed class PhoneNapCat : IDisposable
     private static async Task Verify(string directory,CancellationToken ct)
     {
         var files=JsonSerializer.Deserialize<Dictionary<string,string>>(await File.ReadAllTextAsync(Path.Combine(directory,"yanjiu-integrity.json"),ct));
-        if(files==null||!files.ContainsKey("node.exe")||!files.ContainsKey("index.js")||!files.ContainsKey("wrapper.node"))throw new IOException("NapCat 完整性清单缺失");
-        foreach(var pair in files){ct.ThrowIfCancellationRequested();if(!SafeArchivePath(pair.Key))throw new IOException("NapCat 清单路径无效");var path=Path.GetFullPath(Path.Combine(directory,pair.Key));if(!path.StartsWith(directory+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)||!File.Exists(path)||await FileHash(path,ct)!=pair.Value)throw new IOException("NapCat 文件已改变，停止启动");}
+        if(files==null||!files.ContainsKey("node.exe")||!files.ContainsKey("index.js")||!files.ContainsKey("wrapper.node"))throw new IOException(PhoneChatText.Get("Text0451"));
+        foreach(var pair in files){ct.ThrowIfCancellationRequested();if(!SafeArchivePath(pair.Key))throw new IOException(PhoneChatText.Get("Text0452"));var path=Path.GetFullPath(Path.Combine(directory,pair.Key));if(!path.StartsWith(directory+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)||!File.Exists(path)||await FileHash(path,ct)!=pair.Value)throw new IOException(PhoneChatText.Get("Text0453"));}
     }
     private static int FreePort(){var listener=new TcpListener(IPAddress.Loopback,0);listener.Start();try{return ((IPEndPoint)listener.LocalEndpoint).Port;}finally{listener.Stop();}}
     private static string Secret()=>Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
@@ -1398,10 +2815,10 @@ internal sealed class PhoneNapCat : IDisposable
     }
     public async Task Start(string bot,bool scan,bool allowDownload)
     {
-        if(!ValidAccount(bot))throw new ArgumentException("机器人 QQ 号格式不正确");
-        if(allowDownload)await Prepare(root,status,stop.Token);else{if(!File.Exists(Path.Combine(runtime,"yanjiu-integrity.json")))throw new IOException("首次使用请点击准备 QQ 服务，再扫码登录机器人 QQ");await Verify(runtime,stop.Token);}
+        if(!ValidAccount(bot))throw new ArgumentException(PhoneChatText.Get("Text0398"));
+        if(allowDownload)await Prepare(root,status,stop.Token);else{if(!File.Exists(Path.Combine(runtime,"yanjiu-integrity.json")))throw new IOException(PhoneChatText.Get("Text0454"));await Verify(runtime,stop.Token);}
         Directory.CreateDirectory(root);
-        try{lease=new FileStream(Path.Combine(root,"running.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);}catch(IOException){throw new IOException("另一个游戏或模块正在使用此 QQ 服务，请先断开它");}
+        try{lease=new FileStream(Path.Combine(root,"running.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);}catch(IOException){throw new IOException(PhoneChatText.Get("Text0455"));}
         webPort=FreePort();do{apiPort=FreePort();}while(apiPort==webPort);
         webToken=Secret();apiToken=Secret();this.bot=bot;
         var config=Path.Combine(work,"config");Directory.CreateDirectory(config);
@@ -1418,13 +2835,13 @@ internal sealed class PhoneNapCat : IDisposable
         // Protocol stdout/stderr may include QR secrets; do not forward them to game logs.
         StartChild(info);status("QQ 服务启动中…");
         var until=DateTime.UtcNow.AddSeconds(60);Exception last=null;
-        while(DateTime.UtcNow<until){stop.Token.ThrowIfCancellationRequested();if(process.HasExited)throw new IOException("QQ 服务已退出，请检查 Windows 运行依赖");try{await Web("/api/QQLogin/CheckLoginStatus",new{},stop.Token);worker=Task.Run(Monitor);return;}catch(Exception e) when(!stop.IsCancellationRequested){last=e;await Task.Delay(500,stop.Token);}}
-        throw new IOException("QQ 服务本地接口未就绪，请检查运行依赖及端口占用",last);
+        while(DateTime.UtcNow<until){stop.Token.ThrowIfCancellationRequested();if(process.HasExited)throw new IOException(PhoneChatText.Get("Text0456"));try{await Web("/api/QQLogin/CheckLoginStatus",new{},stop.Token);worker=PhoneChatText.Track(Task.Run(Monitor));return;}catch(Exception e) when(!stop.IsCancellationRequested){last=e;await Task.Delay(500,stop.Token);}}
+        throw new IOException(PhoneChatText.Get("Text0457"),last);
     }
     private void StartChild(System.Diagnostics.ProcessStartInfo info)
     {
         lock(processGate){stop.Token.ThrowIfCancellationRequested();process?.Dispose();process=new System.Diagnostics.Process{StartInfo=info};process.OutputDataReceived+=(_,_)=>{};process.ErrorDataReceived+=(_,_)=>{};
-            if(!process.Start())throw new IOException("NapCat 启动失败");process.BeginOutputReadLine();process.BeginErrorReadLine();}
+            if(!process.Start())throw new IOException(PhoneChatText.Get("Text0458"));process.BeginOutputReadLine();process.BeginErrorReadLine();}
     }
     private async Task<JsonElement> Request(int port,string path,string token,bool web,object body,CancellationToken ct)
     {
@@ -1434,18 +2851,18 @@ internal sealed class PhoneNapCat : IDisposable
         if(body!=null)request.Content=new StringContent(JsonSerializer.Serialize(body),Encoding.UTF8,"application/json");
         using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token);response.EnsureSuccessStatusCode();
         await using var stream=await response.Content.ReadAsStreamAsync(timeout.Token);using var output=new MemoryStream();byte[] buffer=new byte[8192];int n;
-        while((n=await stream.ReadAsync(buffer,timeout.Token))>0){if(output.Length+n>2*1024*1024)throw new IOException("NapCat 响应过大");output.Write(buffer,0,n);}
+        while((n=await stream.ReadAsync(buffer,timeout.Token))>0){if(output.Length+n>2*1024*1024)throw new IOException(PhoneChatText.Get("Text0459"));output.Write(buffer,0,n);}
         using var json=JsonDocument.Parse(output.ToArray());var value=json.RootElement;
-        if(web){if(!value.TryGetProperty("code",out var success)||success.GetInt32()!=0){if(Text(value,"message").Contains("Unauthorized",StringComparison.OrdinalIgnoreCase)||Text(value,"message").Contains("Authorization",StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException("本地登录凭证过期");throw new IOException("NapCat 登录接口暂未就绪");}}
-        else if(!value.TryGetProperty("status",out var state)||state.GetString()!="ok"||!value.TryGetProperty("retcode",out var code)||code.GetInt32()!=0)throw new IOException("NapCat 拒绝消息请求");
+        if(web){if(!value.TryGetProperty("code",out var success)||success.GetInt32()!=0){if(Text(value,"message").Contains("Unauthorized",StringComparison.OrdinalIgnoreCase)||Text(value,"message").Contains("Authorization",StringComparison.OrdinalIgnoreCase))throw new UnauthorizedAccessException(PhoneChatText.Get("Text0460"));throw new IOException(PhoneChatText.Get("Text0461"));}}
+        else if(!value.TryGetProperty("status",out var state)||state.GetString()!="ok"||!value.TryGetProperty("retcode",out var code)||code.GetInt32()!=0)throw new IOException(PhoneChatText.Get("Text0462"));
         return value.TryGetProperty("data",out var result)?result.Clone():default;
     }
     private async Task<JsonElement> Web(string path,object body,CancellationToken ct)
     {
         for(int attempt=0;attempt<2;attempt++){
-            await credentialGate.WaitAsync(ct);try{if(webCredential.Length==0||DateTime.UtcNow>=credentialExpires){var data=await Request(webPort,"/api/auth/login","",true,new{hash=Hash(Encoding.UTF8.GetBytes(webToken+".napcat"))},ct);webCredential=Text(data,"Credential");if(webCredential.Length==0)throw new IOException("QQ 本地接口登录失败");credentialExpires=DateTime.UtcNow.AddMinutes(50);}}finally{credentialGate.Release();}
+            await credentialGate.WaitAsync(ct);try{if(webCredential.Length==0||DateTime.UtcNow>=credentialExpires){var data=await Request(webPort,"/api/auth/login","",true,new{hash=Hash(Encoding.UTF8.GetBytes(webToken+".napcat"))},ct);webCredential=Text(data,"Credential");if(webCredential.Length==0)throw new IOException(PhoneChatText.Get("Text0463"));credentialExpires=DateTime.UtcNow.AddMinutes(50);}}finally{credentialGate.Release();}
             try{return await Request(webPort,path,webCredential,true,body??new{},ct);}catch(UnauthorizedAccessException)when(attempt==0){webCredential="";}
-        }throw new IOException("QQ 本地接口登录失败");
+        }throw new IOException(PhoneChatText.Get("Text0463"));
     }
     private Task<JsonElement> Api(string path,object body,CancellationToken ct)=>Request(apiPort,path,apiToken,false,body,ct);
     private static string Text(JsonElement value,string key)=>value.ValueKind==JsonValueKind.Object&&value.TryGetProperty(key,out var text)?text.ToString():"";
@@ -1459,10 +2876,10 @@ internal sealed class PhoneNapCat : IDisposable
                 bool online=info.TryGetProperty("isLogin",out var on)&&on.ValueKind==JsonValueKind.True;
                 if(online){
                     var ready=await Api("/get_status",new{},stop.Token);var identity=await Api("/get_login_info",new{},stop.Token);var id=Text(identity,"user_id");
-                    if(!ValidAccount(id)||id.Length==0)throw new IOException("QQ 账号信息不完整");
+                    if(!ValidAccount(id)||id.Length==0)throw new IOException(PhoneChatText.Get("Text0464"));
                     if(bot.Length>0&&bot!=id){Online=false;status("扫描的 QQ 与机器人 QQ 号不一致，已停止服务，请断开后重新扫码");Dispose();return;}
                     Online=ready.TryGetProperty("online",out var yes)&&yes.ValueKind==JsonValueKind.True;
-                    if(Online){bot=id;account(id);status("机器人 QQ 已连接："+id);if(events==null||events.IsCompleted)events=Task.Run(Events);}
+                    if(Online){bot=id;account(id);status("机器人 QQ 已连接："+id);if(events==null||events.IsCompleted)events=PhoneChatText.Track(Task.Run(Events));}
                 }else{
                     Online=false;
                     if(info.TryGetProperty("qrLoginAccepted",out var accepted)&&accepted.ValueKind==JsonValueKind.True)status("扫码已确认，QQ 正在初始化…");
@@ -1483,7 +2900,7 @@ internal sealed class PhoneNapCat : IDisposable
     public static bool ValidQrUrl(string value)=>value.Length<=4096&&Uri.TryCreate(value,UriKind.Absolute,out var uri)&&uri.Scheme=="https"&&uri.Port==443&&uri.UserInfo.Length==0&&uri.Fragment.Length==0&&(uri.Host=="qrcode.qq.com"||uri.Host=="txz.qq.com");
     public static byte[] QrPng(string url)
     {
-        if(!ValidQrUrl(url))throw new IOException("QQ 登录码地址无效");var matrix=PhoneQr.EncodeText(url,0);int size=matrix.Size*6;
+        if(!ValidQrUrl(url))throw new IOException(PhoneChatText.Get("Text0465"));var matrix=PhoneQr.EncodeText(url,0);int size=matrix.Size*6;
         using var raw=new MemoryStream();for(int y=0;y<size;y++){raw.WriteByte(0);for(int x=0;x<size;x++)raw.WriteByte(matrix.GetModule(x/6,y/6)?(byte)0:(byte)255);}
         using var compressed=new MemoryStream();using(var zlib=new ZLibStream(compressed,CompressionLevel.Optimal,true)){raw.Position=0;raw.CopyTo(zlib);}
         using var png=new MemoryStream();png.Write(new byte[]{137,80,78,71,13,10,26,10});var header=new byte[13];System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(0,4),size);System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(4,4),size);header[8]=8;header[9]=0;
@@ -1498,8 +2915,8 @@ internal sealed class PhoneNapCat : IDisposable
     {
         const string prefix="data:image/png;base64,";
         if(png.StartsWith(prefix,StringComparison.Ordinal))png=png[prefix.Length..];
-        if(png.Length>1500000)throw new IOException("二维码过大");var bytes=Convert.FromBase64String(png);
-        if(bytes.Length<8||!bytes.Take(8).SequenceEqual(new byte[]{137,80,78,71,13,10,26,10}))throw new IOException("二维码格式无效");return bytes;
+        if(png.Length>1500000)throw new IOException(PhoneChatText.Get("Text0466"));var bytes=Convert.FromBase64String(png);
+        if(bytes.Length<8||!bytes.Take(8).SequenceEqual(new byte[]{137,80,78,71,13,10,26,10}))throw new IOException(PhoneChatText.Get("Text0467"));return bytes;
     }
     public static (uint group,uint user,string name,string text)? ParseEvent(string data)
     {
@@ -1517,11 +2934,11 @@ internal sealed class PhoneNapCat : IDisposable
         while(!stop.IsCancellationRequested){try{
             using var timeout=CancellationTokenSource.CreateLinkedTokenSource(stop.Token);timeout.CancelAfter(TimeSpan.FromSeconds(15));
             using var request=new HttpRequestMessage(HttpMethod.Get,"http://127.0.0.1:"+apiPort+"/_events");request.Headers.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",apiToken);
-            using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token);response.EnsureSuccessStatusCode();timeout.CancelAfter(Timeout.InfiniteTimeSpan);
+            using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token);response.EnsureSuccessStatusCode();timeout.CancelAfter(Timeout.InfiniteTimeSpan);replayGate.BeginSession(DateTimeOffset.UtcNow);
             using var stream=await response.Content.ReadAsStreamAsync(stop.Token);using var reader=new StreamReader(stream);string accumulated="";
-            while(!stop.IsCancellationRequested){var line=await reader.ReadLineAsync(stop.Token);if(line==null)break;if(line.Length>262144)throw new IOException("事件过大");
-                if(line.Length==0){if(accumulated.Length>0){try{var message=ParseEvent(accumulated);if(message.HasValue&&Online){var m=message.Value;received(m.group,m.user,m.name,m.text);}}catch(JsonException){}accumulated="";}}
-                else if(line.StartsWith("data:")){accumulated+=line[5..].TrimStart();if(accumulated.Length>262144)throw new IOException("事件过大");}
+            while(!stop.IsCancellationRequested){var line=await reader.ReadLineAsync(stop.Token);if(line==null)break;if(line.Length>262144)throw new IOException(PhoneChatText.Get("Text0468"));
+                if(line.Length==0){if(accumulated.Length>0){try{var message=ParseEvent(accumulated);if(message.HasValue&&Online){var m=message.Value;using var eventJson=JsonDocument.Parse(accumulated);var e=eventJson.RootElement;string messageId=Text(e,"message_id"),self=Text(e,"self_id");if(self==bot&&long.TryParse(Text(e,"time"),out var sentAt)&&replayGate.TryAccept(self,m.group,messageId,sentAt,DateTimeOffset.UtcNow)&&long.TryParse(messageId,out var numericId)){using var lookup=CancellationTokenSource.CreateLinkedTokenSource(stop.Token);lookup.CancelAfter(TimeSpan.FromSeconds(4));var original=await Api("/get_msg",new{message_id=numericId},lookup.Token);if(long.TryParse(Text(original,"time"),out var originalTime)&&replayGate.IsFreshTimestamp(originalTime,DateTimeOffset.UtcNow)&&Online)received(m.group,m.user,m.name,m.text);}if(!replayGate.Healthy)status("QQ 去重记录不可用，已暂停群回复");}}catch(JsonException){}accumulated="";}}
+                else if(line.StartsWith("data:")){accumulated+=line[5..].TrimStart();if(accumulated.Length>262144)throw new IOException(PhoneChatText.Get("Text0468"));}
             }
         }catch(OperationCanceledException)when(stop.IsCancellationRequested){return;}catch{}await Task.Delay(2000,stop.Token);}
     }
@@ -1556,12 +2973,549 @@ internal sealed class PhoneQr {
  (instance as IDisposable)?.Dispose();return new PhoneQr(rows);}
 }
 
+// SPDX-License-Identifier: GPL-3.0-or-later
+public static unsafe class StreamAdapters {
+ public sealed class Adapter { public string Id {get;set;}="";public string Name {get;set;}="";public uint Vendor {get;set;} public int Index {get;set;} public string Encoder=>Vendor==0x10de?"h264_nvenc":Vendor==0x1002?"h264_amf":Vendor==0x8086?"h264_qsv":""; }
+ [System.Runtime.InteropServices.DllImport("dxgi.dll")] static extern int CreateDXGIFactory1(ref System.Guid iid,out nint factory);
+ static void Release(nint p){if(p!=0)System.Runtime.InteropServices.Marshal.Release(p);}
+ public static Adapter[] List(){var result=new System.Collections.Generic.List<Adapter>();var iid=new System.Guid("770aae78-f26f-4dba-a829-253c83d1b387");System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(CreateDXGIFactory1(ref iid,out var f));try{byte* d=stackalloc byte[312];var enumerate=(delegate* unmanaged[Stdcall]<nint,uint,nint*,int>)(*(nint**)f)[12];for(uint i=0;i<32;i++){nint a=0;int hr=enumerate(f,i,&a);if(hr==unchecked((int)0x887a0002))break;System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(hr);try{var desc=(delegate* unmanaged[Stdcall]<nint,byte*,int>)(*(nint**)a)[10];System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(desc(a,d));uint vendor=*(uint*)(d+256),flags=*(uint*)(d+304);if((flags&2)!=0||vendor is not (0x10de or 0x1002 or 0x8086))continue;result.Add(new Adapter{Id=((ulong)*(long*)(d+296)).ToString("x16"),Name=new string((char*)d),Vendor=vendor,Index=(int)i});}finally{Release(a);}}}finally{Release(f);}return result.ToArray();}
+}
 
+// PCU1: authenticated 32-byte header + AES-256-GCM ciphertext + 16-byte tag.
+// Separate nonce domains for client/server; sequence is never reused with a session key.
+internal sealed class PhoneUdpVideoSession:IDisposable {
+ public const int Chunk=1152,Header=32,MaxFrame=4194304;readonly UdpClient socket;readonly byte[] key=RandomNumberGenerator.GetBytes(32);readonly CancellationTokenSource stop=new();readonly object gate=new();readonly Queue<byte[]> queue=new();readonly Action alive,disconnected;readonly Action congestion;readonly int fps;readonly Task receiver,sender;long sendSequence,receiveSequence,frameNumber,lastSeen;IPEndPoint peer,candidate;byte[] challenge,candidateProof;bool needKey=true;int bitrate;long lastCompleted,lastLost,lastCongestion;public long Packets{get;private set;}public string Error{get;private set;}="";
+ public PhoneUdpVideoSession(int port,int rate,int frames,Action touch,Action lost,Action slow){if(port<1024||port>65535)throw new ArgumentOutOfRangeException(nameof(port));bitrate=rate;fps=frames;alive=touch;disconnected=lost;congestion=slow;socket=new UdpClient(new IPEndPoint(IPAddress.Any,port));socket.Client.SendBufferSize=262144;socket.Client.ReceiveBufferSize=262144;receiver=PhoneChatText.Track(Task.Run(Receive));sender=PhoneChatText.Track(Task.Run(Send));}
+ public string Secret=>Convert.ToBase64String(key);public int Port=>((IPEndPoint)socket.Client.LocalEndPoint).Port;public void SetRate(int value)=>Volatile.Write(ref bitrate,value);
+ public static bool IsKey(byte[] b){for(int i=0;i+3<b.Length;i++)if(b[i]==0&&b[i+1]==0&&b[i+2]==1&&(b[i+3]&31)==5)return true;return false;}
+ public void Offer(byte[] frame){if(frame.Length<4||frame.Length>MaxFrame)return;lock(gate){if(peer==null)return;if(queue.Count>=2){queue.Clear();needKey=true;}if(needKey&&!IsKey(frame))return;needKey=false;queue.Enqueue(frame);}}
+ static void U16(byte[] b,int p,int v){b[p]=(byte)(v>>8);b[p+1]=(byte)v;}static int R16(byte[] b,int p)=>(b[p]<<8)|b[p+1];static void U32(byte[] b,int p,int v){for(int i=3;i>=0;i--){b[p+i]=(byte)v;v>>=8;}}static int R32(byte[] b,int p)=>(b[p]<<24)|(b[p+1]<<16)|(b[p+2]<<8)|b[p+3];static void U64(byte[] b,int p,long v){for(int i=7;i>=0;i--){b[p+i]=(byte)v;v>>=8;}}static long R64(byte[] b,int p){long v=0;for(int i=0;i<8;i++)v=(v<<8)|b[p+i];return v;}
+ public static byte[] Seal(byte[] secret,bool server,int type,int flags,int index,int count,long frame,long sequence,int size,byte[] payload){if(sequence<1||payload.Length>Chunk)throw new ArgumentException("Invalid UDP packet");var b=new byte[Header+payload.Length+16];b[0]=80;b[1]=67;b[2]=85;b[3]=49;b[4]=(byte)type;b[5]=(byte)flags;U16(b,6,index);U16(b,8,count);U16(b,10,payload.Length);U64(b,12,frame);U64(b,20,sequence);U32(b,28,size);var nonce=new byte[12];nonce[0]=server?(byte)83:(byte)67;nonce[1]=50;nonce[2]=server?(byte)67:(byte)83;nonce[3]=49;U64(nonce,4,sequence);using var aes=new AesGcm(secret,16);aes.Encrypt(nonce,payload,b.AsSpan(Header,payload.Length),b.AsSpan(Header+payload.Length,16),b.AsSpan(0,Header));return b;}
+ public static byte[] Open(byte[] secret,bool server,byte[] b){if(b.Length<48||b.Length>1200||b[0]!=80||b[1]!=67||b[2]!=85||b[3]!=49||R16(b,10)!=b.Length-48||R64(b,20)<1)throw new CryptographicException("Invalid UDP header");var nonce=new byte[12];nonce[0]=server?(byte)83:(byte)67;nonce[1]=50;nonce[2]=server?(byte)67:(byte)83;nonce[3]=49;U64(nonce,4,R64(b,20));var plain=new byte[b.Length-48];using var aes=new AesGcm(secret,16);aes.Decrypt(nonce,b.AsSpan(Header,plain.Length),b.AsSpan(Header+plain.Length,16),plain,b.AsSpan(0,Header));return plain;}
+ byte[] Packet(int type,int flags,int index,int count,long frame,int size,byte[] bytes)=>Seal(key,true,type,flags,index,count,frame,Interlocked.Increment(ref sendSequence),size,bytes);
+ async Task Receive(){try{while(!stop.IsCancellationRequested){var r=await socket.ReceiveAsync(stop.Token);byte[] p;try{p=Open(key,false,r.Buffer);}catch(CryptographicException){continue;}long sequence=R64(r.Buffer,20);if(sequence<=receiveSequence)continue;receiveSequence=sequence;int type=r.Buffer[4];if(type==1&&p.Length==16){byte[] response=new byte[32];lock(gate){if(candidate==null||!candidate.Equals(r.RemoteEndPoint)||candidateProof==null||!CryptographicOperations.FixedTimeEquals(candidateProof,p)){candidate=r.RemoteEndPoint;candidateProof=p.ToArray();challenge=RandomNumberGenerator.GetBytes(16);}p.CopyTo(response,0);challenge.CopyTo(response,16);}await socket.SendAsync(Packet(2,0,0,0,0,0,response),r.RemoteEndPoint,stop.Token);}
+ else if(type==6&&p.Length==32){bool accepted=false;lock(gate){if(candidate!=null&&candidate.Equals(r.RemoteEndPoint)&&challenge!=null&&CryptographicOperations.FixedTimeEquals(challenge,p.AsSpan(0,16))){if(peer==null||!peer.Equals(candidate)){peer=candidate;queue.Clear();needKey=true;lastCompleted=lastLost=0;}lastSeen=Environment.TickCount64;accepted=true;}}if(!accepted)continue;alive();long complete=(uint)R32(p,16),lost=(uint)R32(p,20);long dc=complete-lastCompleted,dl=lost-lastLost;lastCompleted=complete;lastLost=lost;if(dc>=0&&dl>=0&&dc+dl>=5&&dl*100>(dc+dl)*8&&Environment.TickCount64-lastCongestion>3000){RequestSlow();}await socket.SendAsync(Packet(2,1,0,0,0,0,p.AsSpan(0,16).ToArray()),r.RemoteEndPoint,stop.Token);}}}catch(OperationCanceledException){}catch(ObjectDisposedException){}catch(Exception){if(!stop.IsCancellationRequested)Error=PhoneChatText.Get("Text0469");}}
+ async Task Send(){double tokens=65536;long clock=System.Diagnostics.Stopwatch.GetTimestamp();try{while(!stop.IsCancellationRequested){IPEndPoint destination;byte[] frame=null;bool expired=false;lock(gate){destination=peer;if(peer!=null&&Environment.TickCount64-lastSeen>3000){peer=null;queue.Clear();needKey=true;destination=null;expired=true;}if(destination!=null&&queue.Count>0)frame=queue.Dequeue();}if(expired)disconnected();if(frame==null){await Task.Delay(2,stop.Token);continue;}long id=++frameNumber;int count=(frame.Length+Chunk-1)/Chunk,flags=IsKey(frame)?1:0;long begun=Environment.TickCount64;bool abandoned=false;for(int group=0;group<count&&!abandoned;group+=8){var parity=new byte[Chunk];for(int index=group;index<Math.Min(count,group+8);index++){int length=Math.Min(Chunk,frame.Length-index*Chunk);var bytes=frame.AsSpan(index*Chunk,length).ToArray();for(int i=0;i<length;i++)parity[i]^=bytes[i];await Transmit(Packet(3,flags,index,count,id,frame.Length,bytes),destination);if(Environment.TickCount64-begun>Math.Max(100,1000/fps*4)){abandoned=true;break;}}if(!abandoned)await Transmit(Packet(4,flags,group,count,id,frame.Length,parity),destination);}if(abandoned){lock(gate){queue.Clear();needKey=true;}RequestSlow();}}
+ async Task Transmit(byte[] packet,IPEndPoint destination){while(true){long now=System.Diagnostics.Stopwatch.GetTimestamp();double rate=Volatile.Read(ref bitrate)/8d*1.18;tokens=Math.Min(65536,tokens+(now-clock)/(double)System.Diagnostics.Stopwatch.Frequency*rate);clock=now;if(tokens>=packet.Length)break;await Task.Delay(1,stop.Token);}tokens-=packet.Length;await socket.SendAsync(packet,destination,stop.Token);Packets++;}
+ }catch(OperationCanceledException){}catch(ObjectDisposedException){}catch(Exception){if(!stop.IsCancellationRequested)Error=PhoneChatText.Get("Text0470");}}
+ void RequestSlow(){long now=Environment.TickCount64,previous=Interlocked.Read(ref lastCongestion);if(now-previous>3000&&Interlocked.CompareExchange(ref lastCongestion,now,previous)==previous)congestion();}
+ public void Dispose(){if(stop.IsCancellationRequested)return;stop.Cancel();socket.Dispose();lock(gate){queue.Clear();peer=null;} _=Task.WhenAll(receiver,sender).ContinueWith(_=>{CryptographicOperations.ZeroMemory(key);stop.Dispose();});}
+}
 
-
-
-
-
-
-
-
+internal static class PhoneChatText
+{
+    internal static readonly OmniToolbox.UI.ModuleLocalization Catalog = OmniToolbox.UI.ModuleLocalization.Create(
+        new System.Collections.Generic.Dictionary<string,string>
+        {
+            ["Text0001"] = "推送凭证无法读取，请重新填写",
+            ["Text0002"] = "推送凭证保存失败",
+            ["Text0003"] = "去重记录过大",
+            ["Text0004"] = "去重记录无效",
+            ["Text0005"] = "手机直连，使用直连通知",
+            ["Text0006"] = "离线推送和 QQ 提醒均未启用",
+            ["Text0007"] = "未配置",
+            ["Text0008"] = "暂缓重试",
+            ["Text0009"] = "QQ 未连接",
+            ["Text0010"] = "接口超时",
+            ["Text0011"] = "接口连接失败",
+            ["Text0012"] = "接口已接收",
+            ["Text0013"] = "狒狒食柿 · ",
+            ["Text0014"] = "SPT格式无效",
+            ["Text0015"] = "SendKey格式无效",
+            ["Text0016"] = "接口响应格式不符",
+            ["Text0017"] = "接口拒绝（代码 ",
+            ["Text0018"] = "接口响应过大",
+            ["Text0019"] = "页面导航编辑",
+            ["Text0020"] = "勾选启用页面，使用上移/下移排列导航。保存后自动同步至手机；手机端不可编辑。",
+            ["Text0021"] = "页面导航项目",
+            ["Text0022"] = "启用",
+            ["Text0023"] = "页面",
+            ["Text0024"] = "上移",
+            ["Text0025"] = "下移",
+            ["Text0026"] = "##启用",
+            ["Text0027"] = "（已检测到 Omni）",
+            ["Text0028"] = "（未检测到 Omni）",
+            ["Text0029"] = "恢复默认导航",
+            ["Text0030"] = "一次最多同步1000条鱼糕提醒",
+            ["Text0031"] = "鱼糕提醒内容无效",
+            ["Text0032"] = "鱼糕提醒时间或内容无效",
+            ["Text0033"] = "鱼糕提醒设备过多",
+            ["Text0034"] = "鱼糕通知方式无效",
+            ["Text0035"] = "服务端鱼糕计划已满，最多4000条",
+            ["Text0036"] = "鱼糕计划读取失败，请在手机重新同步",
+            ["Text0037"] = "鱼糕提醒已交给 QQ / 推送通道",
+            ["Text0038"] = "QQ / 推送未配置或未入队，已保留 App 回退（需允许通知）",
+            ["Text0039"] = "鱼糕提醒已交给 App 通道",
+            ["Text0040"] = "鱼糕计划保存或发送失败，请重新同步",
+            ["Text0041"] = "服务端已停用鱼糕功能",
+            ["Text0042"] = "设备授权已撤销",
+            ["Text0043"] = "鱼糕提醒已暂停",
+            ["Text0044"] = "提醒发送过于频繁",
+            ["Text0045"] = "提醒内容无效",
+            ["Text0046"] = "请10秒后再测试",
+            ["Text0047"] = "鱼糕提醒操作无效",
+            ["Text0048"] = "国服账号已改变或未连接，请重新申请附加授权",
+            ["Text0049"] = "无法打开聊天缓存",
+            ["Text0050"] = "服务未启动",
+            ["Text0051"] = "保存失败：",
+            ["Text0052"] = "端口须在 1024～65535 之间",
+            ["Text0053"] = "HTTPS 服务运行中",
+            ["Text0054"] = "启动失败：",
+            ["Text0055"] = "服务已停止，本次游戏的记录与连接保留",
+            ["Text0056"] = "服务器证书不一致",
+            ["Text0057"] = "待授权请求过多，请稍后重试",
+            ["Text0058"] = "授权请求已过期或已拒绝，请重新连接",
+            ["Text0059"] = "附加授权请求格式无效",
+            ["Text0060"] = "请先在游戏中加入国服频道，再申请附加授权",
+            ["Text0061"] = "待授权请求过多",
+            ["Text0062"] = "附加授权请求已失效",
+            ["Text0063"] = "字体资源过大",
+            ["Text0064"] = "幻化请求过大",
+            ["Text0065"] = "未知幻化操作",
+            ["Text0066"] = "请先启用 Omni幻化管理增强本地模块 1.4.0 或更新版本",
+            ["Text0067"] = "图标请求无效",
+            ["Text0068"] = "该账号未附加当前国服授权，请在账号卡片申请附加授权",
+            ["Text0069"] = "国服频道尚未连接，请先在账号卡片加入国服频道",
+            ["Text0070"] = "招募筛选无效",
+            ["Text0071"] = "该连接未授权当前国服账号，请添加账号申请授权",
+            ["Text0072"] = "游戏框架未就绪",
+            ["Text0073"] = "游戏窗口记录读取：",
+            ["Text0074"] = "Omni 窗口记录缺少有效消息编号",
+            ["Text0075"] = "Omni 窗口记录缺少有效时间",
+            ["Text0076"] = "Omni 窗口记录接口不匹配，未使用其他消息来源补录",
+            ["Text0077"] = "服务已停止",
+            ["Text0078"] = "角色未登录",
+            ["Text0079"] = "电脑未允许宏指令",
+            ["Text0080"] = "消息须为单行且不超过 500 字节",
+            ["Text0081"] = "此频道不支持发送",
+            ["Text0082"] = "请启用 Omni 聊天框优化",
+            ["Text0083"] = "国服频道尚未连接",
+            ["Text0084"] = "发送失败，请检查连接、屏蔽或发送频率",
+            ["Text0085"] = "宏指令须以 / 开头",
+            ["Text0086"] = "收件人格式：姓名@服务器",
+            ["Text0087"] = "此频道只支持查看",
+            ["Text0088"] = "未找到频道用户，请使用昵称或 AliasID",
+            ["Text0089"] = "昵称重名，请使用 AliasID",
+            ["Text0090"] = "Omni 版本未提供频道操作接口",
+            ["Text0091"] = "新人频道尚未就绪",
+            ["Text0092"] = "未知频道操作",
+            ["Text0093"] = "宏编号无效",
+            ["Text0094"] = "宏系统未就绪",
+            ["Text0095"] = "游戏正在执行宏，请稍后重试",
+            ["Text0096"] = "该宏为空",
+            ["Text0097"] = "原生聊天过滤数据版本不支持",
+            ["Text0098"] = "原生聊天过滤数据格式不支持",
+            ["Text0099"] = "原生聊天过滤标记无效",
+            ["Text0100"] = "原生聊天过滤配置尚未加载",
+            ["Text0101"] = "原生聊天过滤缓存尺寸不支持",
+            ["Text0102"] = "原生聊天过滤缓存长度无效",
+            ["Text0103"] = "LogFilter 数据表尚未加载",
+            ["Text0104"] = "LogFilter 数据表与原生配置版本不一致",
+            ["Text0105"] = "国服成员状态尚未加载",
+            ["Text0106"] = "当前 Omni 未提供国服招募板接口，请启用国服频道模块",
+            ["Text0107"] = "未知国服招募操作",
+            ["Text0108"] = "该实时招募已取消或过期",
+            ["Text0109"] = "游戏角色身份接口未就绪",
+            ["Text0110"] = "请先登录游戏角色",
+            ["Text0111"] = "国服招募编号无效",
+            ["Text0112"] = "请重新打开该招募详情",
+            ["Text0113"] = "招募队长编号无效",
+            ["Text0114"] = "队长当前没有有效招募，请刷新列表",
+            ["Text0115"] = "招募已取消或过期",
+            ["Text0116"] = "国服招募正在加载，请稍后重试",
+            ["Text0117"] = "国服招募服务器未在限定时间返回，请重试",
+            ["Text0118"] = "该国服招募已取消、过期或无法获取",
+            ["Text0119"] = "国服招募加载失败：",
+            ["Text0120"] = "国服招募尚未加载完成，请重试",
+            ["Text0121"] = "Omni 未返回招募列表，请检查版本与频道连接",
+            ["Text0122"] = "队伍操作需要游戏角色登录",
+            ["Text0123"] = "队伍数据未就绪",
+            ["Text0124"] = "队伍确认窗口已改变，请重新操作",
+            ["Text0125"] = "未知确认操作",
+            ["Text0126"] = "游戏已有确认窗口，请先处理后重试",
+            ["Text0127"] = "当前没有小队",
+            ["Text0128"] = "队伍接口未就绪",
+            ["Text0129"] = "游戏拒绝离开队伍操作",
+            ["Text0130"] = "只有队长可以解散队伍",
+            ["Text0131"] = "游戏拒绝解散队伍操作",
+            ["Text0132"] = "只有队长可以管理队伍",
+            ["Text0133"] = "队员编号无效",
+            ["Text0134"] = "队员已离队或不能操作自己",
+            ["Text0135"] = "队伍操作接口未就绪",
+            ["Text0136"] = "未知队伍操作",
+            ["Text0137"] = "游戏招募接收接口未就绪",
+            ["Text0138"] = "公开互操作服务未就绪",
+            ["Text0139"] = "无法启用直接招募读取：",
+            ["Text0140"] = "招募数据解析失败：",
+            ["Text0141"] = "查看招募需要游戏角色登录",
+            ["Text0142"] = "游戏招募接口未就绪",
+            ["Text0143"] = "游戏招募数据代理尚未就绪，请稍后刷新",
+            ["Text0144"] = "游戏招募接收接口未启用",
+            ["Text0145"] = "游戏招募接口正在初始化，请稍后刷新",
+            ["Text0146"] = "游戏招募接口初始化超时，请刷新重试",
+            ["Text0147"] = "角色已经改变，请重新打开招募",
+            ["Text0148"] = "角色已经改变",
+            ["Text0149"] = "刷新未收到服务器返回，请稍后重试",
+            ["Text0150"] = "游戏未接受鼠标按键",
+            ["Text0151"] = "按键映射无效",
+            ["Text0152"] = "游戏未接受按键输入，请检查游戏与插件权限",
+            ["Text0153"] = "串流按键请求无效",
+            ["Text0154"] = "串流控制会话已失效",
+            ["Text0155"] = "控制模式已切换，旧指令已丢弃",
+            ["Text0156"] = "游戏控制暂未就绪，请稍后重试",
+            ["Text0157"] = "请先让游戏窗口处于电脑前台",
+            ["Text0158"] = "滚轮状态无效",
+            ["Text0159"] = "请先启用前台游戏控制",
+            ["Text0160"] = "游戏未接受完整文字输入，请检查游戏输入框",
+            ["Text0161"] = "输入法数据无效",
+            ["Text0162"] = "串流输入会话已失效",
+            ["Text0163"] = "请先点选游戏输入框",
+            ["Text0164"] = "请输入1至500字的单行文字",
+            ["Text0165"] = "请先让游戏窗口位于前台并点选游戏输入框",
+            ["Text0166"] = "游戏未接受滚轮输入",
+            ["Text0167"] = "游戏窗口尺寸不可用",
+            ["Text0168"] = "游戏窗口位置不可用",
+            ["Text0169"] = "屏幕尺寸不可用",
+            ["Text0170"] = "游戏未接受鼠标输入",
+            ["Text0171"] = "鼠标位置不可用",
+            ["Text0172"] = "游戏未接受鼠标按键输入",
+            ["Text0173"] = "鼠标输入无效",
+            ["Text0174"] = "控制序号无效",
+            ["Text0175"] = "游戏未在前台，请点击游戏置前后启用控制",
+            ["Text0176"] = "游戏窗口设置接口未就绪",
+            ["Text0177"] = "串流清理未完成：",
+            ["Text0178"] = "服务端串流模式无效",
+            ["Text0179"] = "UDP视频需要在服务端启用H.264硬件串流",
+            ["Text0180"] = "请在服务端串流设置中填写UDP端口（1024至65535）",
+            ["Text0181"] = "请先在模块设置手动选择已安装的硬件串流组件和 FFmpeg 完整路径",
+            ["Text0182"] = "硬件串流组件 SHA256 不匹配，请从本版本发布页手动下载并选择",
+            ["Text0183"] = "串流组件大小无效",
+            ["Text0184"] = "串流组件过大",
+            ["Text0185"] = "串流组件校验失败",
+            ["Text0186"] = "串流组件下载失败：",
+            ["Text0187"] = "串流组件准备已取消",
+            ["Text0188"] = "串流属于其他设备",
+            ["Text0189"] = "UDP视频会话已失效",
+            ["Text0190"] = "UDP设备授权已撤销",
+            ["Text0191"] = "UDP持续丢包或拥塞，请检查网络或在服务端选择TCP模式",
+            ["Text0192"] = "无法调整UDP码率，请重新开始",
+            ["Text0193"] = "串流已停止",
+            ["Text0194"] = "串流已停止，请重新开始",
+            ["Text0195"] = "未找到游戏窗口",
+            ["Text0196"] = "手机画面尺寸无效",
+            ["Text0197"] = "串流已经停止",
+            ["Text0198"] = "无法调整游戏画面尺寸",
+            ["Text0199"] = "游戏未接受新的手机画面尺寸",
+            ["Text0200"] = "未知串流操作",
+            ["Text0201"] = "已有其他设备正在串流",
+            ["Text0202"] = "串流设置无效",
+            ["Text0203"] = "串流准备已取消",
+            ["Text0204"] = "游戏未接受窗口模式切换，无法仅调整游戏画面尺寸",
+            ["Text0205"] = "无法读取游戏窗口尺寸",
+            ["Text0206"] = "无法调整游戏窗口尺寸",
+            ["Text0207"] = "游戏未接受手机画面尺寸，请先将游戏设为普通窗口模式",
+            ["Text0208"] = "无法启动串流组件",
+            ["Text0209"] = "串流帧无效",
+            ["Text0210"] = "游戏画面采集已中断，请重新开始串流",
+            ["Text0211"] = "最低品级不能高于最高品级",
+            ["Text0212"] = "游戏内物品数据接口初始化失败：",
+            ["Text0213"] = "当前Omni未提供",
+            ["Text0214"] = "公开服务，请更新Omni或启用对应功能",
+            ["Text0215"] = "Omni公开价格查询构造接口不兼容",
+            ["Text0216"] = "公开物品数据构造接口不兼容",
+            ["Text0217"] = "游戏库存接口尚未就绪",
+            ["Text0218"] = "Omni公开库存数量接口不兼容",
+            ["Text0219"] = "Omni服务未就绪",
+            ["Text0220"] = "当前Omni未提供公开操作：",
+            ["Text0221"] = "当前Omni未提供公开物品资料接口",
+            ["Text0222"] = "物品查询参数无效：",
+            ["Text0223"] = "地图坐标无效",
+            ["Text0224"] = "地图资料尚未就绪",
+            ["Text0225"] = "地图资源编号无效",
+            ["Text0226"] = "游戏地图纹理不可用",
+            ["Text0227"] = "游戏地图尺寸无效",
+            ["Text0228"] = "游戏地图纹理不完整",
+            ["Text0229"] = "地图图像过大",
+            ["Text0230"] = "游戏商店目录接口尚未就绪",
+            ["Text0231"] = "公开商店查询接口不兼容",
+            ["Text0232"] = "此物品没有商店来源",
+            ["Text0233"] = "游戏商店目录读取失败",
+            ["Text0234"] = "游戏没有返回商店资料",
+            ["Text0235"] = "Omni商店当前不可用或正在处理操作",
+            ["Text0236"] = "商店目录仍在读取，请稍后重试",
+            ["Text0237"] = "商店来源已改变，请刷新",
+            ["Text0238"] = "此兑换来源暂不支持手机直接购买，请在游戏内确认兑换",
+            ["Text0239"] = "购买确认过多，请稍后重试",
+            ["Text0240"] = "商店购买确认已失效，请重新选择",
+            ["Text0241"] = "商店目录尚未就绪，请重新选择",
+            ["Text0242"] = "商店或兑换条件已改变，请重新选择",
+            ["Text0243"] = "Omni未接受商店购买，请查看游戏中的提示",
+            ["Text0244"] = "未知商店操作",
+            ["Text0245"] = "Omni收录筛选接口不兼容",
+            ["Text0246"] = "Omni收录筛选参数不兼容：",
+            ["Text0247"] = "Omni未提供收录分类接口",
+            ["Text0248"] = "收录分类无效",
+            ["Text0249"] = "搜索内容最多100字",
+            ["Text0250"] = "Omni未提供收录搜索接口",
+            ["Text0251"] = "子分类已改变，请重新选择",
+            ["Text0252"] = "收藏列表无效",
+            ["Text0253"] = "收录收藏编号无效",
+            ["Text0254"] = "版本筛选无效",
+            ["Text0255"] = "来源分类无效",
+            ["Text0256"] = "收录编号无效",
+            ["Text0257"] = "此收录已改变，请刷新列表",
+            ["Text0258"] = "来源已改变，请刷新详情",
+            ["Text0259"] = "此来源没有地图位置",
+            ["Text0260"] = "来源地图尚未就绪",
+            ["Text0261"] = "此收录当前无法预览",
+            ["Text0262"] = "Omni未接受预览，请检查游戏状态",
+            ["Text0263"] = "未知收录操作",
+            ["Text0264"] = "请先登录游戏角色并连接电脑",
+            ["Text0265"] = "Omni公开物品筛选未就绪",
+            ["Text0266"] = "Omni公开物品分类未就绪",
+            ["Text0267"] = "物品子分类已改变，请重新选择",
+            ["Text0268"] = "收藏物品编号无效",
+            ["Text0269"] = "Omni筛选接口不兼容：",
+            ["Text0270"] = "物品不存在或Omni资料未就绪",
+            ["Text0271"] = "当前角色的服务器资料尚未就绪",
+            ["Text0272"] = "请选择当前游戏地区的有效服务器",
+            ["Text0273"] = "手机模块未连接到Omni市场板服务，请重新加载最新本地服务端",
+            ["Text0274"] = "Omni市场板服务已连接，当前不可用，请查看Omni中的功能状态和提示",
+            ["Text0275"] = "Omni市场板正在处理操作，请稍后刷新",
+            ["Text0276"] = "Omni未接受市场板查询，请查看游戏中的提示",
+            ["Text0277"] = "市场板状态已改变，请刷新本服报价后重选",
+            ["Text0278"] = "请选择1至100条本服报价",
+            ["Text0279"] = "报价选择无效",
+            ["Text0280"] = "报价已失效，请重新查询",
+            ["Text0281"] = "Omni报价接口不兼容，无法确认价格与数量",
+            ["Text0282"] = "待确认报价过多，请稍后重试",
+            ["Text0283"] = "购买确认已过期或角色已改变，请重新选择报价",
+            ["Text0284"] = "报价或市场板状态已改变，请刷新后重新确认",
+            ["Text0285"] = "Omni购买公开接口不兼容",
+            ["Text0286"] = "Omni未接受购买请求，请查看游戏提示",
+            ["Text0287"] = "Omni当前无法取货，请检查取货功能、位置和游戏提示",
+            ["Text0288"] = "Omni当前无法打开商店购买",
+            ["Text0289"] = "不支持的物品操作",
+            ["Text0290"] = "物品编号无效",
+            ["Text0291"] = "物品资料不存在，请检查游戏数据版本",
+            ["Text0292"] = "货币资料尚未加载",
+            ["Text0293"] = "角色数据尚未加载，请稍后刷新",
+            ["Text0294"] = "游戏库存正在排序，请稍后刷新",
+            ["Text0295"] = "游戏库存槽位尚未加载，请稍后刷新",
+            ["Text0296"] = "未知角色页面",
+            ["Text0297"] = "角色已离线，招募列表不可用",
+            ["Text0298"] = "招募页面操作已失效，请重新打开",
+            ["Text0299"] = "招募地区无效",
+            ["Text0300"] = "招募分类无效",
+            ["Text0301"] = "未知招募操作",
+            ["Text0302"] = "预览帧过大",
+            ["Text0303"] = "手机支持服务已停止或请求已超时",
+            ["Text0304"] = "招募确认窗口已经改变，请重新操作",
+            ["Text0305"] = "确认按钮暂不可用",
+            ["Text0306"] = "该招募已过期或不在当前返回列表，请刷新招募板",
+            ["Text0307"] = "招募已改变，请重新打开",
+            ["Text0308"] = "游戏中的此操作当前不可用",
+            ["Text0309"] = "游戏按钮事件尚未就绪",
+            ["Text0310"] = "该连接未授权当前国服账号",
+            ["Text0311"] = "这条消息没有有效招募编号，请重载历史",
+            ["Text0312"] = "该招募不在本次服务器返回中，可能已取消或过期，请刷新招募板",
+            ["Text0313"] = "招募操作已失效，请重新打开",
+            ["Text0314"] = "游戏未接受参加操作，招募可能已过期",
+            ["Text0315"] = "游戏未返回参加所需的招募确认信息",
+            ["Text0316"] = "Omni 窗口过滤接口不匹配",
+            ["Text0317"] = "正在连接下载地址…",
+            ["Text0318"] = "校验通过，正在解压 FFmpeg…",
+            ["Text0319"] = "组件中未找到唯一的 FFmpeg 程序",
+            ["Text0320"] = "必要组件已下载并校验完成",
+            ["Text0321"] = "下载已取消或超时，原配置未更改。",
+            ["Text0322"] = "下载失败：",
+            ["Text0323"] = "；可重新下载。",
+            ["Text0324"] = "组件大小超过限制",
+            ["Text0325"] = "正在下载 ",
+            ["Text0326"] = "正在校验 SHA256…",
+            ["Text0327"] = "SHA256 校验失败，未应用组件",
+            ["Text0328"] = "GPU直通采集编码（推荐）",
+            ["Text0329"] = "串流模式",
+            ["Text0330"] = "UDP端口",
+            ["Text0331"] = "UDP外部端口（0沿用）",
+            ["Text0332"] = "开始串流时自动将游戏置于前台",
+            ["Text0333"] = "启用 H.264 硬件串流",
+            ["Text0334"] = "硬件串流组件",
+            ["Text0335"] = "##硬件串流组件路径",
+            ["Text0336"] = "下载后自动填写，也可输入本地完整路径",
+            ["Text0337"] = "FFmpeg 编码器",
+            ["Text0338"] = "##FFmpeg路径",
+            ["Text0339"] = "下载并解压后自动填写，也可输入本地完整路径",
+            ["Text0340"] = "下载必要组件",
+            ["Text0341"] = "取消下载",
+            ["Text0342"] = "串流显卡",
+            ["Text0343"] = "刷新显卡列表",
+            ["Text0344"] = "自动选择硬件显卡",
+            ["Text0345"] = "打开手机聊天面板",
+            ["Text0346"] = "狒狒食柿《服务端》###PhoneChat",
+            ["Text0347"] = "连接端口与服务",
+            ["Text0348"] = "端口",
+            ["Text0349"] = "内部端口",
+            ["Text0350"] = "##内部端口",
+            ["Text0351"] = "内部端口 · 18765",
+            ["Text0352"] = "内部端口：按回车应用并重启监听；路由器转发到此端口",
+            ["Text0353"] = "外部端口",
+            ["Text0354"] = "##外部端口",
+            ["Text0355"] = "外部端口 · 18765",
+            ["Text0356"] = "外部端口：须与路由器及手机填写的端口一致；不能替你修改路由器",
+            ["Text0357"] = "重启服务",
+            ["Text0358"] = "停止服务",
+            ["Text0359"] = "设备授权",
+            ["Text0360"] = "##手机验证码",
+            ["Text0361"] = "手机六位验证码",
+            ["Text0362"] = "##授权备注",
+            ["Text0363"] = "设备备注（选填）",
+            ["Text0364"] = "授权",
+            ["Text0365"] = "拒绝",
+            ["Text0366"] = "##设备备注",
+            ["Text0367"] = "未连接",
+            ["Text0368"] = "删除",
+            ["Text0369"] = "提醒与操作权限",
+            ["Text0370"] = "提醒选项",
+            ["Text0371"] = "悄悄话",
+            ["Text0372"] = "国服悄悄话",
+            ["Text0373"] = "国服被 @",
+            ["Text0374"] = "组队邀请",
+            ["Text0375"] = "交易申请",
+            ["Text0376"] = "好友请求",
+            ["Text0377"] = "被玩家选中",
+            ["Text0378"] = "允许手机宏指令",
+            ["Text0379"] = "离线推送",
+            ["Text0380"] = "推送服务",
+            ["Text0381"] = "不使用\u241fWxPusher\u241fServer酱\u241f",
+            ["Text0382"] = "设置##离线推送",
+            ["Text0383"] = "QQ 提醒",
+            ["Text0384"] = "启用 QQ 提醒（可与离线推送同时使用）",
+            ["Text0385"] = "个人 QQ 设置",
+            ["Text0386"] = "鱼糕服务端提醒",
+            ["Text0387"] = "待发送计划：",
+            ["Text0388"] = " 条",
+            ["Text0389"] = "在手机鱼糕中选择目标鱼并开启提醒，计划自动同步到此服务端。App / QQ / 推送方式在手机“手机提醒”中选择；QQ与推送凭证沿用本模块设置。服务端须保持运行。",
+            ["Text0390"] = "串流设置",
+            ["Text0391"] = "APK 下载",
+            ["Text0392"] = "APK 下载链接",
+            ["Text0393"] = "下载 APK",
+            ["Text0394"] = "打开下载页失败：",
+            ["Text0395"] = "请先启用狒狒食柿《服务端》",
+            ["Text0396"] = "正在准备 QQ 服务…",
+            ["Text0397"] = "请先启用狒狒食柿《服务端》，再登录 QQ",
+            ["Text0398"] = "机器人 QQ 号格式不正确",
+            ["Text0399"] = "QQ 正在准备登录，请稍候",
+            ["Text0400"] = "正在启动 QQ 服务…",
+            ["Text0401"] = "填写接收 QQ 号或群号",
+            ["Text0402"] = "QQ 未登录",
+            ["Text0403"] = "QQ 发送失败",
+            ["Text0404"] = "QQ 回复未发送，请检查游戏频道",
+            ["Text0405"] = "QQ 同步队列已满",
+            ["Text0406"] = "QQ 同步失败",
+            ["Text0407"] = "##机器人QQ",
+            ["Text0408"] = "机器人 QQ 号（选填）",
+            ["Text0409"] = "请用作为机器人的 QQ 账号扫描登录码",
+            ["Text0410"] = "准备 QQ 服务",
+            ["Text0411"] = "首次下载官方 NapCat Windows Node 包（约 118 MB），校验 SHA-256；无需申请运行授权，QQ 数据单独保存",
+            ["Text0412"] = "机器人 QQ 扫码登录",
+            ["Text0413"] = "恢复登录",
+            ["Text0414"] = "断开 QQ",
+            ["Text0415"] = "查看登录码",
+            ["Text0416"] = "暂无登录码，请先点击机器人 QQ 扫码登录",
+            ["Text0417"] = "随模块恢复 QQ",
+            ["Text0418"] = "##QQ接收",
+            ["Text0419"] = "提醒接收 QQ 号 / 群号",
+            ["Text0420"] = "发到群",
+            ["Text0421"] = "##QQ提醒对象",
+            ["Text0422"] = "群提醒 @QQ（选填）",
+            ["Text0423"] = "测试个人 QQ",
+            ["Text0424"] = "游戏聊天同步到 QQ 群",
+            ["Text0425"] = "##QQ同步群",
+            ["Text0426"] = "同步群号，多个用逗号分隔",
+            ["Text0427"] = "仅同步连接后的实时新消息；默认不选择频道，重启不补发旧记录",
+            ["Text0428"] = "同步频道",
+            ["Text0429"] = "##QQ频道",
+            ["Text0430"] = "QQ 回复游戏（以 # 开头）",
+            ["Text0431"] = "##QQ回复白名单",
+            ["Text0432"] = "允许回复的 QQ 号，多个用逗号分隔",
+            ["Text0433"] = "回复频道",
+            ["Text0434"] = "协议与许可证",
+            ["Text0435"] = "NapCat 4.18.38 · 本机后台服务，包含 QQ 运行组件。模块独立实现本地 API 适配，不内嵌或修改 NapCat 源码，不重新分发其运行包。上游采用特殊分发许可及各组件自身许可。",
+            ["Text0436"] = "查看 NapCat 来源与许可",
+            ["Text0437"] = " 设置###PhonePushConfig",
+            ["Text0438"] = "显示凭证",
+            ["Text0439"] = "##推送凭证",
+            ["Text0440"] = "Server酱 SendKey",
+            ["Text0441"] = "测试",
+            ["Text0442"] = "获取凭证",
+            ["Text0443"] = "NapCat 目录不完整，请关闭模块后移走 runtime-",
+            ["Text0444"] = " 目录再准备",
+            ["Text0445"] = "NapCat 包超出大小限制",
+            ["Text0446"] = "NapCat 官方包 SHA-256 不符，未执行任何程序",
+            ["Text0447"] = "NapCat 压缩包路径无效",
+            ["Text0448"] = "NapCat 压缩包路径越界",
+            ["Text0449"] = "NapCat 解压大小超限",
+            ["Text0450"] = "NapCat 包缺少运行文件",
+            ["Text0451"] = "NapCat 完整性清单缺失",
+            ["Text0452"] = "NapCat 清单路径无效",
+            ["Text0453"] = "NapCat 文件已改变，停止启动",
+            ["Text0454"] = "首次使用请点击准备 QQ 服务，再扫码登录机器人 QQ",
+            ["Text0455"] = "另一个游戏或模块正在使用此 QQ 服务，请先断开它",
+            ["Text0456"] = "QQ 服务已退出，请检查 Windows 运行依赖",
+            ["Text0457"] = "QQ 服务本地接口未就绪，请检查运行依赖及端口占用",
+            ["Text0458"] = "NapCat 启动失败",
+            ["Text0459"] = "NapCat 响应过大",
+            ["Text0460"] = "本地登录凭证过期",
+            ["Text0461"] = "NapCat 登录接口暂未就绪",
+            ["Text0462"] = "NapCat 拒绝消息请求",
+            ["Text0463"] = "QQ 本地接口登录失败",
+            ["Text0464"] = "QQ 账号信息不完整",
+            ["Text0465"] = "QQ 登录码地址无效",
+            ["Text0466"] = "二维码过大",
+            ["Text0467"] = "二维码格式无效",
+            ["Text0468"] = "事件过大",
+            ["Text0469"] = "UDP 接收异常，请检查防火墙与端口",
+            ["Text0470"] = "UDP 视频发送异常，请重新开始",
+            ["Title"] = "狒狒食柿《服务端》",
+            ["Description"] = "手机连接服务端：同步聊天、物品与幻化管理，支持独立预览和游戏串流；兼容现有配套 App。"
+        ,
+            ["Ui2001"] = "自动选择硬件显卡",
+            ["Ui2002"] = "所选显卡已不可用",
+            ["Ui2003"] = "推送测试",
+            ["Ui2004"] = "小烟酒",
+            ["Ui2005"] = "QQ 测试通知",
+            ["Ui2006"] = "提醒",
+            ["Ui2007"] = "推送测试",
+            ["Ui2008"] = "小烟酒",
+            ["Ui2009"] = "测试通知"
+});
+    private static System.WeakReference<OmniToolbox.Common.Module.Abstractions.OmniModuleBase>? owner;
+    private static TreeTools.Lifecycle.FeatureLifetime? lifetime;
+internal static void Bind(OmniToolbox.Common.Module.Abstractions.OmniModuleBase module, TreeTools.Lifecycle.FeatureLifetime scope)
+{
+    owner = new(module);
+    lifetime = scope;
+}
+internal static System.Threading.Tasks.Task Track(System.Threading.Tasks.Task task)
+{
+    var scope = lifetime;
+    if (!task.IsCompleted && scope is { IsStopping: false })
+    {
+        try { scope.Track(task); }
+        catch (System.InvalidOperationException) when (scope.IsStopping) { }
+    }
+    return task;
+}
+internal static System.Threading.Tasks.Task<T> Track<T>(System.Threading.Tasks.Task<T> task)
+{
+    Track((System.Threading.Tasks.Task)task);
+    return task;
+}
+    internal static string Get(string key)
+    {
+        if (owner != null && owner.TryGetTarget(out var module))
+            return OmniToolbox.UI.OmniLoc.Get(module, key).Replace('\u241f', '\0');
+        return Catalog.Get(key, OmniToolbox.UI.OmniLoc.CurrentLanguage).Replace('\u241f', '\0');
+    }
+}

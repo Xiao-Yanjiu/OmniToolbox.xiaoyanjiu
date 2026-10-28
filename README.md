@@ -2,10 +2,12 @@
 
 小烟酒的 Omni Toolbox（树树妙妙屋）在线模块仓库。
 
+当前在线模块均使用 **API 1**，需要 **Omni 1.1.8.2 或更新版本**，已使用 **1.1.8.4** 编译及契约校验。旧模块升级说明见 [API 1 迁移说明](API1-MIGRATION.md)。
+
 ## 小烟酒手机 App
 
-- **狒狒食柿《服务端》**（PhoneChat）— 需 Omni 1.1.7.1 或更新版本。
-- [下载小烟酒 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.78)
+- **狒狒食柿《服务端》**（PhoneChat）— 需 Omni 1.1.8.2 或更新版本。
+- [下载小烟酒 APK](https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/releases/tag/phone-v0.3.109)
 - 配置、对应源码和第三方许可见 [PhoneApp](PhoneApp/README.md)。
 
 ## 模块列表
@@ -35,7 +37,7 @@
 https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu
 ```
 
-链接：
+以下是同一清单的直接地址，**不需要和仓库地址重复添加**：
 
 ```
 https://raw.githubusercontent.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu/main/TreeHouseModules.json

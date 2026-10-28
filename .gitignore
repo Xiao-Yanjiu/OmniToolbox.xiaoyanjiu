@@ -1,3 +1,4 @@
 PhoneApp/local/
 **/bin/
 **/obj/
+.artifacts/

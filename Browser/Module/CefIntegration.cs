@@ -30,7 +30,7 @@ public sealed unsafe partial class GameWebBrowser
     private void DrawCefSettings()
     {
         cefInstaller ??= new CefInstaller(CefRoot);
-        ImGui.TextDisabled(cefInstaller.Ready ? "CEF 已安装 · 154.0.34" : cefInstaller.NativeInstalled ? "CEF 已安装，需要更新浏览器组件" : "CEF 未安装");
+        ImGui.TextDisabled(cefInstaller.Ready ? GameWebBrowserText.Get("Text0108") : cefInstaller.NativeInstalled ? GameWebBrowserText.Get("Text0109") : GameWebBrowserText.Get("Text0110"));
         if (cefInstaller.Busy)
         {
             var downloaded = cefInstaller.Bytes / 1048576d;
@@ -38,11 +38,11 @@ public sealed unsafe partial class GameWebBrowser
             ImGui.ProgressBar(cefInstaller.Total > 0 ? (float)cefInstaller.Bytes / cefInstaller.Total : 0,
                 new Vector2(-1, 0), cefInstaller.Total > 0 ? $"{downloaded:F1} / {total:F1} MB" : $"{downloaded:F1} MB");
             ImGui.TextWrapped(cefInstaller.Status);
-            if (ImGui.Button("取消下载")) cefInstaller.Cancel();
+            if (ImGui.Button(GameWebBrowserText.Get("Text0111"))) cefInstaller.Cancel();
         }
         else
         {
-            if (!cefInstaller.Ready && ImGui.Button(cefInstaller.NativeInstalled ? "更新浏览器组件" : "下载 CEF")) cefInstaller.Start();
+            if (!cefInstaller.Ready && ImGui.Button(cefInstaller.NativeInstalled ? GameWebBrowserText.Get("Text0112") : GameWebBrowserText.Get("Text0113"))) cefInstaller.Start();
             if (cefInstaller.Status.Length > 0) ImGui.TextWrapped(cefInstaller.Status);
         }
     }
@@ -50,7 +50,7 @@ public sealed unsafe partial class GameWebBrowser
     {
         cefInstaller ??= new CefInstaller(CefRoot);
         if (cefInstaller.Ready) return true;
-        statusMessage = cefInstaller.NativeInstalled ? "请在 CEF 模式下点击“更新浏览器组件”。" : "请在 CEF 模式下点击“下载 CEF”。";
+        statusMessage = cefInstaller.NativeInstalled ? GameWebBrowserText.Get("Text0114") : GameWebBrowserText.Get("Text0115");
         return false;
     }
     private void CefOpenTab(BrowserWin win, BrowserTab tab)
@@ -353,15 +353,15 @@ internal sealed class CefPeer : IDisposable
             { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
                 RedirectStandardOutput = true, RedirectStandardError = true };
             start.ArgumentList.Add("--yanjiu-profile=" + profile); start.ArgumentList.Add("--yanjiu-proxy=" + proxy);
-            process = Process.Start(start) ?? throw new IOException("无法启动 CEF 进程");
+            process = Process.Start(start) ?? throw new IOException(GameWebBrowserText.Get("Text0116"));
             if (stop.IsCancellationRequested) { try { process.Kill(entireProcessTree: true); } catch { } return; }
             var errors = new ConcurrentQueue<string>();
             var stderr = DrainErrors(process, stop.Token, errors);
-            var writer = writerTask = Task.Run(async () =>
+            var writer = writerTask = GameWebBrowserText.Track(Task.Run(async () =>
             {
                 await foreach (var line in queue.Reader.ReadAllAsync(stop.Token))
                 { await process.StandardInput.WriteLineAsync(line); await process.StandardInput.FlushAsync(stop.Token); }
-            }, stop.Token);
+            }, stop.Token));
             string? line;
             while ((line = await process.StandardOutput.ReadLineAsync(stop.Token)) != null)
             { if (line.Length <= 65536) output(line); }
@@ -388,7 +388,7 @@ internal sealed class CefPeer : IDisposable
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         stop.Cancel(); queue.Writer.TryComplete();
-        _ = Task.Run(async () =>
+        _ = GameWebBrowserText.Track(Task.Run(async () =>
         {
             try
             {
@@ -401,7 +401,7 @@ internal sealed class CefPeer : IDisposable
                 catch (TimeoutException) { if (!owned.HasExited) owned.Kill(entireProcessTree: true); }
             }
             catch { try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); } catch { } }
-        });
+        }));
     }
 }
 
@@ -446,22 +446,22 @@ internal sealed class CefInstaller
             {
                 await Download(NativeUrl, native, "正在下载 CEF 内核", token);
                 using var file = File.OpenRead(native);
-                if (!CryptographicOperations.FixedTimeEquals(await SHA512.HashDataAsync(file, token), Convert.FromBase64String(NativeSha512))) throw new IOException("CEF 校验失败，安装已取消");
+                if (!CryptographicOperations.FixedTimeEquals(await SHA512.HashDataAsync(file, token), Convert.FromBase64String(NativeSha512))) throw new IOException(GameWebBrowserText.Get("Text0117"));
             }
             await Download(HostUrl, host, "正在下载浏览器桥接程序", token);
             using (var file = File.OpenRead(host))
-                if (!CryptographicOperations.FixedTimeEquals(await SHA256.HashDataAsync(file, token), Convert.FromHexString(HostSha256))) throw new IOException("桥接程序校验失败，安装已取消");
-            Status = "正在解压和校验，首次安装可能需要稍等";
+                if (!CryptographicOperations.FixedTimeEquals(await SHA256.HashDataAsync(file, token), Convert.FromHexString(HostSha256))) throw new IOException(GameWebBrowserText.Get("Text0118"));
+            Status = GameWebBrowserText.Get("Text0119");
             var install = Path.Combine(staging, "install"); Directory.CreateDirectory(install);
             if (!bridgeOnly) Extract(native, install, nativeOnly: true, token);
             Extract(host, install, nativeOnly: false, token);
             var engineRoot = bridgeOnly ? root : install;
             foreach (var file in new[] { "libcef.dll", "icudtl.dat", "resources.pak", "chrome_elf.dll" })
-                if (!File.Exists(Path.Combine(engineRoot, file))) throw new IOException("安装包缺少 " + file);
+                if (!File.Exists(Path.Combine(engineRoot, file))) throw new IOException(GameWebBrowserText.Get("Text0120") + file);
             foreach (var file in new[] { "Yanjiu.BrowserHost.exe", "Yanjiu.BrowserHost.dll", "CefSharp.Core.Runtime.dll" })
-                if (!File.Exists(Path.Combine(install, file))) throw new IOException("安装包缺少 " + file);
+                if (!File.Exists(Path.Combine(install, file))) throw new IOException(GameWebBrowserText.Get("Text0120") + file);
             foreach (var locale in new[] { "zh-CN.pak", "en-US.pak" })
-                if (!File.Exists(Path.Combine(engineRoot, "locales", locale))) throw new IOException("安装包缺少 locales/" + locale);
+                if (!File.Exists(Path.Combine(engineRoot, "locales", locale))) throw new IOException(GameWebBrowserText.Get("Text0121") + locale);
             var hashes = bridgeOnly ? JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(Path.Combine(root, "verified.json")))! : new Dictionary<string, string>();
             foreach (var file in Directory.EnumerateFiles(install, "*", SearchOption.AllDirectories))
             { using var stream = File.OpenRead(file); hashes[Path.GetRelativePath(install, file)] = Convert.ToHexString(await SHA256.HashDataAsync(stream, token)); }
@@ -470,13 +470,13 @@ internal sealed class CefInstaller
             if (bridgeOnly) ReplaceBridge(install, root, Path.Combine(staging, "rollback"));
             else
             {
-                if (Directory.Exists(root)) throw new IOException("目标目录已存在，请关闭浏览器并移除未完成的安装目录后重试");
+                if (Directory.Exists(root)) throw new IOException(GameWebBrowserText.Get("Text0122"));
                 Directory.Move(install, root);
             }
-            Status = bridgeOnly ? "浏览器组件已更新，原 CEF 内核和登录资料已保留。" : "CEF 下载完成，可以打开网页了。";
+            Status = bridgeOnly ? GameWebBrowserText.Get("Text0123") : GameWebBrowserText.Get("Text0124");
         }
-        catch (OperationCanceledException) { Status = "下载已取消，可重新点击下载。"; }
-        catch (Exception ex) { Status = "下载失败：" + ex.Message; }
+        catch (OperationCanceledException) { Status = GameWebBrowserText.Get("Text0125"); }
+        catch (Exception ex) { Status = GameWebBrowserText.Get("Text0126") + ex.Message; }
         finally
         { try { if (Directory.Exists(staging)) Directory.Delete(staging, true); } catch { } Busy = false; }
     }
@@ -495,10 +495,10 @@ internal sealed class CefInstaller
         while ((count = await input.ReadAsync(buffer, token)) > 0)
         {
             await output.WriteAsync(buffer.AsMemory(0, count), token); Interlocked.Add(ref bytes, count);
-            if (Bytes > 1073741824) throw new IOException("下载包超过允许大小");
+            if (Bytes > 1073741824) throw new IOException(GameWebBrowserText.Get("Text0127"));
             Status = $"{label} · {Bytes / 1048576d / Math.Max(0.1, clock.Elapsed.TotalSeconds):F1} MB/s";
         }
-        if (Total > 0 && Bytes != Total) throw new IOException("下载不完整");
+        if (Total > 0 && Bytes != Total) throw new IOException(GameWebBrowserText.Get("Text0128"));
     }
     internal static void Extract(string archive, string target, bool nativeOnly, CancellationToken token)
     {
@@ -521,10 +521,10 @@ internal sealed class CefInstaller
                 else relative = relative.Substring(prefix.Length);
             }
             if (relative.Length == 0 || relative.EndsWith('/')) continue;
-            if (relative.Split('/').Any(p => p is "." or ".." || p.Contains(':')) || Path.IsPathRooted(relative)) throw new IOException("安装包路径无效");
+            if (relative.Split('/').Any(p => p is "." or ".." || p.Contains(':')) || Path.IsPathRooted(relative)) throw new IOException(GameWebBrowserText.Get("Text0129"));
             var full = Path.GetFullPath(Path.Combine(target, relative));
-            if (!full.StartsWith(Path.GetFullPath(target) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !seen.Add(full)) throw new IOException("安装包路径重复或越界");
-            expanded += entry.Length; if (expanded > 2147483648) throw new IOException("解压内容过大");
+            if (!full.StartsWith(Path.GetFullPath(target) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !seen.Add(full)) throw new IOException(GameWebBrowserText.Get("Text0130"));
+            expanded += entry.Length; if (expanded > 2147483648) throw new IOException(GameWebBrowserText.Get("Text0131"));
             Directory.CreateDirectory(Path.GetDirectoryName(full)!); entry.ExtractToFile(full, false);
         }
     }

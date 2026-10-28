@@ -24,12 +24,15 @@ using OmniToolbox.UI.Theme;
 
 namespace OmniToolbox.LocalModules;
 
-public sealed unsafe class AutoDiscardJunk : ModuleBase
+[ModuleApiVersion(1)]
+public sealed unsafe class AutoDiscardJunk : OmniModuleBase
 {
+    public override OmniToolbox.UI.ModuleLocalization Localization => AutoDiscardJunkText.Catalog;
+
     public override ModuleInfo Info { get; } = new()
     {
-        Title       = "自动丢垃圾",
-        Description = "",
+
+
         Category    = ModuleCategory.Item,
         Author      = "小烟酒",
     };
@@ -54,7 +57,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "XIVLauncherCN", "pluginConfigs", "OmniAutoDiscardJunk.json");
 
-    private Config config = new();
+    private Settings config = new();
     private bool   isRunning;
     private bool   windowOpen;
     private string searchInput = string.Empty;
@@ -68,13 +71,17 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
     private ICommandManager? commandManager;
     private readonly HashSet<string> registeredCommands = new();
 
-    public AutoDiscardJunk()
-    {
-        LoadOwnConfig();
-    }
+    public AutoDiscardJunk() { }
 
-    protected override void OnEnable()
+    protected override void OnStart(TreeTools.Lifecycle.FeatureLifetime activation)
     {
+        AutoDiscardJunkText.Bind(this, activation);
+
+        api1Stopped = false;
+
+        activation.OnStopping(StopActivation);
+        LoadOwnConfig();
+
         commandManager = DalamudServices.CommandManager ?? GetService<ICommandManager>("Dalamud.Game.Command.CommandManager");
         RegisterCommands();
 
@@ -85,7 +92,10 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
             DalamudServices.Framework.Update += OnFrameworkUpdate;
     }
 
-    protected override void OnDisable()
+    private bool api1Stopped = true;
+    private void StopActivation() { if (api1Stopped) return; api1Stopped = true; StopCore(); }
+    protected override void OnStop() => StopActivation();
+    private void StopCore()
     {
         isRunning = false;
         discardQueue.Clear();
@@ -100,7 +110,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         commandManager = null;
     }
 
-    protected override void OnDispose()
+    protected override void OnDestroy()
     {
         isRunning = false;
         discardQueue.Clear();
@@ -114,7 +124,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
             if (File.Exists(path))
             {
                 var json   = File.ReadAllText(path);
-                var loaded = JsonSerializer.Deserialize<Config>(json);
+                var loaded = JsonSerializer.Deserialize<Settings>(json);
                 if (loaded != null) config = loaded;
             }
         }
@@ -152,7 +162,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         }
         catch (Exception e)
         {
-            lastAction = $"命令 {cmd} 注册异常: {e.Message}";
+            lastAction = string.Format(AutoDiscardJunkText.Get("Text0001"), cmd, e.Message);
         }
     }
 
@@ -169,7 +179,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
     private void TogglePanel()
     {
         windowOpen = !windowOpen;
-        lastAction = windowOpen ? "已打开面板" : "已关闭面板";
+        lastAction = windowOpen ? AutoDiscardJunkText.Get("Text0002") : AutoDiscardJunkText.Get("Text0003");
     }
 
     private void OnFrameworkUpdate(IFramework framework)
@@ -195,7 +205,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
     {
         if (value == isRunning) return;
         isRunning = value;
-        lastAction = value ? "自动丢弃已启动" : "自动丢弃已停止";
+        lastAction = value ? AutoDiscardJunkText.Get("Text0004") : AutoDiscardJunkText.Get("Text0005");
 
         if (!value)
         {
@@ -234,7 +244,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
                     ->DiscardItem(capturedItem, capturedType, capturedSlot, capturedAddonId));
                 discardQueue.Enqueue(() => AddonSelectYesnoEvent.ClickYes());
 
-                lastAction = $"正在丢弃: {GetDisplayName(fullID)}";
+                lastAction = string.Format(AutoDiscardJunkText.Get("Text0006"), GetDisplayName(fullID));
                 return true;
             }
         }
@@ -247,7 +257,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         if (!windowOpen) return;
 
         IDisposable? fontHandle = null;
-        try { fontHandle = OmniFonts.GetUIFont().Push(); } catch {   }
+        try { fontHandle = TreeToolKit.Fonts.GetUIFont().Push(); } catch {   }
 
         try
         {
@@ -255,7 +265,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
 
             using var theme = new ComicStyleScope();
 
-            if (!ImGui.Begin("自动丢垃圾###OmniAutoDiscardJunk", ref windowOpen))
+            if (!ImGui.Begin(AutoDiscardJunkText.Get("Text0007"), ref windowOpen))
             {
                 ImGui.End();
                 return;
@@ -292,11 +302,11 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
     {
         var changed = false;
 
-        ImGui.TextWrapped("宏命令：/discard 开关面板，/discardrun 开关自动丢弃。");
+        ImGui.TextWrapped(AutoDiscardJunkText.Get("Text0008"));
 
         ImGui.Spacing();
 
-        if (ImGui.Button(windowOpen ? "关闭独立面板" : "打开独立面板"))
+        if (ImGui.Button(windowOpen ? AutoDiscardJunkText.Get("Text0009") : AutoDiscardJunkText.Get("Text0010")))
         {
             TogglePanel();
         }
@@ -312,12 +322,12 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
 
         ImGui.SameLine();
         if (isRunning)
-            ImGui.TextColored(WhitelistColor, "运行中，黑名单物品将被自动丢弃");
+            ImGui.TextColored(WhitelistColor, AutoDiscardJunkText.Get("Text0011"));
         else
-            ImGui.TextDisabled("已停止");
+            ImGui.TextDisabled(AutoDiscardJunkText.Get("Text0012"));
 
         ImGui.SameLine(ImGui.GetContentRegionAvail().X - OmniTheme.Scale(110f));
-        if (ImGui.Button(isRunning ? "停止" : "启动", OmniTheme.Scale(new Vector2(100f, 0))))
+        if (ImGui.Button(isRunning ? AutoDiscardJunkText.Get("Text0013") : AutoDiscardJunkText.Get("Text0014"), OmniTheme.Scale(new Vector2(100f, 0))))
             SetRunning(!isRunning);
     }
 
@@ -341,32 +351,32 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         try
         {
             ImGui.AlignTextToFramePadding();
-            ImGui.TextColored(BlacklistColor, "黑名单 (自动丢弃)");
+            ImGui.TextColored(BlacklistColor, AutoDiscardJunkText.Get("Text0015"));
             ImGui.SameLine();
             ImGui.SetNextItemWidth(MathF.Max(30f, ImGui.GetContentRegionAvail().X - 60f - ImGui.GetStyle().ItemSpacing.X));
-            ImGui.InputTextWithHint("###OmniDiscardBlacklistSearch", "搜索...", ref blacklistSearch, 64);
+            ImGui.InputTextWithHint("###OmniDiscardBlacklistSearch", AutoDiscardJunkText.Get("Text0016"), ref blacklistSearch, 64);
             ImGui.SameLine();
-            if (ImGui.Button("清空", new Vector2(60f, 0)) &&
+            if (ImGui.Button(AutoDiscardJunkText.Get("Text0017"), new Vector2(60f, 0)) &&
                 ImGui.IsKeyDown(ImGuiKey.LeftCtrl) &&
                 config.Blacklist.Count > 0)
             {
                 config.Blacklist.Clear();
                 SaveOwnConfig();
-                lastAction = "已清空黑名单";
+                lastAction = AutoDiscardJunkText.Get("Text0018");
             }
 
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("按住 Ctrl 点击以清空");
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip(AutoDiscardJunkText.Get("Text0019"));
 
             ImGui.Separator();
 
             if (config.Blacklist.Count == 0)
             {
-                ImGui.TextDisabled("点击背包物品左侧的 <- 按钮加入黑名单");
+                ImGui.TextDisabled(AutoDiscardJunkText.Get("Text0020"));
                 return;
             }
 
             var visibleItems = config.Blacklist.Where(id => MatchesSearch(id, blacklistSearch)).OrderBy(GetItemName).ToList();
-            if (visibleItems.Count == 0) ImGui.TextDisabled("没有匹配的物品");
+            if (visibleItems.Count == 0) ImGui.TextDisabled(AutoDiscardJunkText.Get("Text0021"));
             foreach (var id in visibleItems)
             {
                 ImGui.PushID((int)id);
@@ -378,7 +388,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
                 else      ImGui.TextUnformatted(GetDisplayName(id));
 
                 ImGui.SameLine(MathF.Max(0f, rowWidth - 52f));
-                if (ImGui.Button("删除", new Vector2(48f, 0)))
+                if (ImGui.Button(AutoDiscardJunkText.Get("Text0022"), new Vector2(48f, 0)))
                 {
                     config.Blacklist.Remove(id);
                     SaveOwnConfig();
@@ -401,18 +411,18 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         {
             var headerWidth = ImGui.GetContentRegionAvail().X;
             ImGui.AlignTextToFramePadding();
-            ImGui.TextColored(InventoryColor, "背包物品");
+            ImGui.TextColored(InventoryColor, AutoDiscardJunkText.Get("Text0023"));
 
             ImGui.SameLine();
             ImGui.SetNextItemWidth(-1);
-            ImGui.InputTextWithHint("###OmniDiscardSearch", "搜索...", ref searchInput, 64);
+            ImGui.InputTextWithHint("###OmniDiscardSearch", AutoDiscardJunkText.Get("Text0016"), ref searchInput, 64);
 
             ImGui.Separator();
 
             var items = GetInventoryDisplay();
             if (items.Count == 0)
             {
-                ImGui.TextDisabled("背包中没有可显示的物品");
+                ImGui.TextDisabled(AutoDiscardJunkText.Get("Text0024"));
                 return;
             }
 
@@ -434,7 +444,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
                     config.Blacklist.Add(id);
                     config.Whitelist.Remove(id);
                     SaveOwnConfig();
-                    lastAction = $"已加入黑名单: {displayName}";
+                    lastAction = string.Format(AutoDiscardJunkText.Get("Text0025"), displayName);
                 }
 
                 ImGui.SameLine();
@@ -448,7 +458,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
                     config.Whitelist.Add(id);
                     config.Blacklist.Remove(id);
                     SaveOwnConfig();
-                    lastAction = $"已加入白名单: {displayName}";
+                    lastAction = string.Format(AutoDiscardJunkText.Get("Text0026"), displayName);
                 }
 
                 ImGui.PopID();
@@ -467,32 +477,32 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
         try
         {
             ImGui.AlignTextToFramePadding();
-            ImGui.TextColored(WhitelistColor, "白名单 (受保护)");
+            ImGui.TextColored(WhitelistColor, AutoDiscardJunkText.Get("Text0027"));
             ImGui.SameLine();
             ImGui.SetNextItemWidth(MathF.Max(30f, ImGui.GetContentRegionAvail().X - 60f - ImGui.GetStyle().ItemSpacing.X));
-            ImGui.InputTextWithHint("###OmniDiscardWhitelistSearch", "搜索...", ref whitelistSearch, 64);
+            ImGui.InputTextWithHint("###OmniDiscardWhitelistSearch", AutoDiscardJunkText.Get("Text0016"), ref whitelistSearch, 64);
             ImGui.SameLine();
-            if (ImGui.Button("清空", new Vector2(60f, 0)) &&
+            if (ImGui.Button(AutoDiscardJunkText.Get("Text0017"), new Vector2(60f, 0)) &&
                 ImGui.IsKeyDown(ImGuiKey.LeftCtrl) &&
                 config.Whitelist.Count > 0)
             {
                 config.Whitelist.Clear();
                 SaveOwnConfig();
-                lastAction = "已清空白名单";
+                lastAction = AutoDiscardJunkText.Get("Text0028");
             }
 
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("按住 Ctrl 点击以清空");
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip(AutoDiscardJunkText.Get("Text0019"));
 
             ImGui.Separator();
 
             if (config.Whitelist.Count == 0)
             {
-                ImGui.TextDisabled("点击背包物品右侧的 -> 按钮加入白名单");
+                ImGui.TextDisabled(AutoDiscardJunkText.Get("Text0029"));
                 return;
             }
 
             var visibleItems = config.Whitelist.Where(id => MatchesSearch(id, whitelistSearch)).OrderBy(GetItemName).ToList();
-            if (visibleItems.Count == 0) ImGui.TextDisabled("没有匹配的物品");
+            if (visibleItems.Count == 0) ImGui.TextDisabled(AutoDiscardJunkText.Get("Text0021"));
             foreach (var id in visibleItems)
             {
                 ImGui.PushID((int)id);
@@ -504,7 +514,7 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
                 else      ImGui.TextUnformatted(GetDisplayName(id));
 
                 ImGui.SameLine(MathF.Max(0f, rowWidth - 52f));
-                if (ImGui.Button("删除", new Vector2(48f, 0)))
+                if (ImGui.Button(AutoDiscardJunkText.Get("Text0022"), new Vector2(48f, 0)))
                 {
                     config.Whitelist.Remove(id);
                     SaveOwnConfig();
@@ -601,10 +611,77 @@ public sealed unsafe class AutoDiscardJunk : ModuleBase
     }
 
     [Serializable]
-    private sealed class Config
+    private sealed class Settings
     {
         public HashSet<uint> Blacklist { get; set; } = new();
         public HashSet<uint> Whitelist { get; set; } = new();
     }
 }
 
+
+internal static class AutoDiscardJunkText
+{
+    internal static readonly OmniToolbox.UI.ModuleLocalization Catalog = OmniToolbox.UI.ModuleLocalization.Create(
+        new System.Collections.Generic.Dictionary<string,string>
+        {
+            ["Text0001"] = "命令 {0} 注册异常: {1}",
+            ["Text0002"] = "已打开面板",
+            ["Text0003"] = "已关闭面板",
+            ["Text0004"] = "自动丢弃已启动",
+            ["Text0005"] = "自动丢弃已停止",
+            ["Text0006"] = "正在丢弃: {0}",
+            ["Text0007"] = "自动丢垃圾###OmniAutoDiscardJunk",
+            ["Text0008"] = "宏命令：/discard 开关面板，/discardrun 开关自动丢弃。",
+            ["Text0009"] = "关闭独立面板",
+            ["Text0010"] = "打开独立面板",
+            ["Text0011"] = "运行中，黑名单物品将被自动丢弃",
+            ["Text0012"] = "已停止",
+            ["Text0013"] = "停止",
+            ["Text0014"] = "启动",
+            ["Text0015"] = "黑名单 (自动丢弃)",
+            ["Text0016"] = "搜索...",
+            ["Text0017"] = "清空",
+            ["Text0018"] = "已清空黑名单",
+            ["Text0019"] = "按住 Ctrl 点击以清空",
+            ["Text0020"] = "点击背包物品左侧的 <- 按钮加入黑名单",
+            ["Text0021"] = "没有匹配的物品",
+            ["Text0022"] = "删除",
+            ["Text0023"] = "背包物品",
+            ["Text0024"] = "背包中没有可显示的物品",
+            ["Text0025"] = "已加入黑名单: {0}",
+            ["Text0026"] = "已加入白名单: {0}",
+            ["Text0027"] = "白名单 (受保护)",
+            ["Text0028"] = "已清空白名单",
+            ["Text0029"] = "点击背包物品右侧的 -> 按钮加入白名单",
+            ["Title"] = "自动丢垃圾",
+            ["Description"] = "三栏管理背包物品：黑名单中的物品会在启动后自动丢弃。"
+        });
+    private static System.WeakReference<OmniToolbox.Common.Module.Abstractions.OmniModuleBase>? owner;
+    private static TreeTools.Lifecycle.FeatureLifetime? lifetime;
+internal static void Bind(OmniToolbox.Common.Module.Abstractions.OmniModuleBase module, TreeTools.Lifecycle.FeatureLifetime scope)
+{
+    owner = new(module);
+    lifetime = scope;
+}
+internal static System.Threading.Tasks.Task Track(System.Threading.Tasks.Task task)
+{
+    var scope = lifetime;
+    if (!task.IsCompleted && scope is { IsStopping: false })
+    {
+        try { scope.Track(task); }
+        catch (System.InvalidOperationException) when (scope.IsStopping) { }
+    }
+    return task;
+}
+internal static System.Threading.Tasks.Task<T> Track<T>(System.Threading.Tasks.Task<T> task)
+{
+    Track((System.Threading.Tasks.Task)task);
+    return task;
+}
+    internal static string Get(string key)
+    {
+        if (owner != null && owner.TryGetTarget(out var module))
+            return OmniToolbox.UI.OmniLoc.Get(module, key).Replace('\u241f', '\0');
+        return Catalog.Get(key, OmniToolbox.UI.OmniLoc.CurrentLanguage).Replace('\u241f', '\0');
+    }
+}

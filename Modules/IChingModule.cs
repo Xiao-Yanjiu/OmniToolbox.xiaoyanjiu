@@ -31,7 +31,6 @@ using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Dalamud.Game.Gui.FlyText;
 using Dalamud.Game.Text.SeStringHandling;
-using ModuleBase = OmniToolbox.Common.Module.Abstractions.ModuleBase;
 using System.Globalization;
 using Dalamud.Game.Command;
 using System.Net.Http;
@@ -41,17 +40,20 @@ using System.Threading.Tasks;
 
 namespace OmniToolbox.LocalModules;
 
-public sealed unsafe partial class IChingModule : ModuleBase
+[ModuleApiVersion(1)]
+public sealed unsafe partial class IChingModule : OmniModuleBase
 {
+    public override OmniToolbox.UI.ModuleLocalization Localization => IChingModuleText.Catalog;
+
     public override ModuleInfo Info { get; } = new()
     {
-        Title = "IChing",
-        Description = "",
+
+
         Category = ModuleCategory.Combat,
         Author = "小烟酒（基于 IChing 原作者源码）",
         Commands = [],
     };
-    private IChingModuleConfig config = new();
+    private Settings config = new();
     private IChingModuleServices services = null!;
     private readonly Dictionary<string, List<IDisposable>> resources = new();
     private readonly Dictionary<string, string> errors = new();
@@ -62,16 +64,22 @@ public sealed unsafe partial class IChingModule : ModuleBase
     private int actionInput, statusInput;
     private Vector3 destination;
     private float facing, scale = 1;
-    private string notice = "尚未执行操作";
+    private string notice = IChingModuleText.Get("Text0001");
     private CanAttackDelegate? canAttack;
     private readonly List<RadarEntry> radar = new();
     private long nextScan;
     public override bool HasSettings => true;
 
-    protected override void OnEnable()
+    protected override void OnStart(TreeTools.Lifecycle.FeatureLifetime activation)
     {
+        IChingModuleText.Bind(this, activation);
+
+        api1Stopped = false;
+
+        activation.OnStopping(StopActivation);
+
         services = DalamudServices.PluginInterface.Create<IChingModuleServices>()
-            ?? throw new InvalidOperationException("无法取得 Dalamud 服务。");
+            ?? throw new InvalidOperationException(IChingModuleText.Get("Text0002"));
         config ??= new();
         config.AllowLegacyHooks = true;
         config.ActorRadius = false; // Old radius hook could crash; never auto-resume a saved enabled state.
@@ -81,7 +89,7 @@ public sealed unsafe partial class IChingModule : ModuleBase
         config.FollowedPlayerRecords ??= [];
         config.FollowedPlayerRecords.RemoveAll(e => e == null || string.IsNullOrEmpty(e.Name));
         config.DisconnectText ??= "连接暂时中断，请稍后重试。";
-        saveHostConfig = typeof(ModuleBase).GetProperty("SaveHostConfig", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(this) as System.Action;
+        saveHostConfig = typeof(OmniModuleBase).GetProperty("SaveHostConfig", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(this) as System.Action;
         running = true;
         try
         {
@@ -93,8 +101,11 @@ public sealed unsafe partial class IChingModule : ModuleBase
         }
         catch { Stop(); throw; }
     }
-    protected override void OnDisable() => Stop();
-    protected override void OnDispose() => Stop();
+    private bool api1Stopped = true;
+    private void StopActivation() { if (api1Stopped) return; api1Stopped = true; StopCore(); }
+    protected override void OnStop() => StopActivation();
+    private void StopCore() => Stop();
+    protected override void OnDestroy() => Stop();
     // Unsubscribe first; a managed failure while restoring one feature must not
     // leave the remaining hooks, commands or frame callbacks running.
     internal static void RunCleanupSteps(IEnumerable<System.Action> steps, System.Action<Exception> report)
@@ -124,14 +135,14 @@ public sealed unsafe partial class IChingModule : ModuleBase
         steps.Add(RestoreDisplay);
         foreach (var key in resources.Keys.ToArray()) steps.Add(() => Release(key));
         steps.Add(() => { canAttack = null; radar.Clear(); });
-        RunCleanupSteps(steps, error => DalamudServices.PluginLog.Error(error, "IChing 停用清理失败，继续释放其余功能"));
+        RunCleanupSteps(steps, error => DalamudServices.PluginLog.Error(error, IChingModuleText.Get("Text0003")));
     }
     private void Release(string key)
     {
         if (!resources.Remove(key, out var list)) return;
         for (int i = list.Count - 1; i >= 0; i--)
             try { list[i].Dispose(); }
-            catch (Exception e) { DalamudServices.PluginLog.Error(e, $"IChing 释放 {key} 失败"); }
+            catch (Exception e) { DalamudServices.PluginLog.Error(e, string.Format(IChingModuleText.Get("Text0004"), key)); }
     }
     private void Feature(string key, bool requested, System.Action create)
     {
@@ -151,7 +162,7 @@ public sealed unsafe partial class IChingModule : ModuleBase
             for (int i = list.Count - 1; i >= 0; i--)
                 try { list[i].Dispose(); } catch { }
             errors[key] = e.Message;
-            DalamudServices.PluginLog.Error(e, $"IChing 初始化 {key} 失败");
+            DalamudServices.PluginLog.Error(e, string.Format(IChingModuleText.Get("Text0005"), key));
         }
         finally { building = null; enabling = null; }
     }
@@ -167,7 +178,7 @@ public sealed unsafe partial class IChingModule : ModuleBase
         nint start = services.Scanner.Module.BaseAddress + (nint)services.Scanner.TextSectionOffset;
         long size = services.Scanner.TextSectionSize;
         if (address == 0 || start == 0 || size <= 0 || address < start || (long)(address - start) >= size)
-            throw new InvalidOperationException("函数地址不在当前客户端代码段，未安装 Hook。");
+            throw new InvalidOperationException(IChingModuleText.Get("Text0006"));
     }
     private Hook<T> Hook<T>(string signature, T detour) where T : Delegate
     {
@@ -308,7 +319,7 @@ public sealed unsafe partial class IChingModule : ModuleBase
 
     private void EnsureCanAttack()
     {
-        if (ActionManager.MemberFunctionPointers.CanUseActionOnTarget == null) throw new InvalidOperationException("目标判定函数尚未解析。");
+        if (ActionManager.MemberFunctionPointers.CanUseActionOnTarget == null) throw new InvalidOperationException(IChingModuleText.Get("Text0007"));
         canAttack ??= (arg, address) => address != 0 && ActionManager.CanUseActionOnTarget(arg, (GameObject*)address);
     }
     private void Update(IFramework framework)
@@ -343,7 +354,7 @@ public sealed unsafe partial class IChingModule : ModuleBase
         if (!running) return;
         if (panel)
         {
-            using var font = OmniFonts.GetUIFont().Push();
+            using var font = TreeToolKit.Fonts.GetUIFont().Push();
             using var style = new ComicStyleScope();
             ImGui.SetNextWindowSize(new Vector2(760, 520), ImGuiCond.FirstUseEver);
             ImGui.SetNextWindowSizeConstraints(new Vector2(580, 340), new Vector2(float.MaxValue));
@@ -352,9 +363,9 @@ public sealed unsafe partial class IChingModule : ModuleBase
                 try
                 {
                     if (saveHostConfig != null) saveHostConfig();
-                    else notice = "此宿主未提供面板保存入口；请在 Omni 模块设置里修改以保存配置。";
+                    else notice = IChingModuleText.Get("Text0008");
                 }
-                catch (Exception e) { notice = $"配置保存失败：{e.Message}"; }
+                catch (Exception e) { notice = string.Format(IChingModuleText.Get("Text0009"), e.Message); }
             }
             ImGui.End();
         }
@@ -433,7 +444,7 @@ public sealed unsafe partial class IChingModule : ModuleBase
         ImGui.SetNextItemWidth(-1);
         ImGui.SliderFloat($"##{label}", ref value, min, max, format);
         bool committed = ImGui.IsItemDeactivatedAfterEdit();
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("拖动调整，Ctrl + 单击可直接输入数值。");
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(IChingModuleText.Get("Text0010"));
         ImGui.EndDisabled();
         return committed;
     }
@@ -444,9 +455,9 @@ public sealed unsafe partial class IChingModule : ModuleBase
     }
     public override bool DrawSettings()
     {
-        if (ImGui.Button("打开 IChing 独立面板")) panel = true;
-        ImGui.SameLine(); ImGui.TextDisabled($"宏：{PanelWakeCommand}");
-        if (errors.Count > 0 && ImGui.Button($"查看 {errors.Count} 项问题")) { panel = true; selectedSection = 6; }
+        if (ImGui.Button(IChingModuleText.Get("Text0011"))) panel = true;
+        ImGui.SameLine(); ImGui.TextDisabled(string.Format(IChingModuleText.Get("Text0012"), PanelWakeCommand));
+        if (errors.Count > 0 && ImGui.Button(string.Format(IChingModuleText.Get("Text0013"), errors.Count))) { panel = true; selectedSection = 6; }
         return false;
     }
     private bool DrawStandaloneSettings()
@@ -459,7 +470,7 @@ public sealed unsafe partial class IChingModule : ModuleBase
     private bool DrawPanelContent()
     {
         bool changed = false;
-        string[] sections = ["移动", "战斗", "雷达", "目标", "工具", "显示", "诊断"];
+        string[] sections = [IChingModuleText.Get("Ui2001"), IChingModuleText.Get("Ui2002"), IChingModuleText.Get("Ui2003"), IChingModuleText.Get("Ui2004"), IChingModuleText.Get("Ui2005"), IChingModuleText.Get("Ui2006"), IChingModuleText.Get("Ui2007")];
         if (ImGui.BeginChild("sidebar", new Vector2(120 * UiScale, -ImGui.GetFrameHeightWithSpacing()), true))
         {
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 9 * UiScale);
@@ -497,7 +508,7 @@ public sealed unsafe partial class IChingModule : ModuleBase
             }
         }
         ImGui.EndChild(); ImGui.Separator();
-        ImGui.TextDisabled(errors.Count == 0 ? $"就绪 · {PanelWakeCommand} 唤醒面板" : $"{errors.Count} 项初始化问题 · 详情见诊断");
+        ImGui.TextDisabled(errors.Count == 0 ? string.Format(IChingModuleText.Get("Text0014"), PanelWakeCommand) : string.Format(IChingModuleText.Get("Text0015"), errors.Count));
         if (ImGui.IsItemHovered()) ImGui.SetTooltip(notice);
         if (changed && running) SyncFeatures();
         return changed;
@@ -505,12 +516,12 @@ public sealed unsafe partial class IChingModule : ModuleBase
     private bool DrawMovement()
     {
         bool changed = false;
-        using (new Card("movement", "移动", ""))
+        using (new Card("movement", IChingModuleText.Get("Ui2008"), ""))
         {
-            changed |= CompactRow("移速调整", ref config.Speed, ref config.SpeedAdd, 0, 20, "+ %.2f", "移速");
-            changed |= CompactPair("最大加速度", ref config.MaxAcceleration, "强制移动", ref config.MovePermission, "最大加速度", "强制移动");
-            changed |= CompactDualRow("防击退", ref config.AntiKnock, ref config.KnockDistance, ref config.KnockTime, "防击退");
-            changed |= CompactPair("掉落无伤", ref config.NoFallDamage, "无掉落", ref config.NoFall, "掉落无伤", "无掉落");
+            changed |= CompactRow(IChingModuleText.Get("Ui2009"), ref config.Speed, ref config.SpeedAdd, 0, 20, "+ %.2f", IChingModuleText.Get("Ui2010"));
+            changed |= CompactPair(IChingModuleText.Get("Ui2011"), ref config.MaxAcceleration, IChingModuleText.Get("Ui2012"), ref config.MovePermission, IChingModuleText.Get("Ui2013"), IChingModuleText.Get("Ui2014"));
+            changed |= CompactDualRow(IChingModuleText.Get("Ui2015"), ref config.AntiKnock, ref config.KnockDistance, ref config.KnockTime, IChingModuleText.Get("Ui2016"));
+            changed |= CompactPair(IChingModuleText.Get("Ui2017"), ref config.NoFallDamage, IChingModuleText.Get("Ui2018"), ref config.NoFall, IChingModuleText.Get("Ui2019"), IChingModuleText.Get("Ui2020"));
         }
         changed |= DrawExtendedMovement();
         return changed;
@@ -518,35 +529,35 @@ public sealed unsafe partial class IChingModule : ModuleBase
     private bool DrawCombat()
     {
         bool changed = false;
-        using (new Card("range", "范围与动作", ""))
+        using (new Card("range", IChingModuleText.Get("Ui2021"), ""))
         {
-            changed |= CompactRow("技能距离", ref config.ActionRange, ref config.RangeAdd, 0, 40, "+ %.1f m", "技能距离");
-            changed |= CompactRow("当前目标圈", ref config.ActorRadius, ref config.RadiusAdd, 0, 5, "+ %.1f m", null);
-            changed |= CompactPair("后摇可移动", ref config.NoBackswing, "本地视线判定", ref config.LocalLineOfSight, "后摇移动", "本地视线判定");
+            changed |= CompactRow(IChingModuleText.Get("Ui2022"), ref config.ActionRange, ref config.RangeAdd, 0, 40, "+ %.1f m", IChingModuleText.Get("Ui2023"));
+            changed |= CompactRow(IChingModuleText.Get("Ui2024"), ref config.ActorRadius, ref config.RadiusAdd, 0, 5, "+ %.1f m", null);
+            changed |= CompactPair(IChingModuleText.Get("Ui2025"), ref config.NoBackswing, IChingModuleText.Get("Ui2026"), ref config.LocalLineOfSight, IChingModuleText.Get("Ui2027"), IChingModuleText.Get("Ui2028"));
         }
-        using (new Card("cast", "咏唱与复唱", ""))
+        using (new Card("cast", IChingModuleText.Get("Ui2029"), ""))
         {
-            changed |= CompactRow("复唱缩减", ref config.Recast, ref config.RecastSeconds, 0, 60, "- %.2f s", "复唱缩减");
-            changed |= Toggle("快速结印", ref config.Mudra, "复唱缩减");
-            changed |= CompactRow("咏唱缩减", ref config.Cast, ref config.CastSeconds, 0, 10, "- %.2f s", "咏唱缩减");
-            changed |= CompactRow("PVP 动画锁", ref config.PvpAnimationLock, ref config.AnimationLock, 0, 1, "%.2f s", null);
+            changed |= CompactRow(IChingModuleText.Get("Ui2030"), ref config.Recast, ref config.RecastSeconds, 0, 60, "- %.2f s", IChingModuleText.Get("Ui2031"));
+            changed |= Toggle(IChingModuleText.Get("Ui2032"), ref config.Mudra, "复唱缩减");
+            changed |= CompactRow(IChingModuleText.Get("Ui2033"), ref config.Cast, ref config.CastSeconds, 0, 10, "- %.2f s", IChingModuleText.Get("Ui2034"));
+            changed |= CompactRow(IChingModuleText.Get("Ui2035"), ref config.PvpAnimationLock, ref config.AnimationLock, 0, 1, "%.2f s", null);
         }
-        if (!ImGui.CollapsingHeader("突进位移管理")) return changed;
-        using (new Card("timeline", "突进位移管理", "通过技能的结束动画识别位移；多个技能可能共用同一动画。"))
+        if (!ImGui.CollapsingHeader(IChingModuleText.Get("Text0016"))) return changed;
+        using (new Card("timeline", IChingModuleText.Get("Ui2036"), IChingModuleText.Get("Ui2037")))
         {
-            changed |= Toggle("突进无位移", ref config.NoActionMove, "突进无位移");
+            changed |= Toggle(IChingModuleText.Get("Ui2038"), ref config.NoActionMove, "突进无位移");
             ImGui.BeginDisabled(!config.NoActionMove);
-            changed |= Toggle("列表作为允许位移的例外", ref config.BlockAllExceptListed);
-            WrapHint(config.BlockAllExceptListed ? "屏蔽列表以外的全部动画。" : "仅屏蔽列表中的动画。空列表不会拦截位移。");
+            changed |= Toggle(IChingModuleText.Get("Ui2039"), ref config.BlockAllExceptListed);
+            WrapHint(config.BlockAllExceptListed ? IChingModuleText.Get("Ui2040") : IChingModuleText.Get("Ui2041"));
             ImGui.SetNextItemWidth(-1);
             ImGui.InputInt("##actionID", ref actionInput);
             ImGui.BeginDisabled(!running || actionInput <= 0);
-            if (ActionButton("按技能 ID 添加"))
+            if (ActionButton(IChingModuleText.Get("Text0017")))
             {
                 var row = services.Data.GetExcelSheet<LuminaAction>().GetRowOrDefault((uint)actionInput);
                 if (row != null && row.Value.AnimationEnd.RowId != 0)
-                { changed |= config.BlockedTimelines.Add(row.Value.AnimationEnd.RowId); notice = $"已添加 {row.Value.Name} / 动画 {row.Value.AnimationEnd.RowId}"; }
-                else notice = "技能不存在或没有结束动画。";
+                { changed |= config.BlockedTimelines.Add(row.Value.AnimationEnd.RowId); notice = string.Format(IChingModuleText.Get("Text0018"), row.Value.Name, row.Value.AnimationEnd.RowId); }
+                else notice = IChingModuleText.Get("Text0019");
             }
             ImGui.EndDisabled();
             changed |= DrawIdList("timelines", config.BlockedTimelines, true);
@@ -557,36 +568,36 @@ public sealed unsafe partial class IChingModule : ModuleBase
     private bool DrawRadarSettings()
     {
         bool changed = false;
-        using (new Card("radar", "战场雷达", running && Active && services.Client.IsPvP ? $"当前扫描到 {radar.Count} 个敌方玩家。" : "进入 PVP 区域后开始显示敌方玩家。"))
+        using (new Card("radar", IChingModuleText.Get("Ui2042"), running && Active && services.Client.IsPvP ? string.Format(IChingModuleText.Get("Ui2043"), radar.Count) : IChingModuleText.Get("Ui2044")))
         {
-            changed |= CompactRow("战场雷达", ref config.Radar, ref config.RadarDistance, 1, 500, "%.0f m", "可攻击目标判定");
+            changed |= CompactRow(IChingModuleText.Get("Ui2045"), ref config.Radar, ref config.RadarDistance, 1, 500, "%.0f m", IChingModuleText.Get("Ui2046"));
             ImGui.BeginDisabled(!config.Radar);
-            changed |= Toggle("连线", ref config.RadarLines);
-            changed |= Toggle("职业图标", ref config.JobIcons);
-            changed |= Toggle("战意图标", ref config.BattleIcons);
+            changed |= Toggle(IChingModuleText.Get("Ui2047"), ref config.RadarLines);
+            changed |= Toggle(IChingModuleText.Get("Ui2048"), ref config.JobIcons);
+            changed |= Toggle(IChingModuleText.Get("Ui2049"), ref config.BattleIcons);
             ImGui.EndDisabled();
         }
-        using (new Card("follow", "关注名单", "优先按角色 ContentId 匹配；缺少 ID 时使用姓名与服务器。旧姓名名单继续兼容。"))
+        using (new Card("follow", IChingModuleText.Get("Ui2050"), IChingModuleText.Get("Ui2051")))
         {
             ImGui.BeginDisabled(!running || services.Targets.Target is not IPlayerCharacter);
-            if (ActionButton("关注当前玩家目标") && services.Targets.Target is IPlayerCharacter pc) changed |= FollowPlayer(pc);
+            if (ActionButton(IChingModuleText.Get("Text0020")) && services.Targets.Target is IPlayerCharacter pc) changed |= FollowPlayer(pc);
             ImGui.EndDisabled();
-            if (config.FollowedPlayers.Count + config.FollowedPlayerRecords.Count == 0) WrapHint("尚无关注玩家。选中玩家后点击上方按钮。" );
+            if (config.FollowedPlayers.Count + config.FollowedPlayerRecords.Count == 0) WrapHint(IChingModuleText.Get("Ui2052") );
             if (config.FollowedPlayers.Count + config.FollowedPlayerRecords.Count > 0 && ImGui.BeginTable("players", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
             {
-                ImGui.TableSetupColumn("玩家");
-                ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, 70 * UiScale);
+                ImGui.TableSetupColumn(IChingModuleText.Get("Text0021"));
+                ImGui.TableSetupColumn(IChingModuleText.Get("Text0022"), ImGuiTableColumnFlags.WidthFixed, 70 * UiScale);
                 foreach (var entry in config.FollowedPlayerRecords.OrderBy(e => e.Name).ToArray())
                 {
-                    ImGui.TableNextRow(); ImGui.TableNextColumn(); ImGui.TextUnformatted($"{entry.Name} · 世界 {entry.HomeWorld}");
+                    ImGui.TableNextRow(); ImGui.TableNextColumn(); ImGui.TextUnformatted(string.Format(IChingModuleText.Get("Text0023"), entry.Name, entry.HomeWorld));
                     ImGui.TableNextColumn();
-                    if (ImGui.SmallButton($"移除##id{entry.ContentId}-{entry.Name}-{entry.HomeWorld}")) { config.FollowedPlayerRecords.Remove(entry); changed = true; }
+                    if (ImGui.SmallButton(string.Format(IChingModuleText.Get("Text0024"), entry.ContentId, entry.Name, entry.HomeWorld))) { config.FollowedPlayerRecords.Remove(entry); changed = true; }
                 }
                 foreach (var name in config.FollowedPlayers.OrderBy(n => n).ToArray())
                 {
                     ImGui.TableNextRow(); ImGui.TableNextColumn(); ImGui.TextUnformatted(name);
                     ImGui.TableNextColumn();
-                    if (ImGui.SmallButton($"移除##follow{name}")) { config.FollowedPlayers.Remove(name); changed = true; }
+                    if (ImGui.SmallButton(string.Format(IChingModuleText.Get("Text0025"), name))) { config.FollowedPlayers.Remove(name); changed = true; }
                 }
                 ImGui.EndTable();
             }
@@ -597,43 +608,43 @@ public sealed unsafe partial class IChingModule : ModuleBase
     {
         DrawObjectives();
         bool changed = false;
-        using (new Card("status", "目标状态过滤", "当前目标含名单中的状态时，自动取消选中。"))
+        using (new Card("status", IChingModuleText.Get("Ui2053"), IChingModuleText.Get("Ui2054")))
         {
-            changed |= Toggle("自动取消选中", ref config.ClearTarget, "目标过滤");
+            changed |= Toggle(IChingModuleText.Get("Ui2055"), ref config.ClearTarget, "目标过滤");
             ImGui.SetNextItemWidth(-1);
             ImGui.InputInt("##statusID", ref statusInput);
             ImGui.BeginDisabled(statusInput <= 0 || statusInput > ushort.MaxValue);
-            if (ActionButton("按状态 ID 添加")) changed |= config.TargetStatuses.Add((uint)statusInput);
+            if (ActionButton(IChingModuleText.Get("Text0026"))) changed |= config.TargetStatuses.Add((uint)statusInput);
             ImGui.EndDisabled();
             changed |= DrawIdList("statuses", config.TargetStatuses, false);
         }
-        using (new Card("selection", "鼠标选敌", "将下方指令放入宏或快捷键，鼠标停在游戏场景上执行。"))
+        using (new Card("selection", IChingModuleText.Get("Ui2056"), IChingModuleText.Get("Ui2057")))
         {
-            WrapHint("最近敌人：选择距离鼠标世界坐标最近的可攻击目标。\n敌群中心：选择候选敌人的质心附近目标。");
-            if (ActionButton("复制最近敌人指令")) { ImGui.SetClipboardText("/omni IChingModule nearest"); notice = "最近敌人指令已复制。"; }
-            if (ActionButton("复制敌群中心指令")) { ImGui.SetClipboardText("/omni IChingModule most"); notice = "敌群中心指令已复制。"; }
-            changed |= Slider("选敌搜索半径（与雷达共用）", ref config.RadarDistance, 1, 500, "%.0f m", true);
+            WrapHint(IChingModuleText.Get("Ui2058"));
+            if (ActionButton(IChingModuleText.Get("Text0027"))) { ImGui.SetClipboardText("/omni IChingModule nearest"); notice = IChingModuleText.Get("Text0028"); }
+            if (ActionButton(IChingModuleText.Get("Text0029"))) { ImGui.SetClipboardText("/omni IChingModule most"); notice = IChingModuleText.Get("Text0030"); }
+            changed |= Slider(IChingModuleText.Get("Ui2059"), ref config.RadarDistance, 1, 500, "%.0f m", true);
         }
         return changed;
     }
     private bool DrawIdList(string id, HashSet<uint> values, bool timeline)
     {
         bool changed = false;
-        if (values.Count == 0) { WrapHint("名单为空。输入 ID 后点击添加。" ); return false; }
+        if (values.Count == 0) { WrapHint(IChingModuleText.Get("Ui2060") ); return false; }
         if (ImGui.BeginTable(id, 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
         {
             ImGui.TableSetupColumn("ID", ImGuiTableColumnFlags.WidthFixed, 72 * UiScale);
-            ImGui.TableSetupColumn(timeline ? "类型" : "状态名称");
-            ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, 70 * UiScale);
+            ImGui.TableSetupColumn(timeline ? IChingModuleText.Get("Text0031") : IChingModuleText.Get("Text0032"));
+            ImGui.TableSetupColumn(IChingModuleText.Get("Text0022"), ImGuiTableColumnFlags.WidthFixed, 70 * UiScale);
             ImGui.TableHeadersRow();
             foreach (var value in values.OrderBy(v => v).ToArray())
             {
                 ImGui.TableNextRow(); ImGui.TableNextColumn(); ImGui.TextUnformatted(value.ToString());
                 ImGui.TableNextColumn();
-                string name = timeline ? "技能结束动画" : running ? services.Data.GetExcelSheet<Lumina.Excel.Sheets.Status>().GetRowOrDefault(value)?.Name.ToString() ?? "未知状态" : "状态";
+                string name = timeline ? IChingModuleText.Get("Ui2061") : running ? services.Data.GetExcelSheet<Lumina.Excel.Sheets.Status>().GetRowOrDefault(value)?.Name.ToString() ?? IChingModuleText.Get("Ui2062") : IChingModuleText.Get("Ui2063");
                 ImGui.TextWrapped(name);
                 ImGui.TableNextColumn();
-                if (ImGui.SmallButton($"删除##{id}{value}")) { values.Remove(value); changed = true; }
+                if (ImGui.SmallButton(string.Format(IChingModuleText.Get("Text0033"), id, value))) { values.Remove(value); changed = true; }
             }
             ImGui.EndTable();
         }
@@ -641,38 +652,38 @@ public sealed unsafe partial class IChingModule : ModuleBase
     }
     private void DrawTools()
     {
-        using (new Card("position", "坐标与面向", "读取当前位置后调整 X / Y / Z。Y 为高度；面向单位为弧度。"))
+        using (new Card("position", IChingModuleText.Get("Ui2064"), IChingModuleText.Get("Ui2065")))
         {
             ImGui.BeginDisabled(!Active);
-            if (ActionButton("应用坐标")) Run(Teleport);
+            if (ActionButton(IChingModuleText.Get("Text0034"))) Run(Teleport);
             ImGui.SameLine();
-            if (ActionButton("读取当前位置")) { destination = services.Objects.LocalPlayer!.Position; facing = services.Objects.LocalPlayer.Rotation; }
-            Hint("世界坐标 X / Y / Z");
+            if (ActionButton(IChingModuleText.Get("Text0035"))) { destination = services.Objects.LocalPlayer!.Position; facing = services.Objects.LocalPlayer.Rotation; }
+            Hint(IChingModuleText.Get("Ui2066"));
             ImGui.SetNextItemWidth(-1);
             ImGui.InputFloat3("##destination", ref destination);
-            Slider("面向", ref facing, -MathF.PI, MathF.PI, "%.3f rad", true);
-            if (ActionButton("应用面向")) Run(SetFacing);
-            if (ActionButton("读取地图旗标")) Run(ReadFlag);
-            if (ActionButton("前往地图旗标")) Run(() => { ReadFlag(); Teleport(); });
+            Slider(IChingModuleText.Get("Ui2067"), ref facing, -MathF.PI, MathF.PI, "%.3f rad", true);
+            if (ActionButton(IChingModuleText.Get("Text0036"))) Run(SetFacing);
+            if (ActionButton(IChingModuleText.Get("Text0037"))) Run(ReadFlag);
+            if (ActionButton(IChingModuleText.Get("Text0038"))) Run(() => { ReadFlag(); Teleport(); });
             ImGui.EndDisabled();
         }
-        using (new Card("model", "目标模型", "仅调整本地显示。停用模块不会自动恢复一次性写入。"))
+        using (new Card("model", IChingModuleText.Get("Ui2068"), IChingModuleText.Get("Ui2069")))
         {
             bool hasTarget = Active && services.Targets.Target != null;
-            WrapHint(hasTarget ? $"当前目标：{services.Targets.Target!.Name}" : "请先选中目标。" );
-            Slider("缩放倍数", ref scale, 0.1f, 5, "%.2f x", hasTarget);
+            WrapHint(hasTarget ? string.Format(IChingModuleText.Get("Ui2070"), services.Targets.Target!.Name) : IChingModuleText.Get("Ui2071") );
+            Slider(IChingModuleText.Get("Ui2072"), ref scale, 0.1f, 5, "%.2f x", hasTarget);
             ImGui.BeginDisabled(!hasTarget);
-            if (ActionButton("应用目标缩放")) Run(SetScale);
-            if (ActionButton("恢复缩放为 1")) { scale = 1; Run(SetScale); }
+            if (ActionButton(IChingModuleText.Get("Text0039"))) Run(SetScale);
+            if (ActionButton(IChingModuleText.Get("Text0040"))) { scale = 1; Run(SetScale); }
             ImGui.EndDisabled();
         }
     }
     private bool DrawDiagnostics()
     {
         bool changed = false;
-        using (new Card("diagnosis", "运行诊断", "已初始化表示创建成功；实际效果仍需游戏内验证。"))
+        using (new Card("diagnosis", IChingModuleText.Get("Ui2073"), IChingModuleText.Get("Ui2074")))
         {
-            if (errors.Count == 0) WrapHint("暂无初始化错误。" );
+            if (errors.Count == 0) WrapHint(IChingModuleText.Get("Ui2075") );
             foreach (var pair in errors)
             {
                 ImGui.TextColored(OmniTheme.Tokens.Error, pair.Key);
@@ -680,22 +691,22 @@ public sealed unsafe partial class IChingModule : ModuleBase
                 ImGui.Separator();
             }
             ImGui.BeginDisabled(!running || errors.Count == 0);
-            if (ActionButton("重试失败的功能")) { errors.Clear(); SyncFeatures(); }
+            if (ActionButton(IChingModuleText.Get("Text0041"))) { errors.Clear(); SyncFeatures(); }
             ImGui.EndDisabled();
-            if (ActionButton("复制诊断信息"))
+            if (ActionButton(IChingModuleText.Get("Text0042")))
             {
                 ImGui.SetClipboardText($"IChing local-audit-20261019 | running={running} | initialized={resources.Count}\n" + string.Join("\n", errors.Select(p => p.Key + ": " + p.Value)));
-                notice = "诊断信息已复制。";
+                notice = IChingModuleText.Get("Text0043");
             }
         }
-        using (new Card("migration", "未迁移功能", "功能补齐情况见随附的本地调试说明。"))
+        using (new Card("migration", IChingModuleText.Get("Ui2076"), IChingModuleText.Get("Ui2077")))
         {
-            WrapHint("钓鱼动画通过原生动画槽更新实现本地快速播放，未照搬 DLL 的资源替换。世界射线、InvulnerableMode 与未知参数的内部指令未启用；方法体受保护，不能确认行为。\n部分旧版 Hook 尚需游戏内核验；详见功能还原说明。" );
+            WrapHint(IChingModuleText.Get("Ui2078") );
         }
-        if (ImGui.CollapsingHeader("网络 Opcode")) DrawOpcodeDiagnostics();
-        using (new Card("reset", "配置维护", "关闭所有功能并清空名单；一次性坐标与缩放写入不会撤销。"))
+        if (ImGui.CollapsingHeader(IChingModuleText.Get("Text0044"))) DrawOpcodeDiagnostics();
+        using (new Card("reset", IChingModuleText.Get("Ui2079"), IChingModuleText.Get("Ui2080")))
         {
-            if (ActionButton("恢复默认并关闭全部功能")) return ResetSettings();
+            if (ActionButton(IChingModuleText.Get("Text0045"))) return ResetSettings();
         }
         return changed;
     }
@@ -704,51 +715,51 @@ public sealed unsafe partial class IChingModule : ModuleBase
         config = new();
         if (running) SyncFeatures();
         radar.Clear();
-        notice = "已恢复默认设置。";
+        notice = IChingModuleText.Get("Text0046");
         return true;
     }
     private void Run(System.Action action)
     {
         try
         {
-            if (!Active) throw new InvalidOperationException("请先启用模块并登录角色。");
+            if (!Active) throw new InvalidOperationException(IChingModuleText.Get("Text0047"));
             action();
         }
-        catch (Exception e) { notice = e.Message; DalamudServices.PluginLog.Error(e, "IChing 工具操作失败"); }
+        catch (Exception e) { notice = e.Message; DalamudServices.PluginLog.Error(e, IChingModuleText.Get("Text0048")); }
     }
     private void Teleport()
     {
-        if (!float.IsFinite(destination.X) || !float.IsFinite(destination.Y) || !float.IsFinite(destination.Z)) throw new InvalidOperationException("坐标必须是有限数值。");
+        if (!float.IsFinite(destination.X) || !float.IsFinite(destination.Y) || !float.IsFinite(destination.Z)) throw new InvalidOperationException(IChingModuleText.Get("Text0049"));
         var player = (GameObject*)services.Objects.LocalPlayer!.Address;
         if (player == null) return;
         player->Position.X = destination.X; player->Position.Y = destination.Y; player->Position.Z = destination.Z;
         if (player->IsReadyToDraw()) { player->DisableDraw(); player->EnableDraw(); }
-        notice = $"已写入本地坐标：{destination}（服务器可能纠正）";
+        notice = string.Format(IChingModuleText.Get("Text0050"), destination);
     }
     private void SetFacing()
     {
         var player = (GameObject*)services.Objects.LocalPlayer!.Address;
         if (player != null) player->Rotation = facing;
-        notice = $"已写入本地面向：{facing:F3}";
+        notice = string.Format(IChingModuleText.Get("Text0051"), facing);
     }
     private void SetScale()
     {
-        var target = services.Targets.Target ?? throw new InvalidOperationException("请先选中目标。");
+        var target = services.Targets.Target ?? throw new InvalidOperationException(IChingModuleText.Get("Text0052"));
         var live = services.Objects.FirstOrDefault(o => o.Address == target.Address && o.GameObjectId == target.GameObjectId);
-        if (live == null || !float.IsFinite(scale)) throw new InvalidOperationException("目标已卸载或缩放值无效。");
+        if (live == null || !float.IsFinite(scale)) throw new InvalidOperationException(IChingModuleText.Get("Text0053"));
         ((GameObject*)live.Address)->Scale = Math.Clamp(scale, 0.1f, 5);
-        notice = "已修改目标本地模型缩放。";
+        notice = IChingModuleText.Get("Text0054");
     }
     private void SelectEnemy(bool cluster)
     {
         EnsureCanAttack();
-        if (!services.Gui.ScreenToWorld(ImGui.GetIO().MousePos, out var mouse, 1)) throw new InvalidOperationException("鼠标位置无法转换为世界坐标。");
+        if (!services.Gui.ScreenToWorld(ImGui.GetIO().MousePos, out var mouse, 1)) throw new InvalidOperationException(IChingModuleText.Get("Text0055"));
         var candidates = services.Objects.Where(o => o.GameObjectId != services.Objects.LocalPlayer!.GameObjectId && o.IsTargetable && Vector3.DistanceSquared(o.Position, mouse) <= config.RadarDistance * config.RadarDistance && canAttack!(142, o.Address)).ToList();
-        if (candidates.Count == 0) { notice = "鼠标附近没有可攻击目标。"; return; }
+        if (candidates.Count == 0) { notice = IChingModuleText.Get("Text0056"); return; }
         var center = cluster ? candidates.Aggregate(Vector3.Zero, (sum, o) => sum + o.Position) / candidates.Count : mouse;
         var selected = candidates.OrderBy(o => Vector3.DistanceSquared(o.Position, center)).First();
         services.Targets.Target = selected;
-        notice = $"已选中 {selected.Name}";
+        notice = string.Format(IChingModuleText.Get("Text0057"), selected.Name);
     }
 }
 
@@ -768,7 +779,7 @@ public sealed class IChingModuleServices
     [PluginService] public IGameInteropProvider Interop { get; private set; } = null!;
 }
 
-public sealed class IChingModuleConfig
+public sealed class Settings
 {
     public bool HeightOffset, DeepDungeonReturn, IgnoreCharm, FilterMovementStatuses, CastMovement;
     public float HeightAdd = -7, CastMoveWindow = 0.5f;
@@ -808,15 +819,15 @@ public sealed unsafe partial class IChingModule
                 if (string.IsNullOrWhiteSpace(args)) panel = !panel;
                 else if (args.Trim().Equals("show", StringComparison.OrdinalIgnoreCase)) panel = true;
                 else if (args.Trim().Equals("hide", StringComparison.OrdinalIgnoreCase)) panel = false;
-                else if (!TryHandleCommand(args)) notice = "未知指令，请使用面板的指令生成器。";
-            }) { HelpMessage = "打开 IChing 独立面板；show/hide 显示/隐藏，其他参数同 /omni IChingModule。" })) panelCommands.Add(command);
+                else if (!TryHandleCommand(args)) notice = IChingModuleText.Get("Text0058");
+            }) { HelpMessage = IChingModuleText.Get("Text0059") })) panelCommands.Add(command);
         }
     }
     private void RowStatus(string? key)
     {
         if (key != null && errors.TryGetValue(key, out var message))
         {
-            ImGui.TextColored(OmniTheme.Tokens.Error, "失败");
+            ImGui.TextColored(OmniTheme.Tokens.Error, IChingModuleText.Get("Text0060"));
             if (ImGui.IsItemHovered()) ImGui.SetTooltip(message);
         }
     }
@@ -850,8 +861,8 @@ public sealed unsafe partial class IChingModule
             ImGui.TableSetupColumn("state", ImGuiTableColumnFlags.WidthFixed, 34 * UiScale);
             ImGui.TableNextRow(); ImGui.TableNextColumn(); changed |= ImGui.Checkbox(label, ref enabled);
             ImGui.BeginDisabled(!enabled);
-            ImGui.TableNextColumn(); ImGui.SetNextItemWidth(-1); ImGui.SliderFloat("##distance", ref distance, 0, 100, "距离 %.1f m"); changed |= ImGui.IsItemDeactivatedAfterEdit();
-            ImGui.TableNextColumn(); ImGui.SetNextItemWidth(-1); ImGui.SliderFloat("##time", ref time, 0, 10, "时间 %.2f s"); changed |= ImGui.IsItemDeactivatedAfterEdit();
+            ImGui.TableNextColumn(); ImGui.SetNextItemWidth(-1); ImGui.SliderFloat("##distance", ref distance, 0, 100, IChingModuleText.Get("Text0061")); changed |= ImGui.IsItemDeactivatedAfterEdit();
+            ImGui.TableNextColumn(); ImGui.SetNextItemWidth(-1); ImGui.SliderFloat("##time", ref time, 0, 10, IChingModuleText.Get("Text0062")); changed |= ImGui.IsItemDeactivatedAfterEdit();
             ImGui.EndDisabled(); ImGui.TableNextColumn(); RowStatus(key); ImGui.EndTable();
         }
         ImGui.PopID(); return changed;
@@ -955,7 +966,7 @@ public sealed unsafe partial class IChingModule
             uint instance = unchecked((uint)Marshal.ReadInt32(services.Scanner.ScanText("41 B8 ?? ?? ?? ?? F6 C2") + 2));
             uint normal = unchecked((uint)Marshal.ReadInt32(services.Scanner.ScanText(NormalMoveSignature) + 0x51));
             if (normal is 0 or > ushort.MaxValue || instance is 0 or > ushort.MaxValue || normal == instance)
-                throw new InvalidOperationException("当前版本的移动 Opcode 未能确认，功能未启用。");
+                throw new InvalidOperationException(IChingModuleText.Get("Text0063"));
             normalMovementOpcode = (ushort)normal; instanceMovementOpcode = (ushort)instance;
             sendInternalHook = Hook<SendInternalDelegate>("E8 ?? ?? ?? ?? 84 ?? 74 ?? 48 ?? ?? C7 87 ?? ?? ?? ?? ?? ?? ?? ??", SendInternal);
         });
@@ -1040,16 +1051,16 @@ public sealed unsafe partial class IChingModule
     private bool DrawExtendedMovement()
     {
         bool changed = false;
-        using (new Card("height", "高度", ""))
+        using (new Card("height", IChingModuleText.Get("Ui2081"), ""))
         {
-            changed |= CompactRow("高度偏移", ref config.HeightOffset, ref config.HeightAdd, -100, 100, "%.1f m", "高度偏移");
-            changed |= Toggle("深层迷宫自动回地面", ref config.DeepDungeonReturn);
-            if (config.DeepDungeonReturn && deepFloor > 0) { ImGui.SameLine(); ImGui.TextDisabled($"{deepFloor} 层"); }
+            changed |= CompactRow(IChingModuleText.Get("Ui2082"), ref config.HeightOffset, ref config.HeightAdd, -100, 100, "%.1f m", IChingModuleText.Get("Ui2083"));
+            changed |= Toggle(IChingModuleText.Get("Ui2084"), ref config.DeepDungeonReturn);
+            if (config.DeepDungeonReturn && deepFloor > 0) { ImGui.SameLine(); ImGui.TextDisabled(string.Format(IChingModuleText.Get("Text0064"), deepFloor)); }
         }
-        using (new Card("control", "移动限制", ""))
+        using (new Card("control", IChingModuleText.Get("Ui2085"), ""))
         {
-            changed |= CompactPair("忽略魅惑恐惧", ref config.IgnoreCharm, "滑冰状态过滤", ref config.FilterMovementStatuses, "魅惑与恐惧", "状态过滤");
-            changed |= CompactRow("移动读条", ref config.CastMovement, ref config.CastMoveWindow, 0, 10, "末尾 %.2f s", "移动读条");
+            changed |= CompactPair(IChingModuleText.Get("Ui2086"), ref config.IgnoreCharm, IChingModuleText.Get("Ui2087"), ref config.FilterMovementStatuses, IChingModuleText.Get("Ui2088"), IChingModuleText.Get("Ui2089"));
+            changed |= CompactRow(IChingModuleText.Get("Ui2090"), ref config.CastMovement, ref config.CastMoveWindow, 0, 10, IChingModuleText.Get("Ui2091"), IChingModuleText.Get("Ui2092"));
         }
         return changed;
     }
@@ -1059,21 +1070,21 @@ public sealed unsafe partial class IChingModule
     private static readonly uint[] RuinIds = [0xf01cc,0xf01cd,0xf01ce,0xf01cf,0xf01d0,0xf01d2,0xf01d1,0xf01d3,0xf01d9,0xf01d4,0xf01d7,0xf01da,0xf01d5];
     private void DrawObjectives()
     {
-        using (new Card("objectives", "战场点位", "选中已加载的对应点位；不会自动移动或交互。"))
+        using (new Card("objectives", IChingModuleText.Get("Ui2093"), IChingModuleText.Get("Ui2094")))
         {
             ImGui.SetNextItemWidth(-1);
-            if (ImGui.Combo("##objectiveArea", ref objectiveArea, "草原\0尘封\0")) objectivePoint = 0;
+            if (ImGui.Combo("##objectiveArea", ref objectiveArea, IChingModuleText.Get("Text0065"))) objectivePoint = 0;
             var labels = objectiveArea == 0 ? GrassPoints : RuinPoints;
             ImGui.SetNextItemWidth(-1); ImGui.Combo("##objectivePoint", ref objectivePoint, string.Join("\0", labels) + "\0");
             ImGui.BeginDisabled(!Active);
-            if (ActionButton("选中点位")) Run(() =>
+            if (ActionButton(IChingModuleText.Get("Text0066"))) Run(() =>
             {
-                if (!services.Client.IsPvP) throw new InvalidOperationException("请先进入对应战场。");
+                if (!services.Client.IsPvP) throw new InvalidOperationException(IChingModuleText.Get("Text0067"));
                 var index = Math.Clamp(objectivePoint, 0, labels.Length - 1);
                 uint id = objectiveArea == 0 ? 0xf0338u + (uint)index : RuinIds[index];
                 var target = services.Objects.FirstOrDefault(o => o.BaseId == id && o.IsTargetable);
-                if (target == null) throw new InvalidOperationException("此点位尚未加载或当前不可选中。");
-                services.Targets.Target = target; notice = $"已选中点位 {labels[index]}。";
+                if (target == null) throw new InvalidOperationException(IChingModuleText.Get("Text0068"));
+                services.Targets.Target = target; notice = string.Format(IChingModuleText.Get("Text0069"), labels[index]);
             });
             ImGui.EndDisabled();
         }
@@ -1081,9 +1092,9 @@ public sealed unsafe partial class IChingModule
     private void ReadFlag()
     {
         var map = AgentMap.Instance();
-        if (map == null || map->FlagMapMarkers.IsEmpty) throw new InvalidOperationException("请先在地图放置旗标。");
+        if (map == null || map->FlagMapMarkers.IsEmpty) throw new InvalidOperationException(IChingModuleText.Get("Text0070"));
         var marker = map->FlagMapMarkers[0];
-        if (marker.TerritoryId != services.Client.TerritoryType) throw new InvalidOperationException("旗标位于其他区域，请先进入对应区域。");
+        if (marker.TerritoryId != services.Client.TerritoryType) throw new InvalidOperationException(IChingModuleText.Get("Text0071"));
         Vector3 point = new(marker.XFloat, -1, marker.YFloat);
         Vector3? floor = null;
         try
@@ -1093,8 +1104,8 @@ public sealed unsafe partial class IChingModule
         }
         catch (Exception) { /* Optional IPC: use current player height and ask for manual adjustment. */ }
         destination = floor ?? new Vector3(point.X, services.Objects.LocalPlayer!.Position.Y, point.Z);
-        if (floor == null) throw new InvalidOperationException("已填入旗标 X/Z 与当前高度；未取得地面高度，请确认 Y 后点击应用坐标。");
-        notice = "已读取旗标及地面高度。";
+        if (floor == null) throw new InvalidOperationException(IChingModuleText.Get("Text0072"));
+        notice = IChingModuleText.Get("Text0073");
     }
     private void FakeFlyText(ref FlyTextKind kind, ref int value1, ref int value2, ref SeString text1, ref SeString text2,
         ref uint color, ref uint icon, ref uint damageTypeIcon, ref float yOffset, ref bool handled)
@@ -1170,7 +1181,7 @@ public sealed unsafe partial class IChingModule
             DisplayText("_Money", 0, 2, "---", true);
             DisplayText("_ParameterWidget", 3, 3, "--- / ---");
             DisplayText("_ParameterWidget", 4, 3, "--- / ---");
-            DisplayText("_Exp", 0, 4, "IChing · 隐私显示");
+            DisplayText("_Exp", 0, 4, IChingModuleText.Get("Text0074"));
         }
         if (config.ReplaceDisconnectText)
         {
@@ -1183,47 +1194,47 @@ public sealed unsafe partial class IChingModule
     private bool DrawDisplay()
     {
         bool changed = false;
-        using (new Card("privacy", "本地显示", "仅修改当前客户端的显示，不修改服务器记录。"))
+        using (new Card("privacy", IChingModuleText.Get("Ui2095"), IChingModuleText.Get("Ui2096")))
         {
-            changed |= Toggle("最大军衔（本地）", ref config.MaxGrandCompanyRank, "最大军衔");
-            changed |= Toggle("隐藏金币、HP/MP 与经验数值", ref config.HideHudValues);
-            changed |= Toggle("替换伤害与治疗飘字", ref config.FakeDamage);
+            changed |= Toggle(IChingModuleText.Get("Ui2097"), ref config.MaxGrandCompanyRank, "最大军衔");
+            changed |= Toggle(IChingModuleText.Get("Ui2098"), ref config.HideHudValues);
+            changed |= Toggle(IChingModuleText.Get("Ui2099"), ref config.FakeDamage);
             ImGui.BeginDisabled(!config.FakeDamage);
-            Hint("飘字数值");
+            Hint(IChingModuleText.Get("Ui2100"));
             ImGui.SetNextItemWidth(-1);
             changed |= ImGui.InputInt("##displayDamage", ref config.DisplayDamage);
             config.DisplayDamage = Math.Clamp(config.DisplayDamage, 1, 999999999);
             ImGui.EndDisabled();
-            changed |= Toggle("自定义断线提示", ref config.ReplaceDisconnectText);
+            changed |= Toggle(IChingModuleText.Get("Ui2101"), ref config.ReplaceDisconnectText);
             ImGui.BeginDisabled(!config.ReplaceDisconnectText);
             ImGui.SetNextItemWidth(-1);
-            changed |= ImGui.InputTextWithHint("##disconnect", "仅在本地显示的断线提示", ref config.DisconnectText, 256);
+            changed |= ImGui.InputTextWithHint("##disconnect", IChingModuleText.Get("Text0075"), ref config.DisconnectText, 256);
             ImGui.EndDisabled();
         }
-        if (ImGui.CollapsingHeader("PVP 战绩 · 本地显示")) DrawPvpDisplay();
+        if (ImGui.CollapsingHeader(IChingModuleText.Get("Text0076"))) DrawPvpDisplay();
         return changed;
     }
     private int pvpMode, pvpWins, pvpSecond, pvpThird, pvpMatches, pvpCredit;
     private bool pvpWeekly, pvpSetCrystalRank;
     private void DrawPvpDisplay()
     {
-        WrapHint("一次性修改本地战绩；重新取得服务器数据后会覆盖。水晶组两项分别是练习赛与排位赛胜场。");
-        ImGui.SetNextItemWidth(-1); ImGui.Combo("##pvpMode", ref pvpMode, "水晶冲突\0纷争前线\0烈羽争锋\0");
-        if (pvpMode != 0) ImGui.Checkbox("本周", ref pvpWeekly);
-        CountInput(pvpMode == 0 ? "练习赛胜场" : pvpMode == 1 ? "第一名" : "胜场", ref pvpWins);
-        if (pvpMode != 2) CountInput(pvpMode == 0 ? "排位赛胜场" : "第二名", ref pvpSecond);
-        if (pvpMode == 1) CountInput("第三名", ref pvpThird);
-        if (pvpMode != 0) CountInput("总场次", ref pvpMatches);
+        WrapHint(IChingModuleText.Get("Ui2102"));
+        ImGui.SetNextItemWidth(-1); ImGui.Combo("##pvpMode", ref pvpMode, IChingModuleText.Get("Text0077"));
+        if (pvpMode != 0) ImGui.Checkbox(IChingModuleText.Get("Text0078"), ref pvpWeekly);
+        CountInput(pvpMode == 0 ? IChingModuleText.Get("Ui2103") : pvpMode == 1 ? IChingModuleText.Get("Ui2104") : IChingModuleText.Get("Ui2105"), ref pvpWins);
+        if (pvpMode != 2) CountInput(pvpMode == 0 ? IChingModuleText.Get("Ui2106") : IChingModuleText.Get("Ui2107"), ref pvpSecond);
+        if (pvpMode == 1) CountInput(IChingModuleText.Get("Ui2108"), ref pvpThird);
+        if (pvpMode != 0) CountInput(IChingModuleText.Get("Ui2109"), ref pvpMatches);
         else
         {
-            ImGui.Checkbox("同时设置最高段位为水晶", ref pvpSetCrystalRank);
+            ImGui.Checkbox(IChingModuleText.Get("Text0079"), ref pvpSetCrystalRank);
             ImGui.BeginDisabled(!pvpSetCrystalRank);
-            CountInput("最高水晶积分", ref pvpCredit);
+            CountInput(IChingModuleText.Get("Ui2110"), ref pvpCredit);
             ImGui.EndDisabled();
         }
         ImGui.BeginDisabled(!Active);
-        if (ActionButton("读取当前战绩")) Run(() => PvpDisplay(false));
-        if (ActionButton("应用本地显示")) Run(() => PvpDisplay(true));
+        if (ActionButton(IChingModuleText.Get("Text0080"))) Run(() => PvpDisplay(false));
+        if (ActionButton(IChingModuleText.Get("Text0081"))) Run(() => PvpDisplay(true));
         ImGui.EndDisabled();
     }
     private static void CountInput(string label, ref int value)
@@ -1232,9 +1243,9 @@ public sealed unsafe partial class IChingModule
     }
     private void PvpDisplay(bool write)
     {
-        var profile = PvPProfile.Instance(); if (profile == null) throw new InvalidOperationException("战绩数据尚未就绪。");
+        var profile = PvPProfile.Instance(); if (profile == null) throw new InvalidOperationException(IChingModuleText.Get("Text0082"));
         if (write && pvpMode == 1 && pvpWeekly && pvpWins + pvpSecond + pvpThird > ushort.MaxValue)
-            throw new InvalidOperationException("本周前三名次数合计不能超过 65535。");
+            throw new InvalidOperationException(IChingModuleText.Get("Text0083"));
         if (pvpMode == 0)
         {
             if (write)
@@ -1267,7 +1278,7 @@ public sealed unsafe partial class IChingModule
             }
             else { pvpWins = (int)(pvpWeekly ? profile->RivalWingsWeeklyMatchesWon : profile->RivalWingsTotalMatchesWon); pvpMatches = (int)(pvpWeekly ? profile->RivalWingsWeeklyMatches : profile->RivalWingsTotalMatches); }
         }
-        notice = write ? "已应用本地战绩显示。" : "已读取当前战绩。";
+        notice = write ? IChingModuleText.Get("Text0084") : IChingModuleText.Get("Text0085");
     }
 
     private Task<OpcodeResult>? opcodeTask;
@@ -1276,10 +1287,10 @@ public sealed unsafe partial class IChingModule
     private string opcodeFilter = "";
     private void DrawOpcodeDiagnostics()
     {
-        WrapHint("按当前游戏版本读取作者提供的在线映射，仅用于诊断，不自动发送数据包。移动读条使用本地签名扫描的 Opcode。");
+        WrapHint(IChingModuleText.Get("Ui2111"));
         if (opcodeTask is { IsCompletedSuccessfully: true }) { opcodeResult = opcodeTask.Result; opcodeTask = null; opcodeCancellation?.Dispose(); opcodeCancellation = null; }
         ImGui.BeginDisabled(!running || opcodeTask != null);
-        if (ActionButton("读取当前版本映射"))
+        if (ActionButton(IChingModuleText.Get("Text0086")))
         {
             var framework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework.Instance();
             if (framework != null)
@@ -1289,11 +1300,11 @@ public sealed unsafe partial class IChingModule
             }
         }
         ImGui.EndDisabled();
-        if (opcodeTask != null) Hint("正在读取…");
+        if (opcodeTask != null) Hint(IChingModuleText.Get("Ui2112"));
         if (opcodeResult == null) return;
-        Hint($"游戏版本：{opcodeResult.Version} · {opcodeResult.Entries.Count} 条映射");
+        Hint(string.Format(IChingModuleText.Get("Ui2113"), opcodeResult.Version, opcodeResult.Entries.Count));
         if (opcodeResult.Error != null) { WrapHint(opcodeResult.Error); return; }
-        ImGui.SetNextItemWidth(-1); ImGui.InputTextWithHint("##opcodeFilter", "筛选名称或十六进制编号", ref opcodeFilter, 128);
+        ImGui.SetNextItemWidth(-1); ImGui.InputTextWithHint("##opcodeFilter", IChingModuleText.Get("Text0087"), ref opcodeFilter, 128);
         if (ImGui.BeginChild("opcodeList", new Vector2(0, 220 * UiScale)))
         {
             foreach (var entry in opcodeResult.Entries.Where(e => string.IsNullOrWhiteSpace(opcodeFilter) || e.Name.Contains(opcodeFilter, StringComparison.OrdinalIgnoreCase) || e.Opcode.ToString("X4").Contains(opcodeFilter, StringComparison.OrdinalIgnoreCase)).Take(200))
@@ -1399,37 +1410,37 @@ public sealed unsafe partial class IChingModule
     private bool DrawRestoredTools()
     {
         bool changed = false;
-        using (new Card("fishing", "钓鱼动画", "勾选后快速播放本人的钓鱼动作；不改变服务器咬钩时间。"))
+        using (new Card("fishing", IChingModuleText.Get("Ui2114"), IChingModuleText.Get("Ui2115")))
         {
-            changed |= ImGui.Checkbox("钓鱼动画加速", ref config.FastFishingAnimation);
+            changed |= ImGui.Checkbox(IChingModuleText.Get("Text0088"), ref config.FastFishingAnimation);
             ImGui.BeginDisabled(!config.FastFishingAnimation);
-            changed |= CompactRow("附近玩家暂停", ref config.PauseFishingNearPlayers, ref config.FishingPlayerDistance, 1, 100, "%.0f m", null);
+            changed |= CompactRow(IChingModuleText.Get("Ui2116"), ref config.PauseFishingNearPlayers, ref config.FishingPlayerDistance, 1, 100, "%.0f m", null);
             ImGui.EndDisabled();
-            string fishingStatus = !config.FastFishingAnimation ? "未启用" :
-                errors.TryGetValue("钓鱼动画加速", out var fishingError) ? "初始化失败：" + fishingError :
-                fishingReady ? "已应用到本人的钓鱼动画" :
-                config.PauseFishingNearPlayers && fishingPlayersNearby && services.Condition[ConditionFlag.Gathering] ? "已暂停：附近有其他玩家" :
-                "等待本人进入钓鱼状态";
+            string fishingStatus = !config.FastFishingAnimation ? IChingModuleText.Get("Text0089") :
+                errors.TryGetValue(IChingModuleText.Get("Text0088"), out var fishingError) ? IChingModuleText.Get("Text0090") + fishingError :
+                fishingReady ? IChingModuleText.Get("Text0091") :
+                config.PauseFishingNearPlayers && fishingPlayersNearby && services.Condition[ConditionFlag.Gathering] ? IChingModuleText.Get("Text0092") :
+                IChingModuleText.Get("Text0093");
             WrapHint(fishingStatus);
         }
-        if (ImGui.CollapsingHeader("指令生成器"))
+        if (ImGui.CollapsingHeader(IChingModuleText.Get("Text0094")))
         {
             ImGui.SetNextItemWidth(-1); ImGui.Combo("##commandMode", ref commandMode, string.Join("\0", GeneratedNames) + "\0");
             var mode = Math.Clamp(commandMode, 0, GeneratedVerbs.Length - 1);
-            string hint = mode switch { 3 => "X Y Z，例如 10 0 20", 4 => "弧度，例如 1.57", 5 => "缩放倍数，0.1～5", 6 => "增加速度，0～20", 7 => "高度偏移，-100～100", 8 => "缩减秒数，0～10", 9 => "缩减秒数，0～60", 10 => "末尾窗口秒数，0～10", 11 => "功能 on/off，例如 radar on", _ => "此指令不需要参数" };
+            string hint = mode switch { 3 => IChingModuleText.Get("Ui2117"), 4 => IChingModuleText.Get("Ui2118"), 5 => IChingModuleText.Get("Ui2119"), 6 => IChingModuleText.Get("Ui2120"), 7 => IChingModuleText.Get("Ui2121"), 8 => IChingModuleText.Get("Ui2122"), 9 => IChingModuleText.Get("Ui2123"), 10 => IChingModuleText.Get("Ui2124"), 11 => IChingModuleText.Get("Ui2125"), _ => IChingModuleText.Get("Ui2126") };
             bool needsParameter = mode is >= 3 and <= 11;
             if (needsParameter) { ImGui.SetNextItemWidth(-1); ImGui.InputTextWithHint("##commandParameter", hint, ref commandParameter, 256); }
             generatedCommand = "/omni IChingModule " + GeneratedVerbs[mode] + (needsParameter && !string.IsNullOrWhiteSpace(commandParameter) ? " " + commandParameter.Trim() : "");
             WrapHint(generatedCommand);
-            if (ActionButton("复制指令")) { ImGui.SetClipboardText(generatedCommand); notice = "已复制指令。"; }
+            if (ActionButton(IChingModuleText.Get("Text0095"))) { ImGui.SetClipboardText(generatedCommand); notice = IChingModuleText.Get("Text0096"); }
             ImGui.BeginDisabled(!Active);
-            if (ActionButton("执行")) TryHandleCommand(generatedCommand.Substring("/omni IChingModule ".Length));
+            if (ActionButton(IChingModuleText.Get("Text0097"))) TryHandleCommand(generatedCommand.Substring("/omni IChingModule ".Length));
             ImGui.EndDisabled();
-            if (mode == 11) WrapHint("功能名：speed、height、deep、move、knock、fall、nofall、range、radius、backswing、dash、cast、recast、mudra、castmove、charm、status、radar、cleartarget、grand、privacy、damage、dialogue、los、fishing。");
+            if (mode == 11) WrapHint(IChingModuleText.Get("Ui2127"));
         }
-        if (ImGui.CollapsingHeader("原版内部指令目录（参考）"))
+        if (ImGui.CollapsingHeader(IChingModuleText.Get("Text0098")))
         {
-            WrapHint("DLL 中的完整枚举仅作参考。已核对的四项可执行；其他指令缺少上下文与参数校验，不直接调用。");
+            WrapHint(IChingModuleText.Get("Ui2128"));
             ImGui.SetNextItemWidth(-1);
             var current = InternalCommandCatalog[Math.Clamp(commandInternal, 0, InternalCommandCatalog.Length - 1)];
             if (ImGui.BeginCombo("##internalCatalog", $"{current.Id} · {current.Name}"))
@@ -1450,10 +1461,10 @@ public sealed unsafe partial class IChingModule
             var entry = InternalCommandCatalog[Math.Clamp(commandInternal, 0, InternalCommandCatalog.Length - 1)];
             bool executable = CanExecuteInternal(entry.Id);
             ImGui.BeginDisabled(!Active || !executable);
-            if (ActionButton("执行所选指令")) TryHandleCommand($"execute {entry.Id}");
+            if (ActionButton(IChingModuleText.Get("Text0099"))) TryHandleCommand($"execute {entry.Id}");
             ImGui.EndDisabled();
             ImGui.SameLine();
-            Hint(!executable ? "暂不可用" : !Active ? "请先进入游戏" : "可执行");
+            Hint(!executable ? IChingModuleText.Get("Ui2129") : !Active ? IChingModuleText.Get("Ui2130") : IChingModuleText.Get("Ui2131"));
         }
         return changed;
     }
@@ -1653,24 +1664,24 @@ public sealed unsafe partial class IChingModule
         {
             if (verb == "set")
             {
-                if (args.Length != 3 || args[2].ToLowerInvariant() is not ("on" or "off")) throw new InvalidOperationException("用法：set 功能 on/off");
+                if (args.Length != 3 || args[2].ToLowerInvariant() is not ("on" or "off")) throw new InvalidOperationException(IChingModuleText.Get("Text0100"));
                 SetCommandFeature(args[1].ToLowerInvariant(), args[2].Equals("on", StringComparison.OrdinalIgnoreCase));
                 SaveCommandSettings(); return;
             }
             if (verb == "execute")
             {
-                if (args.Length != 2 || !int.TryParse(args[1], out int id) || !CanExecuteInternal(id)) throw new InvalidOperationException("已核对的内部指令：1、101、105、505。其他指令未开放。");
-                if (GameMain.MemberFunctionPointers.ExecuteCommand == null) throw new InvalidOperationException("内部指令函数尚未解析。");
-                if (id == 101 && !services.Condition[ConditionFlag.Mounted]) throw new InvalidOperationException("当前没有骑乘坐骑。");
-                if (id == 105 && !services.Objects.LocalPlayer!.IsCasting) throw new InvalidOperationException("当前没有咏唱。");
-                notice = GameMain.ExecuteCommand(id) ? "内部指令已受理。" : "当前状态不允许此操作。"; return;
+                if (args.Length != 2 || !int.TryParse(args[1], out int id) || !CanExecuteInternal(id)) throw new InvalidOperationException(IChingModuleText.Get("Text0101"));
+                if (GameMain.MemberFunctionPointers.ExecuteCommand == null) throw new InvalidOperationException(IChingModuleText.Get("Text0102"));
+                if (id == 101 && !services.Condition[ConditionFlag.Mounted]) throw new InvalidOperationException(IChingModuleText.Get("Text0103"));
+                if (id == 105 && !services.Objects.LocalPlayer!.IsCasting) throw new InvalidOperationException(IChingModuleText.Get("Text0104"));
+                notice = GameMain.ExecuteCommand(id) ? IChingModuleText.Get("Text0105") : IChingModuleText.Get("Text0106"); return;
             }
             if (verb == "teleport")
             {
-                if (args.Length != 4) throw new InvalidOperationException("用法：teleport X Y Z");
+                if (args.Length != 4) throw new InvalidOperationException(IChingModuleText.Get("Text0107"));
                 destination = new(ParseCommandNumber(args[1], -100000, 100000), ParseCommandNumber(args[2], -100000, 100000), ParseCommandNumber(args[3], -100000, 100000)); Teleport(); return;
             }
-            if (args.Length != 2) throw new InvalidOperationException("此指令需要一个数值参数。");
+            if (args.Length != 2) throw new InvalidOperationException(IChingModuleText.Get("Text0108"));
             switch (verb)
             {
                 case "facing": facing = ParseCommandNumber(args[1], -MathF.PI, MathF.PI); SetFacing(); return;
@@ -1689,14 +1700,14 @@ public sealed unsafe partial class IChingModule
     private static float ParseCommandNumber(string text, float min, float max)
     {
         if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value) || !float.IsFinite(value) || value < min || value > max)
-            throw new InvalidOperationException($"数值范围为 {min}～{max}，不接受 NaN/Infinity。");
+            throw new InvalidOperationException(string.Format(IChingModuleText.Get("Text0109"), min, max));
         return value;
     }
     private void SaveCommandSettings()
     {
         SyncFeatures();
         saveHostConfig?.Invoke();
-        notice = errors.Count == 0 ? "已应用并保存设置。" : "设置已保存；初始化失败的项目见诊断。";
+        notice = errors.Count == 0 ? IChingModuleText.Get("Text0110") : IChingModuleText.Get("Text0111");
     }
     private void SetCommandFeature(string name, bool value)
     {
@@ -1727,7 +1738,7 @@ public sealed unsafe partial class IChingModule
             case "dialogue": config.ReplaceDisconnectText = value; break;
             case "los": config.LocalLineOfSight = value; break;
             case "fishing": config.FastFishingAnimation = value; break;
-            default: throw new InvalidOperationException("未知功能名，请查看指令生成器中的名称列表。");
+            default: throw new InvalidOperationException(IChingModuleText.Get("Text0112"));
         }
     }
 }
@@ -1768,5 +1779,287 @@ internal static class IChingOpcodeLoader
             return new(version, entries.OrderBy(e => e.Name, StringComparer.Ordinal).ThenBy(e => e.Opcode).ToList(), null);
         }
         catch (Exception e) { return new(version, [], "映射格式无效：" + e.Message); }
+    }
+}
+
+internal static class IChingModuleText
+{
+    internal static readonly OmniToolbox.UI.ModuleLocalization Catalog = OmniToolbox.UI.ModuleLocalization.Create(
+        new System.Collections.Generic.Dictionary<string,string>
+        {
+            ["Text0001"] = "尚未执行操作",
+            ["Text0002"] = "无法取得 Dalamud 服务。",
+            ["Text0003"] = "IChing 停用清理失败，继续释放其余功能",
+            ["Text0004"] = "IChing 释放 {0} 失败",
+            ["Text0005"] = "IChing 初始化 {0} 失败",
+            ["Text0006"] = "函数地址不在当前客户端代码段，未安装 Hook。",
+            ["Text0007"] = "目标判定函数尚未解析。",
+            ["Text0008"] = "此宿主未提供面板保存入口；请在 Omni 模块设置里修改以保存配置。",
+            ["Text0009"] = "配置保存失败：{0}",
+            ["Text0010"] = "拖动调整，Ctrl + 单击可直接输入数值。",
+            ["Text0011"] = "打开 IChing 独立面板",
+            ["Text0012"] = "宏：{0}",
+            ["Text0013"] = "查看 {0} 项问题",
+            ["Text0014"] = "就绪 · {0} 唤醒面板",
+            ["Text0015"] = "{0} 项初始化问题 · 详情见诊断",
+            ["Text0016"] = "突进位移管理",
+            ["Text0017"] = "按技能 ID 添加",
+            ["Text0018"] = "已添加 {0} / 动画 {1}",
+            ["Text0019"] = "技能不存在或没有结束动画。",
+            ["Text0020"] = "关注当前玩家目标",
+            ["Text0021"] = "玩家",
+            ["Text0022"] = "操作",
+            ["Text0023"] = "{0} · 世界 {1}",
+            ["Text0024"] = "移除##id{0}-{1}-{2}",
+            ["Text0025"] = "移除##follow{0}",
+            ["Text0026"] = "按状态 ID 添加",
+            ["Text0027"] = "复制最近敌人指令",
+            ["Text0028"] = "最近敌人指令已复制。",
+            ["Text0029"] = "复制敌群中心指令",
+            ["Text0030"] = "敌群中心指令已复制。",
+            ["Text0031"] = "类型",
+            ["Text0032"] = "状态名称",
+            ["Text0033"] = "删除##{0}{1}",
+            ["Text0034"] = "应用坐标",
+            ["Text0035"] = "读取当前位置",
+            ["Text0036"] = "应用面向",
+            ["Text0037"] = "读取地图旗标",
+            ["Text0038"] = "前往地图旗标",
+            ["Text0039"] = "应用目标缩放",
+            ["Text0040"] = "恢复缩放为 1",
+            ["Text0041"] = "重试失败的功能",
+            ["Text0042"] = "复制诊断信息",
+            ["Text0043"] = "诊断信息已复制。",
+            ["Text0044"] = "网络 Opcode",
+            ["Text0045"] = "恢复默认并关闭全部功能",
+            ["Text0046"] = "已恢复默认设置。",
+            ["Text0047"] = "请先启用模块并登录角色。",
+            ["Text0048"] = "IChing 工具操作失败",
+            ["Text0049"] = "坐标必须是有限数值。",
+            ["Text0050"] = "已写入本地坐标：{0}（服务器可能纠正）",
+            ["Text0051"] = "已写入本地面向：{0:F3}",
+            ["Text0052"] = "请先选中目标。",
+            ["Text0053"] = "目标已卸载或缩放值无效。",
+            ["Text0054"] = "已修改目标本地模型缩放。",
+            ["Text0055"] = "鼠标位置无法转换为世界坐标。",
+            ["Text0056"] = "鼠标附近没有可攻击目标。",
+            ["Text0057"] = "已选中 {0}",
+            ["Text0058"] = "未知指令，请使用面板的指令生成器。",
+            ["Text0059"] = "打开 IChing 独立面板；show/hide 显示/隐藏，其他参数同 /omni IChingModule。",
+            ["Text0060"] = "失败",
+            ["Text0061"] = "距离 %.1f m",
+            ["Text0062"] = "时间 %.2f s",
+            ["Text0063"] = "当前版本的移动 Opcode 未能确认，功能未启用。",
+            ["Text0064"] = "{0} 层",
+            ["Text0065"] = "草原\u241f尘封\u241f",
+            ["Text0066"] = "选中点位",
+            ["Text0067"] = "请先进入对应战场。",
+            ["Text0068"] = "此点位尚未加载或当前不可选中。",
+            ["Text0069"] = "已选中点位 {0}。",
+            ["Text0070"] = "请先在地图放置旗标。",
+            ["Text0071"] = "旗标位于其他区域，请先进入对应区域。",
+            ["Text0072"] = "已填入旗标 X/Z 与当前高度；未取得地面高度，请确认 Y 后点击应用坐标。",
+            ["Text0073"] = "已读取旗标及地面高度。",
+            ["Text0074"] = "IChing · 隐私显示",
+            ["Text0075"] = "仅在本地显示的断线提示",
+            ["Text0076"] = "PVP 战绩 · 本地显示",
+            ["Text0077"] = "水晶冲突\u241f纷争前线\u241f烈羽争锋\u241f",
+            ["Text0078"] = "本周",
+            ["Text0079"] = "同时设置最高段位为水晶",
+            ["Text0080"] = "读取当前战绩",
+            ["Text0081"] = "应用本地显示",
+            ["Text0082"] = "战绩数据尚未就绪。",
+            ["Text0083"] = "本周前三名次数合计不能超过 65535。",
+            ["Text0084"] = "已应用本地战绩显示。",
+            ["Text0085"] = "已读取当前战绩。",
+            ["Text0086"] = "读取当前版本映射",
+            ["Text0087"] = "筛选名称或十六进制编号",
+            ["Text0088"] = "钓鱼动画加速",
+            ["Text0089"] = "未启用",
+            ["Text0090"] = "初始化失败：",
+            ["Text0091"] = "已应用到本人的钓鱼动画",
+            ["Text0092"] = "已暂停：附近有其他玩家",
+            ["Text0093"] = "等待本人进入钓鱼状态",
+            ["Text0094"] = "指令生成器",
+            ["Text0095"] = "复制指令",
+            ["Text0096"] = "已复制指令。",
+            ["Text0097"] = "执行",
+            ["Text0098"] = "原版内部指令目录（参考）",
+            ["Text0099"] = "执行所选指令",
+            ["Text0100"] = "用法：set 功能 on/off",
+            ["Text0101"] = "已核对的内部指令：1、101、105、505。其他指令未开放。",
+            ["Text0102"] = "内部指令函数尚未解析。",
+            ["Text0103"] = "当前没有骑乘坐骑。",
+            ["Text0104"] = "当前没有咏唱。",
+            ["Text0105"] = "内部指令已受理。",
+            ["Text0106"] = "当前状态不允许此操作。",
+            ["Text0107"] = "用法：teleport X Y Z",
+            ["Text0108"] = "此指令需要一个数值参数。",
+            ["Text0109"] = "数值范围为 {0}～{1}，不接受 NaN/Infinity。",
+            ["Text0110"] = "已应用并保存设置。",
+            ["Text0111"] = "设置已保存；初始化失败的项目见诊断。",
+            ["Text0112"] = "未知功能名，请查看指令生成器中的名称列表。",
+            ["Title"] = "IChing",
+            ["Description"] = "IChing 功能与游戏界面辅助。"
+        ,
+            ["Ui2001"] = "移动",
+            ["Ui2002"] = "战斗",
+            ["Ui2003"] = "雷达",
+            ["Ui2004"] = "目标",
+            ["Ui2005"] = "工具",
+            ["Ui2006"] = "显示",
+            ["Ui2007"] = "诊断",
+            ["Ui2008"] = "移动",
+            ["Ui2009"] = "移速调整",
+            ["Ui2010"] = "移速",
+            ["Ui2011"] = "最大加速度",
+            ["Ui2012"] = "强制移动",
+            ["Ui2013"] = "最大加速度",
+            ["Ui2014"] = "强制移动",
+            ["Ui2015"] = "防击退",
+            ["Ui2016"] = "防击退",
+            ["Ui2017"] = "掉落无伤",
+            ["Ui2018"] = "无掉落",
+            ["Ui2019"] = "掉落无伤",
+            ["Ui2020"] = "无掉落",
+            ["Ui2021"] = "范围与动作",
+            ["Ui2022"] = "技能距离",
+            ["Ui2023"] = "技能距离",
+            ["Ui2024"] = "当前目标圈",
+            ["Ui2025"] = "后摇可移动",
+            ["Ui2026"] = "本地视线判定",
+            ["Ui2027"] = "后摇移动",
+            ["Ui2028"] = "本地视线判定",
+            ["Ui2029"] = "咏唱与复唱",
+            ["Ui2030"] = "复唱缩减",
+            ["Ui2031"] = "复唱缩减",
+            ["Ui2032"] = "快速结印",
+            ["Ui2033"] = "咏唱缩减",
+            ["Ui2034"] = "咏唱缩减",
+            ["Ui2035"] = "PVP 动画锁",
+            ["Ui2036"] = "突进位移管理",
+            ["Ui2037"] = "通过技能的结束动画识别位移；多个技能可能共用同一动画。",
+            ["Ui2038"] = "突进无位移",
+            ["Ui2039"] = "列表作为允许位移的例外",
+            ["Ui2040"] = "屏蔽列表以外的全部动画。",
+            ["Ui2041"] = "仅屏蔽列表中的动画。空列表不会拦截位移。",
+            ["Ui2042"] = "战场雷达",
+            ["Ui2043"] = "当前扫描到 {0} 个敌方玩家。",
+            ["Ui2044"] = "进入 PVP 区域后开始显示敌方玩家。",
+            ["Ui2045"] = "战场雷达",
+            ["Ui2046"] = "可攻击目标判定",
+            ["Ui2047"] = "连线",
+            ["Ui2048"] = "职业图标",
+            ["Ui2049"] = "战意图标",
+            ["Ui2050"] = "关注名单",
+            ["Ui2051"] = "优先按角色 ContentId 匹配；缺少 ID 时使用姓名与服务器。旧姓名名单继续兼容。",
+            ["Ui2052"] = "尚无关注玩家。选中玩家后点击上方按钮。",
+            ["Ui2053"] = "目标状态过滤",
+            ["Ui2054"] = "当前目标含名单中的状态时，自动取消选中。",
+            ["Ui2055"] = "自动取消选中",
+            ["Ui2056"] = "鼠标选敌",
+            ["Ui2057"] = "将下方指令放入宏或快捷键，鼠标停在游戏场景上执行。",
+            ["Ui2058"] = "最近敌人：选择距离鼠标世界坐标最近的可攻击目标。\n敌群中心：选择候选敌人的质心附近目标。",
+            ["Ui2059"] = "选敌搜索半径（与雷达共用）",
+            ["Ui2060"] = "名单为空。输入 ID 后点击添加。",
+            ["Ui2061"] = "技能结束动画",
+            ["Ui2062"] = "未知状态",
+            ["Ui2063"] = "状态",
+            ["Ui2064"] = "坐标与面向",
+            ["Ui2065"] = "读取当前位置后调整 X / Y / Z。Y 为高度；面向单位为弧度。",
+            ["Ui2066"] = "世界坐标 X / Y / Z",
+            ["Ui2067"] = "面向",
+            ["Ui2068"] = "目标模型",
+            ["Ui2069"] = "仅调整本地显示。停用模块不会自动恢复一次性写入。",
+            ["Ui2070"] = "当前目标：{0}",
+            ["Ui2071"] = "请先选中目标。",
+            ["Ui2072"] = "缩放倍数",
+            ["Ui2073"] = "运行诊断",
+            ["Ui2074"] = "已初始化表示创建成功；实际效果仍需游戏内验证。",
+            ["Ui2075"] = "暂无初始化错误。",
+            ["Ui2076"] = "未迁移功能",
+            ["Ui2077"] = "功能补齐情况见随附的本地调试说明。",
+            ["Ui2078"] = "钓鱼动画通过原生动画槽更新实现本地快速播放，未照搬 DLL 的资源替换。世界射线、InvulnerableMode 与未知参数的内部指令未启用；方法体受保护，不能确认行为。\n部分旧版 Hook 尚需游戏内核验；详见功能还原说明。",
+            ["Ui2079"] = "配置维护",
+            ["Ui2080"] = "关闭所有功能并清空名单；一次性坐标与缩放写入不会撤销。",
+            ["Ui2081"] = "高度",
+            ["Ui2082"] = "高度偏移",
+            ["Ui2083"] = "高度偏移",
+            ["Ui2084"] = "深层迷宫自动回地面",
+            ["Ui2085"] = "移动限制",
+            ["Ui2086"] = "忽略魅惑恐惧",
+            ["Ui2087"] = "滑冰状态过滤",
+            ["Ui2088"] = "魅惑与恐惧",
+            ["Ui2089"] = "状态过滤",
+            ["Ui2090"] = "移动读条",
+            ["Ui2091"] = "末尾 %.2f s",
+            ["Ui2092"] = "移动读条",
+            ["Ui2093"] = "战场点位",
+            ["Ui2094"] = "选中已加载的对应点位；不会自动移动或交互。",
+            ["Ui2095"] = "本地显示",
+            ["Ui2096"] = "仅修改当前客户端的显示，不修改服务器记录。",
+            ["Ui2097"] = "最大军衔（本地）",
+            ["Ui2098"] = "隐藏金币、HP/MP 与经验数值",
+            ["Ui2099"] = "替换伤害与治疗飘字",
+            ["Ui2100"] = "飘字数值",
+            ["Ui2101"] = "自定义断线提示",
+            ["Ui2102"] = "一次性修改本地战绩；重新取得服务器数据后会覆盖。水晶组两项分别是练习赛与排位赛胜场。",
+            ["Ui2103"] = "练习赛胜场",
+            ["Ui2104"] = "第一名",
+            ["Ui2105"] = "胜场",
+            ["Ui2106"] = "排位赛胜场",
+            ["Ui2107"] = "第二名",
+            ["Ui2108"] = "第三名",
+            ["Ui2109"] = "总场次",
+            ["Ui2110"] = "最高水晶积分",
+            ["Ui2111"] = "按当前游戏版本读取作者提供的在线映射，仅用于诊断，不自动发送数据包。移动读条使用本地签名扫描的 Opcode。",
+            ["Ui2112"] = "正在读取…",
+            ["Ui2113"] = "游戏版本：{0} · {1} 条映射",
+            ["Ui2114"] = "钓鱼动画",
+            ["Ui2115"] = "勾选后快速播放本人的钓鱼动作；不改变服务器咬钩时间。",
+            ["Ui2116"] = "附近玩家暂停",
+            ["Ui2117"] = "X Y Z，例如 10 0 20",
+            ["Ui2118"] = "弧度，例如 1.57",
+            ["Ui2119"] = "缩放倍数，0.1～5",
+            ["Ui2120"] = "增加速度，0～20",
+            ["Ui2121"] = "高度偏移，-100～100",
+            ["Ui2122"] = "缩减秒数，0～10",
+            ["Ui2123"] = "缩减秒数，0～60",
+            ["Ui2124"] = "末尾窗口秒数，0～10",
+            ["Ui2125"] = "功能 on/off，例如 radar on",
+            ["Ui2126"] = "此指令不需要参数",
+            ["Ui2127"] = "功能名：speed、height、deep、move、knock、fall、nofall、range、radius、backswing、dash、cast、recast、mudra、castmove、charm、status、radar、cleartarget、grand、privacy、damage、dialogue、los、fishing。",
+            ["Ui2128"] = "DLL 中的完整枚举仅作参考。已核对的四项可执行；其他指令缺少上下文与参数校验，不直接调用。",
+            ["Ui2129"] = "暂不可用",
+            ["Ui2130"] = "请先进入游戏",
+            ["Ui2131"] = "可执行"
+});
+    private static System.WeakReference<OmniToolbox.Common.Module.Abstractions.OmniModuleBase>? owner;
+    private static TreeTools.Lifecycle.FeatureLifetime? lifetime;
+internal static void Bind(OmniToolbox.Common.Module.Abstractions.OmniModuleBase module, TreeTools.Lifecycle.FeatureLifetime scope)
+{
+    owner = new(module);
+    lifetime = scope;
+}
+internal static System.Threading.Tasks.Task Track(System.Threading.Tasks.Task task)
+{
+    var scope = lifetime;
+    if (!task.IsCompleted && scope is { IsStopping: false })
+    {
+        try { scope.Track(task); }
+        catch (System.InvalidOperationException) when (scope.IsStopping) { }
+    }
+    return task;
+}
+internal static System.Threading.Tasks.Task<T> Track<T>(System.Threading.Tasks.Task<T> task)
+{
+    Track((System.Threading.Tasks.Task)task);
+    return task;
+}
+    internal static string Get(string key)
+    {
+        if (owner != null && owner.TryGetTarget(out var module))
+            return OmniToolbox.UI.OmniLoc.Get(module, key).Replace('\u241f', '\0');
+        return Catalog.Get(key, OmniToolbox.UI.OmniLoc.CurrentLanguage).Replace('\u241f', '\0');
     }
 }

@@ -49,8 +49,11 @@ using TextureType = FFXIVClientStructs.FFXIV.Component.GUI.TextureType;
 
 namespace OmniToolbox.LocalModules;
 
-public sealed class ToolbarIconPlus : ModuleBase
+[ModuleApiVersion(1)]
+public sealed class ToolbarIconPlus : OmniModuleBase
 {
+    public override OmniToolbox.UI.ModuleLocalization Localization => ToolbarIconPlusText.Catalog;
+
 
     private const string Tag = "[ToolbarIconPlus]";
 
@@ -69,13 +72,13 @@ public sealed class ToolbarIconPlus : ModuleBase
 
     public override ModuleInfo Info { get; } = new()
     {
-        Title = "更好的图标管理",
-        Description = "",
+
+
         Category = ModuleCategory.Interface,
         Author = "小烟酒",
     };
 
-    private Config config = new();
+    private Settings config = new();
 
     private string newInput = "";
 
@@ -269,14 +272,16 @@ public sealed class ToolbarIconPlus : ModuleBase
 
     private static readonly HttpClient Http = CreateHttpClient(false, "");
 
-    public ToolbarIconPlus()
-    {
-        LoadOwnConfig();
-        try { Directory.CreateDirectory(IconCacheDir); } catch {   }
-    }
+    public ToolbarIconPlus() { }
 
-    protected override void OnEnable()
+    protected override void OnStart(TreeTools.Lifecycle.FeatureLifetime activation)
     {
+        ToolbarIconPlusText.Bind(this, activation);
+
+        api1Stopped = false;
+
+        activation.OnStopping(StopActivation);
+
         try
         {
             Directory.CreateDirectory(IconCacheDir);
@@ -302,7 +307,10 @@ public sealed class ToolbarIconPlus : ModuleBase
         }
     }
 
-    protected override void OnDisable()
+    private bool api1Stopped = true;
+    private void StopActivation() { if (api1Stopped) return; api1Stopped = true; StopCore(); }
+    protected override void OnStop() => StopActivation();
+    private void StopCore()
     {
         try
         {
@@ -326,7 +334,7 @@ public sealed class ToolbarIconPlus : ModuleBase
         catch {   }
     }
 
-    protected override void OnDispose()
+    protected override void OnDestroy()
     {
         try
         {
@@ -354,7 +362,7 @@ public sealed class ToolbarIconPlus : ModuleBase
         {
             var path = OwnConfigPath;
             if (!File.Exists(path)) return;
-            var loaded = JsonSerializer.Deserialize<Config>(File.ReadAllText(path, Encoding.UTF8));
+            var loaded = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path, Encoding.UTF8));
             if (loaded != null) config = loaded;
             if (config.UseProxy)
             {
@@ -409,19 +417,19 @@ public sealed class ToolbarIconPlus : ModuleBase
         }
         catch (Exception e)
         {
-            Log("DrawSettings 异常: " + e, true);
-            ImGui.TextColored(new Vector4(1f, 0.45f, 0.45f, 1f), "界面异常：" + e.Message);
+            Log(ToolbarIconPlusText.Get("Ui2001") + e, true);
+            ImGui.TextColored(new Vector4(1f, 0.45f, 0.45f, 1f), ToolbarIconPlusText.Get("Text0001") + e.Message);
         }
         return changed;
     }
 
     private bool DrawSettingsCore()
     {
-        ImGui.TextWrapped("宏命令：/图标管理 开关独立面板，/图库图标 应用图库图标到选中的宏。");
+        ImGui.TextWrapped(ToolbarIconPlusText.Get("Text0002"));
 
         ImGui.Spacing();
 
-        if (ImGui.Button(panelOpen ? "关闭独立面板" : "打开独立面板"))
+        if (ImGui.Button(panelOpen ? ToolbarIconPlusText.Get("Text0003") : ToolbarIconPlusText.Get("Text0004")))
             TogglePanel();
 
         return false;
@@ -455,7 +463,7 @@ public sealed class ToolbarIconPlus : ModuleBase
                     InvalidateIconCaches(entry.Id);
                     SaveOwnConfig();
                     EnsureBrowserInjection(true);
-                    SetStatus("favicon 已入库：" + fetched.Path, false);
+                    SetStatus(ToolbarIconPlusText.Get("Text0005") + fetched.Path, false);
                 }
                 else
                 {
@@ -469,7 +477,7 @@ public sealed class ToolbarIconPlus : ModuleBase
         }
         else
         {
-            SetStatus("favicon 抓取失败：" + fetched.Message, true);
+            SetStatus(ToolbarIconPlusText.Get("Text0006") + fetched.Message, true);
         }
     }
 
@@ -481,14 +489,14 @@ public sealed class ToolbarIconPlus : ModuleBase
         if (!panelOpen) return;
 
         IDisposable? fontHandle = null;
-        try { fontHandle = OmniFonts.GetUIFont().Push(); } catch {   }
+        try { fontHandle = TreeToolKit.Fonts.GetUIFont().Push(); } catch {   }
 
         try
         {
             ImGui.SetNextWindowSize(OmniTheme.Scale(new Vector2(760f, 520f)), ImGuiCond.FirstUseEver);
             using var scope = new ComicStyleScope();
 
-            if (!ImGui.Begin("更好的图标管理###OmniToolbarIconPlus", ref panelOpen))
+            if (!ImGui.Begin(ToolbarIconPlusText.Get("Text0007"), ref panelOpen))
             {
                 ImGui.End();
                 return;
@@ -497,19 +505,19 @@ public sealed class ToolbarIconPlus : ModuleBase
             try
             {
                 if (busy)
-                    ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f), "处理中：" + busyLabel);
+                    ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f), ToolbarIconPlusText.Get("Text0008") + busyLabel);
                 else if (statusLine.Length > 0)
                     ImGui.TextColored(statusIsError ? new Vector4(1f, 0.45f, 0.45f, 1f) : new Vector4(0.5f, 0.95f, 0.6f, 1f), statusLine);
 
                 if (ImGui.BeginTabBar("##tipTabs"))
                 {
-                    var t0 = ImGui.BeginTabItem("图库");
+                    var t0 = ImGui.BeginTabItem(ToolbarIconPlusText.Get("Text0009"));
                     try { if (t0) DrawLibraryPage(); } finally { if (t0) ImGui.EndTabItem(); }
 
-                    var t1 = ImGui.BeginTabItem("图标替换");
+                    var t1 = ImGui.BeginTabItem(ToolbarIconPlusText.Get("Text0010"));
                     try { if (t1) { var ch = false; DrawIconReplaceSection(ref ch); } } finally { if (t1) ImGui.EndTabItem(); }
 
-                    var t2 = ImGui.BeginTabItem("设置");
+                    var t2 = ImGui.BeginTabItem(ToolbarIconPlusText.Get("Text0011"));
                     try { if (t2) DrawProxyPage(); } finally { if (t2) ImGui.EndTabItem(); }
 
                     ImGui.EndTabBar();
@@ -534,10 +542,10 @@ public sealed class ToolbarIconPlus : ModuleBase
         ImGui.Spacing();
         var newBuf = newInput;
         ImGui.SetNextItemWidth(340f);
-        if (ImGui.InputTextWithHint("##newsrc", "输入网站网址或本地图片完整路径", ref newBuf, 1024))
+        if (ImGui.InputTextWithHint("##newsrc", ToolbarIconPlusText.Get("Text0012"), ref newBuf, 1024))
             newInput = newBuf;
         ImGui.SameLine();
-        if (ImGui.SmallButton("添加")) TryAddFromInput(newInput);
+        if (ImGui.SmallButton(ToolbarIconPlusText.Get("Text0013"))) TryAddFromInput(newInput);
 
         for (var i = 0; i < config.BrowserImages.Count; i++)
         {
@@ -549,17 +557,17 @@ public sealed class ToolbarIconPlus : ModuleBase
             ImGui.TextUnformatted($"ID {b.Id}");
             if (ImGui.IsItemHovered())
             {
-                var tip = b.SourceUrl.Length > 0 ? "来源网址：" + b.SourceUrl : "来源文件：" + b.Path;
+                var tip = b.SourceUrl.Length > 0 ? ToolbarIconPlusText.Get("Ui2002") + b.SourceUrl : ToolbarIconPlusText.Get("Ui2003") + b.Path;
                 if (!File.Exists(b.Path) && b.Path.Length > 0)
-                    tip += "\n⚠ 文件缺失，浏览器里不会显示";
+                    tip += ToolbarIconPlusText.Get("Ui2004");
                 ImGui.SetTooltip(tip);
             }
             ImGui.SameLine();
 
             var st = ImGui.GetStyle();
-            var proxyW = ImGui.GetFrameHeight() + st.ItemInnerSpacing.X + ImGui.CalcTextSize("代理").X;
-            var refreshW = ImGui.CalcTextSize("刷新").X + st.FramePadding.X * 2 + 2;
-            var delW = ImGui.CalcTextSize("删除").X + st.FramePadding.X * 2 + 2;
+            var proxyW = ImGui.GetFrameHeight() + st.ItemInnerSpacing.X + ImGui.CalcTextSize(ToolbarIconPlusText.Get("Text0014")).X;
+            var refreshW = ImGui.CalcTextSize(ToolbarIconPlusText.Get("Text0015")).X + st.FramePadding.X * 2 + 2;
+            var delW = ImGui.CalcTextSize(ToolbarIconPlusText.Get("Text0016")).X + st.FramePadding.X * 2 + 2;
             var blockW = proxyW + st.ItemSpacing.X + refreshW + st.ItemSpacing.X + delW;
 
             var maxNameW = ImGui.GetContentRegionAvail().X - blockW - st.ItemSpacing.X;
@@ -568,7 +576,7 @@ public sealed class ToolbarIconPlus : ModuleBase
             var useDisabled = false;
             if (b.SourceUrl.Length > 0 && b.Path.Length == 0)
             {
-                statusText = "正在抓取…";
+                statusText = ToolbarIconPlusText.Get("Text0017");
                 statusColor = new Vector4(1f, 0.8f, 0.4f, 1f);
             }
             else if (File.Exists(b.Path))
@@ -578,7 +586,7 @@ public sealed class ToolbarIconPlus : ModuleBase
             }
             else if (b.Path.Length > 0)
             {
-                statusText = "文件缺失";
+                statusText = ToolbarIconPlusText.Get("Text0018");
                 statusColor = new Vector4(1f, 0.45f, 0.45f, 1f);
             }
             else
@@ -596,7 +604,7 @@ public sealed class ToolbarIconPlus : ModuleBase
 
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - blockW);
             var useProxy = b.UseProxy;
-            if (ImGui.Checkbox("代理##useproxy", ref useProxy))
+            if (ImGui.Checkbox(ToolbarIconPlusText.Get("Text0019"), ref useProxy))
             {
                 b.UseProxy = useProxy;
                 SaveOwnConfig();
@@ -604,10 +612,10 @@ public sealed class ToolbarIconPlus : ModuleBase
             }
 
             ImGui.SameLine();
-            if (ImGui.SmallButton("刷新")) RefreshEntry(b);
+            if (ImGui.SmallButton(ToolbarIconPlusText.Get("Text0015"))) RefreshEntry(b);
 
             ImGui.SameLine();
-            if (ImGui.SmallButton("删除")) remove = true;
+            if (ImGui.SmallButton(ToolbarIconPlusText.Get("Text0016"))) remove = true;
             ImGui.PopID();
 
             if (remove)
@@ -616,7 +624,7 @@ public sealed class ToolbarIconPlus : ModuleBase
                 InvalidateIconCaches(goneId);
                 config.BrowserImages.RemoveAt(i);
                 SaveOwnConfig();
-                SetStatus("已删除该图标（编号 " + goneId + " 不会再被新图占用）", false);
+                SetStatus(ToolbarIconPlusText.Get("Text0020") + goneId + ToolbarIconPlusText.Get("Text0021"), false);
                 EnsureBrowserInjection(true);
                 changed = true;
                 i--;
@@ -624,22 +632,22 @@ public sealed class ToolbarIconPlus : ModuleBase
         }
 
         if (config.BrowserImages.Count == 0)
-            ImGui.TextDisabled("图标库为空");
+            ImGui.TextDisabled(ToolbarIconPlusText.Get("Text0022"));
 
         ImGui.Spacing();
-        if (ImGui.Button("打开图标浏览器##openbrowser"))
+        if (ImGui.Button(ToolbarIconPlusText.Get("Text0023")))
         {
             try
             {
                 EnsureBrowserInjection(true);
-                OpenIconBrowser(id => SetStatus(id == 0u ? "未选择图标" : $"已选择图标（编号 {id}）", false));
-                SetStatus("已打开图标浏览器：请停在【第一页】，图标在最前面（左上角）", false);
+                OpenIconBrowser(id => SetStatus(id == 0u ? ToolbarIconPlusText.Get("Text0024") : string.Format(ToolbarIconPlusText.Get("Text0025"), id), false));
+                SetStatus(ToolbarIconPlusText.Get("Text0026"), false);
             }
-            catch (Exception e) { SetStatus("打开浏览器失败：" + e.Message, true); }
+            catch (Exception e) { SetStatus(ToolbarIconPlusText.Get("Text0027") + e.Message, true); }
         }
 
         ImGui.SameLine();
-        if (ImGui.Button("重新载入##reloadall"))
+        if (ImGui.Button(ToolbarIconPlusText.Get("Text0028")))
             ApplyEverything(false);
 
         return changed;
@@ -649,7 +657,7 @@ public sealed class ToolbarIconPlus : ModuleBase
     {
         ImGui.Spacing();
         ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("代理");
+        ImGui.TextUnformatted(ToolbarIconPlusText.Get("Text0014"));
         ImGui.SameLine();
         var proxyBuf = config.ProxyUrl;
         ImGui.SetNextItemWidth(-1f);
@@ -669,7 +677,7 @@ public sealed class ToolbarIconPlus : ModuleBase
     private uint AllocId()
     {
         var id = AllocIdInternal();
-        if (id == 0) SetStatus("图标库已满（" + BrowserIdCapacity + " 张，编号不会回收）", true);
+        if (id == 0) SetStatus(ToolbarIconPlusText.Get("Text0029") + BrowserIdCapacity + ToolbarIconPlusText.Get("Text0030"), true);
         return id;
     }
 
@@ -719,13 +727,13 @@ public sealed class ToolbarIconPlus : ModuleBase
     private void TryAddFromInput(string text)
     {
         var t = (text ?? "").Trim();
-        if (t.Length == 0) { SetStatus("请先输入网址或图片路径", true); return; }
+        if (t.Length == 0) { SetStatus(ToolbarIconPlusText.Get("Text0031"), true); return; }
 
         if (LooksLikeUrl(t))
         {
             var norm = NormalizeUrl(t);
-            if (norm == null) { SetStatus("网址格式不正确", true); return; }
-            if (config.BrowserImages.Any(x => x.SourceUrl == norm)) { SetStatus("该网址已在库里", false); return; }
+            if (norm == null) { SetStatus(ToolbarIconPlusText.Get("Text0032"), true); return; }
+            if (config.BrowserImages.Any(x => x.SourceUrl == norm)) { SetStatus(ToolbarIconPlusText.Get("Text0033"), false); return; }
 
             var id = AllocId();
             if (id == 0) return;
@@ -733,13 +741,13 @@ public sealed class ToolbarIconPlus : ModuleBase
             try { host = new Uri(norm).Host; } catch {   }
             if (host.Length == 0) host = norm;
 
-            config.BrowserImages.Add(new Config.BrowserImageEntry { Id = id, SourceUrl = norm, Name = host });
+            config.BrowserImages.Add(new Settings.BrowserImageEntry { Id = id, SourceUrl = norm, Name = host });
             SaveOwnConfig();
             newInput = "";
             busy = true;
             busyLabel = "抓取 " + host;
             StartFaviconFetch(id.ToString(), norm);
-            SetStatus("开始抓取 " + host + " 的 favicon…", false);
+            SetStatus(ToolbarIconPlusText.Get("Text0034") + host + ToolbarIconPlusText.Get("Text0035"), false);
         }
         else if (File.Exists(t))
         {
@@ -748,17 +756,17 @@ public sealed class ToolbarIconPlus : ModuleBase
         }
         else
         {
-            SetStatus("不是网址，也不是存在的文件：" + t, true);
+            SetStatus(ToolbarIconPlusText.Get("Text0036") + t, true);
         }
     }
 
     private void AddBrowserImage(string path, string name, string sourceUrl)
     {
         var full = (path ?? "").Trim();
-        if (!File.Exists(full)) { SetStatus("文件不存在：" + full, true); return; }
+        if (!File.Exists(full)) { SetStatus(ToolbarIconPlusText.Get("Text0037") + full, true); return; }
         if (config.BrowserImages.Any(b => string.Equals(b.Path, full, StringComparison.OrdinalIgnoreCase)))
         {
-            SetStatus("已在图标库里：" + full, false);
+            SetStatus(ToolbarIconPlusText.Get("Text0038") + full, false);
             return;
         }
 
@@ -766,17 +774,17 @@ public sealed class ToolbarIconPlus : ModuleBase
         if (id == 0) return;
 
         var nm = string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(full) : name.Trim();
-        config.BrowserImages.Add(new Config.BrowserImageEntry { Id = id, Path = full, Name = nm, SourceUrl = sourceUrl ?? "" });
+        config.BrowserImages.Add(new Settings.BrowserImageEntry { Id = id, Path = full, Name = nm, SourceUrl = sourceUrl ?? "" });
         SaveOwnConfig();
         EnsureBrowserInjection(true);
-        SetStatus($"已加入图标库：{nm}（ID {id}）", false);
+        SetStatus(string.Format(ToolbarIconPlusText.Get("Text0039"), nm, id), false);
     }
 
-    private void RefreshEntry(Config.BrowserImageEntry b)
+    private void RefreshEntry(Settings.BrowserImageEntry b)
     {
         if (b.SourceUrl.Length > 0)
         {
-            if (busy) { SetStatus("已有抓取任务在进行中", true); return; }
+            if (busy) { SetStatus(ToolbarIconPlusText.Get("Text0040"), true); return; }
             busy = true;
             busyLabel = "抓取 " + b.SourceUrl;
             StartFaviconFetch(b.Id.ToString(), b.SourceUrl);
@@ -784,11 +792,11 @@ public sealed class ToolbarIconPlus : ModuleBase
         }
 
         var t = b.Path.Trim();
-        if (t.Length == 0) { SetStatus("该条目没有来源，请删除后重新添加", true); return; }
-        if (!File.Exists(t)) { SetStatus("文件不存在：" + t, true); return; }
+        if (t.Length == 0) { SetStatus(ToolbarIconPlusText.Get("Text0041"), true); return; }
+        if (!File.Exists(t)) { SetStatus(ToolbarIconPlusText.Get("Text0037") + t, true); return; }
         InvalidateIconCaches(b.Id);
         EnsureBrowserInjection(true);
-        SetStatus("已重新注入：" + t, false);
+        SetStatus(ToolbarIconPlusText.Get("Text0042") + t, false);
     }
 
     private void EnsureBrowserInjection(bool force)
@@ -1193,14 +1201,14 @@ public sealed class ToolbarIconPlus : ModuleBase
             foreach (var b in config.BrowserImages)
                 if (InReservedRange(b.Id)) EnsureMacroKernel(b.Id);
             SetStatus(auto
-                ? $"已自动载入图库（{config.BrowserImages.Count} 张）"
-                : $"已重新载入（图库 {config.BrowserImages.Count} 张）", false);
+                ? string.Format(ToolbarIconPlusText.Get("Text0043"), config.BrowserImages.Count)
+                : string.Format(ToolbarIconPlusText.Get("Text0044"), config.BrowserImages.Count), false);
             Log("全量应用完成（" + (auto ? "启动自动" : "手动重载") + "）：图库 "
                 + config.BrowserImages.Count + " 张 · detour " + detourPatched.Count + "/" + DetourTargetCount);
         }
         catch (Exception e)
         {
-            SetStatus("重新载入失败：" + e.Message, true);
+            SetStatus(ToolbarIconPlusText.Get("Text0045") + e.Message, true);
             Log("全量应用失败: " + e, true);
         }
     }
@@ -1686,7 +1694,7 @@ public sealed class ToolbarIconPlus : ModuleBase
     {
         try
         {
-            var t = typeof(ModuleBase).Assembly.GetType("OmniToolbox.Host.DalamudServices");
+            var t = typeof(OmniModuleBase).Assembly.GetType("OmniToolbox.Host.DalamudServices");
             var p = t?.GetProperty(propName, BindingFlags.Public | BindingFlags.Static);
             return p?.GetValue(null);
         }
@@ -2192,7 +2200,7 @@ public sealed class ToolbarIconPlus : ModuleBase
         if (useProxy && !string.IsNullOrWhiteSpace(config.ProxyUrl))
             http = CreateHttpClient(true, config.ProxyUrl);
 
-        _ = Task.Run(async () =>
+        _ = ToolbarIconPlusText.Track(Task.Run(async () =>
         {
             var res = new FetchResult { Key = key, SourceUrl = urlInput.Trim() };
             try
@@ -2200,7 +2208,7 @@ public sealed class ToolbarIconPlus : ModuleBase
                 var fetched = await FetchFaviconAsync(http, urlInput.Trim()).ConfigureAwait(false);
                 if (fetched == null)
                 {
-                    res.Message = "没有找到可用的 favicon（站点可能没有图标）";
+                    res.Message = ToolbarIconPlusText.Get("Text0046");
                 }
                 else
                 {
@@ -2214,13 +2222,13 @@ public sealed class ToolbarIconPlus : ModuleBase
                 res.Message = e.Message;
             }
             pendingFetch = res;
-        });
+        }));
     }
 
     private async Task<(string path, string srcUrl)?> FetchFaviconAsync(HttpClient http, string input)
     {
         var url = NormalizeUrl(input);
-        if (url == null) throw new Exception("网址格式不正确");
+        if (url == null) throw new Exception(ToolbarIconPlusText.Get("Text0032"));
 
         var baseUri = new Uri(url);
         var origin = baseUri.GetLeftPart(UriPartial.Authority);
@@ -2827,7 +2835,7 @@ public sealed class ToolbarIconPlus : ModuleBase
             {
                 ok = cm.AddHandler(CommandTogglePanel, new CommandInfo((command, arguments) => TogglePanel())
                 {
-                    HelpMessage = "更好的图标管理：开关独立面板",
+                    HelpMessage = ToolbarIconPlusText.Get("Text0047"),
                     ShowInHelp = true,
                     AllowedInMacros = false,
                 });
@@ -2876,7 +2884,7 @@ public sealed class ToolbarIconPlus : ModuleBase
 
             var info = new CommandInfo(OnMacroIconCommand)
             {
-                HelpMessage = "图库宏图标：/图库图标 list 看列表；/图库图标 <名称|编号> 应用到选中的宏",
+                HelpMessage = ToolbarIconPlusText.Get("Text0048"),
                 ShowInHelp = true,
                 AllowedInMacros = false,
             };
@@ -4382,7 +4390,7 @@ public sealed class ToolbarIconPlus : ModuleBase
         var entry = s?.config.BrowserImages.FirstOrDefault(b => b.Id == id);
         var path = entry?.Path ?? "";
 
-        _ = Task.Run(async () =>
+        _ = ToolbarIconPlusText.Track(Task.Run(async () =>
         {
             try
             {
@@ -4443,7 +4451,7 @@ public sealed class ToolbarIconPlus : ModuleBase
                 Log("宏图标贴图构建失败（编号 " + id + "）：" + e, true);
             }
             finally { macroKernelPending.TryRemove(id, out _); }
-        });
+        }));
     }
 
     private static ITextureProvider? GetHostTextureProvider()
@@ -5205,7 +5213,7 @@ public sealed class ToolbarIconPlus : ModuleBase
         try
         {
             var on = config.MacroIconSwap;
-            if (ImGui.Checkbox("启用图标替换##macroswap", ref on))
+            if (ImGui.Checkbox(ToolbarIconPlusText.Get("Text0049"), ref on))
             {
                 config.MacroIconSwap = on;
                 changed = true;
@@ -5221,11 +5229,11 @@ public sealed class ToolbarIconPlus : ModuleBase
             ImGui.SetNextItemWidth(80);
             ImGui.InputText("##ruleto", ref ruleToInput, 16);
             ImGui.SameLine();
-            if (ImGui.Button("添加##ruleadd")) AddIconRuleFromInputs(ref changed);
+            if (ImGui.Button(ToolbarIconPlusText.Get("Text0050"))) AddIconRuleFromInputs(ref changed);
             ImGui.SameLine();
-            if (ImGui.Button("删除##ruledel")) RemoveIconRuleFromInputs(ref changed);
+            if (ImGui.Button(ToolbarIconPlusText.Get("Text0051"))) RemoveIconRuleFromInputs(ref changed);
             ImGui.SameLine();
-            if (ImGui.Button("全部清除##ruleclear")) ClearAllIconRules(ref changed);
+            if (ImGui.Button(ToolbarIconPlusText.Get("Text0052"))) ClearAllIconRules(ref changed);
 
             if (config.IconReplaceRules.Count == 0)
                 return;
@@ -5239,10 +5247,10 @@ public sealed class ToolbarIconPlus : ModuleBase
                 ImGui.TextUnformatted(r.From + "  →  " + r.To + "   " + DescribeIconId(r.To));
                 ImGui.SameLine();
                 var std = ImGui.GetStyle();
-                var delW = ImGui.CalcTextSize("删除").X + std.FramePadding.X * 2 + 2;
+                var delW = ImGui.CalcTextSize(ToolbarIconPlusText.Get("Text0016")).X + std.FramePadding.X * 2 + 2;
                 ImGui.SetCursorPosX(Math.Max(ImGui.GetCursorPosX(),
                     ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - delW));
-                if (ImGui.Button("删除"))
+                if (ImGui.Button(ToolbarIconPlusText.Get("Text0016")))
                 {
                     RemoveIconRuleAt(i, ref changed);
                     ImGui.PopID();
@@ -5253,7 +5261,7 @@ public sealed class ToolbarIconPlus : ModuleBase
         }
         catch (Exception e)
         {
-            ImGui.TextColored(new Vector4(1f, 0.45f, 0.45f, 1f), "图标替换区块异常：" + e.Message);
+            ImGui.TextColored(new Vector4(1f, 0.45f, 0.45f, 1f), ToolbarIconPlusText.Get("Text0053") + e.Message);
         }
     }
 
@@ -5323,7 +5331,7 @@ public sealed class ToolbarIconPlus : ModuleBase
             }
             else
             {
-                config.IconReplaceRules.Add(new Config.IconReplaceRule { From = from, To = to });
+                config.IconReplaceRules.Add(new Settings.IconReplaceRule { From = from, To = to });
                 Chat("已添加规则：" + from + " → " + to + DescribeIconId(to));
             }
 
@@ -5387,7 +5395,7 @@ public sealed class ToolbarIconPlus : ModuleBase
     }
 
     [Serializable]
-    private sealed class Config
+    private sealed class Settings
     {
         public bool UseProxy { get; set; }
         public string ProxyUrl { get; set; } = "http://127.0.0.1:10808";
@@ -5423,3 +5431,99 @@ public sealed class ToolbarIconPlus : ModuleBase
 }
 
 
+
+internal static class ToolbarIconPlusText
+{
+    internal static readonly OmniToolbox.UI.ModuleLocalization Catalog = OmniToolbox.UI.ModuleLocalization.Create(
+        new System.Collections.Generic.Dictionary<string,string>
+        {
+            ["Text0001"] = "界面异常：",
+            ["Text0002"] = "宏命令：/图标管理 开关独立面板，/图库图标 应用图库图标到选中的宏。",
+            ["Text0003"] = "关闭独立面板",
+            ["Text0004"] = "打开独立面板",
+            ["Text0005"] = "favicon 已入库：",
+            ["Text0006"] = "favicon 抓取失败：",
+            ["Text0007"] = "更好的图标管理###OmniToolbarIconPlus",
+            ["Text0008"] = "处理中：",
+            ["Text0009"] = "图库",
+            ["Text0010"] = "图标替换",
+            ["Text0011"] = "设置",
+            ["Text0012"] = "输入网站网址或本地图片完整路径",
+            ["Text0013"] = "添加",
+            ["Text0014"] = "代理",
+            ["Text0015"] = "刷新",
+            ["Text0016"] = "删除",
+            ["Text0017"] = "正在抓取…",
+            ["Text0018"] = "文件缺失",
+            ["Text0019"] = "代理##useproxy",
+            ["Text0020"] = "已删除该图标（编号 ",
+            ["Text0021"] = " 不会再被新图占用）",
+            ["Text0022"] = "图标库为空",
+            ["Text0023"] = "打开图标浏览器##openbrowser",
+            ["Text0024"] = "未选择图标",
+            ["Text0025"] = "已选择图标（编号 {0}）",
+            ["Text0026"] = "已打开图标浏览器：请停在【第一页】，图标在最前面（左上角）",
+            ["Text0027"] = "打开浏览器失败：",
+            ["Text0028"] = "重新载入##reloadall",
+            ["Text0029"] = "图标库已满（",
+            ["Text0030"] = " 张，编号不会回收）",
+            ["Text0031"] = "请先输入网址或图片路径",
+            ["Text0032"] = "网址格式不正确",
+            ["Text0033"] = "该网址已在库里",
+            ["Text0034"] = "开始抓取 ",
+            ["Text0035"] = " 的 favicon…",
+            ["Text0036"] = "不是网址，也不是存在的文件：",
+            ["Text0037"] = "文件不存在：",
+            ["Text0038"] = "已在图标库里：",
+            ["Text0039"] = "已加入图标库：{0}（ID {1}）",
+            ["Text0040"] = "已有抓取任务在进行中",
+            ["Text0041"] = "该条目没有来源，请删除后重新添加",
+            ["Text0042"] = "已重新注入：",
+            ["Text0043"] = "已自动载入图库（{0} 张）",
+            ["Text0044"] = "已重新载入（图库 {0} 张）",
+            ["Text0045"] = "重新载入失败：",
+            ["Text0046"] = "没有找到可用的 favicon（站点可能没有图标）",
+            ["Text0047"] = "更好的图标管理：开关独立面板",
+            ["Text0048"] = "图库宏图标：/图库图标 list 看列表；/图库图标 <名称|编号> 应用到选中的宏",
+            ["Text0049"] = "启用图标替换##macroswap",
+            ["Text0050"] = "添加##ruleadd",
+            ["Text0051"] = "删除##ruledel",
+            ["Text0052"] = "全部清除##ruleclear",
+            ["Text0053"] = "图标替换区块异常：",
+            ["Title"] = "更好的图标管理",
+            ["Description"] = "网站图标（favicon）与本地图片入库后，可给游戏宏与 Omni 多功能工具栏使用。适配 Omni 1.1.7.5 的共享纹理读取；移除直接修改工具栏绘制的补丁，保留原有图库与编号。"
+        ,
+            ["Ui2001"] = "DrawSettings 异常: ",
+            ["Ui2002"] = "来源网址：",
+            ["Ui2003"] = "来源文件：",
+            ["Ui2004"] = "\n⚠ 文件缺失，浏览器里不会显示"
+});
+    private static System.WeakReference<OmniToolbox.Common.Module.Abstractions.OmniModuleBase>? owner;
+    private static TreeTools.Lifecycle.FeatureLifetime? lifetime;
+internal static void Bind(OmniToolbox.Common.Module.Abstractions.OmniModuleBase module, TreeTools.Lifecycle.FeatureLifetime scope)
+{
+    owner = new(module);
+    lifetime = scope;
+}
+internal static System.Threading.Tasks.Task Track(System.Threading.Tasks.Task task)
+{
+    var scope = lifetime;
+    if (!task.IsCompleted && scope is { IsStopping: false })
+    {
+        try { scope.Track(task); }
+        catch (System.InvalidOperationException) when (scope.IsStopping) { }
+    }
+    return task;
+}
+internal static System.Threading.Tasks.Task<T> Track<T>(System.Threading.Tasks.Task<T> task)
+{
+    Track((System.Threading.Tasks.Task)task);
+    return task;
+}
+    internal static string Get(string key)
+    {
+        if (owner != null && owner.TryGetTarget(out var module))
+            return OmniToolbox.UI.OmniLoc.Get(module, key).Replace('\u241f', '\0');
+        return Catalog.Get(key, OmniToolbox.UI.OmniLoc.CurrentLanguage).Replace('\u241f', '\0');
+    }
+}
