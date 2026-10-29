@@ -28,6 +28,15 @@ foreach(var name in new[]{"MusicPlayer","GameWebBrowser","AutoDiscardJunk","Tool
     var assembly=AssemblyLoadContext.Default.LoadFromAssemblyPath(file);
     var type=assembly.GetType("OmniToolbox.LocalModules."+name,true)!;
     validate.Invoke(null,new object[]{type});count++;
+    var configField = type.GetField("config", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+    if (configField != null)
+    {
+        var settingsType = type.GetNestedType("Settings", BindingFlags.Public | BindingFlags.NonPublic);
+        if (settingsType == null || configField.FieldType != settingsType)
+            throw new Exception(name + " config must use the module's nested Settings type");
+        count++;
+    }
+
     if(assembly.GetTypes().Count(t=>!t.IsAbstract&&moduleBase.IsAssignableFrom(t))!=1)throw new Exception(name+" multiple modules");count++;
     var text=assembly.GetType("OmniToolbox.LocalModules."+name+"Text",true)!;
     var catalog=text.GetField("Catalog",BindingFlags.NonPublic|BindingFlags.Static)!.GetValue(null)!;

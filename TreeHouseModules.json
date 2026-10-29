@@ -68,10 +68,10 @@
     {
       "InternalName": "IChingModule",
       "Author": "小烟酒（基于 IChing 原作者源码）",
-      "Version": "2.0.0",
+      "Version": "2.0.1",
       "MinimumOmniVersion": "1.1.8.2",
       "File": "Modules/IChingModule.cs",
-      "Sha256": "7854719b6079a5e2ec8cd18f54228ff1f356bc98f45e1e5b98473cb442f30527",
+      "Sha256": "3518299c8987595e487e8dc643752d2c40622757c7edabdda1ca8e573d1d8943",
       "ApiVersion": 1,
       "RepositoryURL": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu",
       "Localization": {

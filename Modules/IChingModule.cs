@@ -779,7 +779,9 @@ public sealed class IChingModuleServices
     [PluginService] public IGameInteropProvider Interop { get; private set; } = null!;
 }
 
-public sealed class Settings
+public sealed unsafe partial class IChingModule
+{
+private sealed class Settings
 {
     public bool HeightOffset, DeepDungeonReturn, IgnoreCharm, FilterMovementStatuses, CastMovement;
     public float HeightAdd = -7, CastMoveWindow = 0.5f;
@@ -804,6 +806,8 @@ public sealed class Settings
     public List<IChingFollowedPlayer> FollowedPlayerRecords = [];
     public string SpeedSignature = "40 57 48 83 EC ?? 48 8B F9 48 8B 49 ?? 48 8B 01 FF 90 ?? ?? ?? ?? 48 85 C0 75";
     public string MoveSignature = "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 48 89 7C 24 ?? 41 54 41 56 41 57 48 83 EC ?? 33 DB 41 8B E9 48 39 1D";
+}
+
 }
 
 public sealed unsafe partial class IChingModule
