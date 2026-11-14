@@ -78,8 +78,19 @@ public sealed unsafe partial class IChingModule : OmniModuleBase
 
         activation.OnStopping(StopActivation);
 
-        services = DalamudServices.PluginInterface.Create<IChingModuleServices>()
-            ?? throw new InvalidOperationException(IChingModuleText.Get("Text0002"));
+        int generation = ++serviceGeneration;
+        _ = IChingServiceStartup.StartAsync(DalamudServices.PluginInterface, DalamudServices.Framework,
+            () => !api1Stopped && generation == serviceGeneration,
+            resolved => { services = resolved; FinishServiceStartup(); },
+            error => {
+                StopActivation();
+                errors["服务初始化"] = error.Message;
+                DalamudServices.PluginLog.Error(error, "IChing 异步服务初始化失败");
+            });
+    }
+    private int serviceGeneration;
+    private void FinishServiceStartup()
+    {
         config ??= new();
         config.AllowLegacyHooks = true;
         config.ActorRadius = false; // Old radius hook could crash; never auto-resume a saved enabled state.
@@ -116,6 +127,7 @@ public sealed unsafe partial class IChingModule : OmniModuleBase
     }
     private void Stop()
     {
+        ++serviceGeneration; // Discard service completions after stop/destroy/re-enable.
         running = false;
         var steps = new List<System.Action>();
         if (services != null)
@@ -2065,5 +2077,26 @@ internal static System.Threading.Tasks.Task<T> Track<T>(System.Threading.Tasks.T
         if (owner != null && owner.TryGetTarget(out var module))
             return OmniToolbox.UI.OmniLoc.Get(module, key).Replace('\u241f', '\0');
         return Catalog.Get(key, OmniToolbox.UI.OmniLoc.CurrentLanguage).Replace('\u241f', '\0');
+    }
+}
+
+// Keep async code outside the unsafe module class. Never block the framework
+// thread on Dalamud's service-container tasks.
+internal static class IChingServiceStartup
+{
+    internal static async Task StartAsync(Dalamud.Plugin.IDalamudPluginInterface pluginInterface,
+        IFramework framework, Func<bool> isCurrent, Action<IChingModuleServices> start, Action<Exception> fail)
+    {
+        try
+        {
+            var resolved = await pluginInterface.CreateAsync<IChingModuleServices>().ConfigureAwait(false)
+                ?? throw new InvalidOperationException("无法取得 Dalamud 服务。");
+            await framework.RunOnFrameworkThread(() => { if (isCurrent()) start(resolved); }).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            try { await framework.RunOnFrameworkThread(() => { if (isCurrent()) fail(error); }).ConfigureAwait(false); }
+            catch (Exception dispatchError) { try { DalamudServices.PluginLog.Error(dispatchError, "IChing 初始化错误无法回报至游戏线程"); } catch { } }
+        }
     }
 }
