@@ -41,6 +41,8 @@ public sealed class MusicPlayer : OmniModuleBase
         Author = "小烟酒"
     };
 
+    public enum PlaybackMode { ListLoop, SingleLoop, Random }
+
     [Serializable]
     public sealed class Settings
     {
@@ -57,6 +59,7 @@ public sealed class MusicPlayer : OmniModuleBase
         public bool ShowLyricInHead { get; set; } = true;
         public int ContentTab { get; set; }
         public float FavoriteSidebarRatio { get; set; }
+        public PlaybackMode PlayMode { get; set; } = PlaybackMode.ListLoop;
         public int Volume { get; set; } = 80;
         public float LyricFontScale { get; set; } = 1.0f;
         public bool ShowMeta { get; set; } = true;
@@ -1507,6 +1510,17 @@ public sealed class MusicPlayer : OmniModuleBase
         var winCy = min.Y + 12f * scale;
         var setCx = max.X - 14f * scale - winR;
         var libCx = setCx - (winR * 2 + 6f * scale);
+        var modeCx = libCx - (winR * 2 + 6f * scale);
+        var modeLabel = config.PlayMode == PlaybackMode.Random ? "随" : config.PlayMode == PlaybackMode.SingleLoop ? "单" : "列";
+        var modeName = config.PlayMode == PlaybackMode.Random ? "随机播放" : config.PlayMode == PlaybackMode.SingleLoop ? "单曲循环" : "列表循环";
+        if (OverlayCircleButton(dl, "##ovPlayMode", modeLabel,
+                new Vector2(modeCx - winR, winCy - winR), new Vector2(modeCx + winR, winCy + winR),
+                false, modeName + "（点击切换播放模式）"))
+        {
+            config.PlayMode = config.PlayMode == PlaybackMode.Random ? PlaybackMode.ListLoop
+                : config.PlayMode == PlaybackMode.ListLoop ? PlaybackMode.SingleLoop : PlaybackMode.Random;
+            panelDirty = true;
+        }
         if (OverlayCircleButton(dl, "##ovLibBtn", MusicPlayerText.Get("Text0085"),
                 new Vector2(libCx - winR, winCy - winR), new Vector2(libCx + winR, winCy + winR),
                 mainPanelOpen, mainPanelOpen ? MusicPlayerText.Get("Text0086") : MusicPlayerText.Get("Text0087")))
@@ -1649,9 +1663,9 @@ public sealed class MusicPlayer : OmniModuleBase
             dl.AddText(font, fsz, new Vector2(textLeft, lineY),
                 Col(new Vector3(1f, 0.88f, 0.55f), 0.95f), Truncate(lyric, 24));
         }
-        else if (config.Queue.Count > 0)
+        else if (config.Queue.Count > 0 && config.PlayMode != PlaybackMode.Random)
         {
-            var nextIdx = (currentQueueIndex + 1) % config.Queue.Count;
+            var nextIdx = NextPlaybackIndex(config.Queue.Count, currentQueueIndex, config.PlayMode, true);
             var next = config.Queue[nextIdx];
             dl.AddText(font, fsz, new Vector2(textLeft, lineY),
                 Col(new Vector3(1f, 1f, 1f), 0.50f), string.Format(MusicPlayerText.Get("Text0094"), Truncate(next.Title, 18)));
@@ -2313,7 +2327,20 @@ public sealed class MusicPlayer : OmniModuleBase
             // No global media keys: the other platform must remain independent.
             return;
         }
-        PlayQueueIndex((currentQueueIndex + 1) % config.Queue.Count);
+        PlayQueueIndex(NextPlaybackIndex(config.Queue.Count, currentQueueIndex, config.PlayMode, auto));
+    }
+
+    internal static int NextPlaybackIndex(int count, int current, PlaybackMode mode, bool auto)
+    {
+        if (count <= 0) return -1;
+        if (auto && mode == PlaybackMode.SingleLoop && current >= 0 && current < count) return current;
+        if (mode == PlaybackMode.Random && count > 1)
+        {
+            if (current < 0 || current >= count) return Random.Shared.Next(count);
+            int next = Random.Shared.Next(count - 1);
+            return next >= current ? next + 1 : next;
+        }
+        return (current + 1) % count;
     }
 
     private void PlayPrev()
@@ -2323,7 +2350,9 @@ public sealed class MusicPlayer : OmniModuleBase
             // An empty queue never controls another player.
             return;
         }
-        PlayQueueIndex((currentQueueIndex - 1 + config.Queue.Count) % config.Queue.Count);
+        PlayQueueIndex(config.PlayMode == PlaybackMode.Random
+            ? NextPlaybackIndex(config.Queue.Count, currentQueueIndex, config.PlayMode, false)
+            : (currentQueueIndex - 1 + config.Queue.Count) % config.Queue.Count);
     }
 
     private void EnqueueAndPlay(Track t)
