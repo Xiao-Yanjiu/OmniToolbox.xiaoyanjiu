@@ -4,10 +4,10 @@
     {
       "InternalName": "MusicPlayer",
       "Author": "小烟酒",
-      "Version": "2.0.1",
+      "Version": "2.0.2",
       "MinimumOmniVersion": "1.1.8.2",
       "File": "Modules/MusicPlayer.cs",
-      "Sha256": "ef61dc8a5566a7543029a0ce881b3d26355b5751557e5a103b3a14131d7b87d0",
+      "Sha256": "96b8a1e431630a8323b7fb5968c3f21dd6d6a656960f7b22c8a2aa4259bddcf0",
       "ApiVersion": 1,
       "RepositoryURL": "https://github.com/Xiao-Yanjiu/OmniToolbox.xiaoyanjiu",
       "Localization": {

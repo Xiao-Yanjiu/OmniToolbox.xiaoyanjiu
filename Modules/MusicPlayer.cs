@@ -1447,7 +1447,12 @@ public sealed class MusicPlayer : OmniModuleBase
             if (began)
             {
                 if (!anchored) ClampCurrentWindow(new Vector2(overlayW, overlayH));
-                DrawOverlayBody(scale, radius, anchored);
+                // Keep the custom overlay in the normal window layer so ImGui
+                // tooltips render above it. Retain the expanded rounded backdrop.
+                var overlayDrawList = ImGui.GetWindowDrawList();
+                overlayDrawList.PushClipRect(Vector2.Zero, ImGui.GetIO().DisplaySize, false);
+                try { DrawOverlayBody(scale, radius, anchored); }
+                finally { overlayDrawList.PopClipRect(); }
             }
         }
         catch (Exception e)
@@ -1464,7 +1469,7 @@ public sealed class MusicPlayer : OmniModuleBase
 
     private void DrawOverlayBody(float scale, float radius, bool anchored)
     {
-        var dl = ImGui.GetForegroundDrawList();
+        var dl = ImGui.GetWindowDrawList();
         var min = ImGui.GetWindowPos();
         var max = min + ImGui.GetWindowSize();
 
